@@ -1,7 +1,7 @@
 import pandas as pd
 import yfinance as yf
 import wbgapi as wb
-import fredapi as fredapi
+from fredapi import Fred
 from .BaseFetcher import BaseFetcher
 from .FredFetcher import FredFetcher
 from .YFinanceFetcher import YFinanceFetcher
@@ -9,7 +9,7 @@ from .WorldBankFetcher import WorldBankFetcher
 
 class DataFactory:
     """
-    factory class which orchestrates the creation of Fetchers
+    Factory class which orchestrates the creation of Fetchers
     and ensures proper instantiation.
     """
     def __init__(self, fred_api_key: str = None):

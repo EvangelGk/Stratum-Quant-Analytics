@@ -15,6 +15,12 @@ class ProjectConfig:
     """
     fred_api_key: str
     mode: RunMode = RunMode.SAMPLE
+    start_date: str = "2016-01-01"
+    end_date: str = "2026-12-31"
+    max_workers: int = 10
+    max_retries: int = 4
+    retry_delay_min: float = 1.0
+    retry_delay_max: float = 3.0
 
     @classmethod
     def load_from_env(cls):
@@ -31,7 +37,24 @@ class ProjectConfig:
         env_mode = os.getenv("ENVIRONMENT", "sample").lower()
         mode = RunMode.ACTUAL if env_mode == "actual" else RunMode.SAMPLE
         
-        return cls(fred_api_key=key, mode=mode)
+        # get dates and other configs
+        start_date = os.getenv("START_DATE", "2016-01-01")
+        end_date = os.getenv("END_DATE", "2026-12-31")
+        max_workers = int(os.getenv("MAX_WORKERS", "10"))
+        max_retries = int(os.getenv("MAX_RETRIES", "4"))
+        retry_delay_min = float(os.getenv("RETRY_DELAY_MIN", "1.0"))
+        retry_delay_max = float(os.getenv("RETRY_DELAY_MAX", "3.0"))
+        
+        return cls(
+            fred_api_key=key,
+            mode=mode,
+            start_date=start_date,
+            end_date=end_date,
+            max_workers=max_workers,
+            max_retries=max_retries,
+            retry_delay_min=retry_delay_min,
+            retry_delay_max=retry_delay_max
+        )
 
     def get_targets(self):
         """Επιστρέφει τα tickers βάσει του mode."""

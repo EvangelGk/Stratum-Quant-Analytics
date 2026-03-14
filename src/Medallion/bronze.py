@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import shutil
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig
 import json
@@ -9,23 +10,38 @@ import threading
 import logging
 import time
 import random
+from typing import Dict, Any, List, Tuple
 
 class BronzeLayer:
+    """
+    Bronze Layer for data ingestion from multiple sources.
+    Handles parallel fetching, retry logic, validation, and catalog management.
+    """
     def __init__(self, config: ProjectConfig, factory: DataFactory):
         self.config = config
         self.factory = factory
         self.base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/raw"))
         os.makedirs(self.base_path, exist_ok=True)
-        self.catalog = {}
+        self.catalog: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
         self.logger = logging.getLogger(__name__)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.success_count = 0
+        self.fail_count = 0
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Runs the data ingestion process in parallel.
+        Prepares tasks, executes them with retries, and logs summary.
+        """
         self.logger.info(f"Starting ingestion in {self.config.mode.value} mode...")
         targets = self.config.get_targets()
         
         # Prepare tasks for parallel execution
-        tasks = []
+        tasks: List[Tuple[Any, Tuple[str, ...], str, str]] = []
         
         # 1. Financials (yFinance)
         y_fetcher = self.factory.get_fetcher("yfinance")
@@ -45,37 +61,52 @@ class BronzeLayer:
             tasks.append((wb_fetcher, (indicator, "WLD", self.config.start_date, self.config.end_date), filename, "worldbank"))
         
         # Execute tasks in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        max_workers = min(self.config.max_workers, len(tasks))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(self._fetch_and_save, fetcher, params, filename, source) for fetcher, params, filename, source in tasks]
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()  # Raise any exceptions
                 except Exception as e:
                     self.logger.error(f"Task failed: {e}")
+                    self.fail_count += 1
         
-        # Catalog is now written after each successful save, no need to write at the end
+        # Log summary
+        self.logger.info(f"Ingestion completed. Success: {self.success_count}, Failures: {self.fail_count}")
 
-    def _fetch_and_save(self, fetcher, params, filename, source):
-        for attempt in range(4):  # Retry up to 4 times (initial + 3 retries)
+    def _fetch_and_save(self, fetcher, params: Tuple[str, ...], filename: str, source: str) -> None:
+        """
+        Fetches data with retry logic and saves it.
+        Includes random delays to avoid rate limits.
+        """
+        for attempt in range(self.config.max_retries):
             try:
-                time.sleep(random.uniform(1, 3))  # Random delay to avoid rate limits
+                delay = random.uniform(self.config.retry_delay_min, self.config.retry_delay_max)
+                time.sleep(delay)  # Random delay to avoid rate limits
                 df = fetcher.fetch(*params)
                 self._process_and_save(df, filename, source)
+                self.success_count += 1
                 break  # Success, exit retry loop
             except Exception as e:
-                if attempt < 3:
+                if attempt < self.config.max_retries - 1:
                     self.logger.warning(f"Attempt {attempt + 1} failed for {filename}: {e}. Retrying...")
-                    time.sleep(random.uniform(1, 3))  # Additional delay before retry
                 else:
-                    self.logger.error(f"Failed to fetch {filename} after 4 attempts: {e}")
+                    self.logger.error(f"Failed to fetch {filename} after {self.config.max_retries} attempts: {e}")
                     raise  # Re-raise after max retries
 
-    def _process_and_save(self, df: pd.DataFrame, filename: str, source: str):
-        """Saves the dataframe in parquet format
-        to the specified directory."""
+    def _process_and_save(self, df: pd.DataFrame, filename: str, source: str) -> None:
+        """
+        Processes and saves the dataframe to Parquet.
+        Includes validation, cleanup on failure, and catalog update.
+        """
         if df is None or df.empty:
             self.logger.warning(f"No data for {filename}")
             return
+
+        # Basic validation: check for required columns based on source
+        expected_columns = self._get_expected_columns(source)
+        if not all(col in df.columns for col in expected_columns):
+            raise ValueError(f"Data for {filename} missing required columns: {expected_columns}")
 
         df['ingested_at'] = datetime.now().isoformat()
         df['source_system'] = source
@@ -85,25 +116,50 @@ class BronzeLayer:
         os.makedirs(source_path, exist_ok=True)
         
         full_path = os.path.join(source_path, f"{filename}.parquet")
-            
-        # Index=False to avoid saving unnecessary columns
-        df.to_parquet(full_path, index=False, engine='pyarrow', compression='snappy')
-        self.logger.info(f"Successfully saved: {full_path}")
         
-        # Update the catalog with metadata
-        with self.lock:
-            self.catalog[filename] = {
-                "path": full_path,
-                "rows": len(df),
-                "source": source,
-                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-        self.logger.info(f"Saved: {filename}")
-        self._write_catalog()  # Write catalog after each successful save
+        try:
+            # Index=False to avoid saving unnecessary columns
+            df.to_parquet(full_path, index=False, engine='pyarrow', compression='snappy')
+            self.logger.info(f"Successfully saved: {full_path}")
+            
+            # Update the catalog with metadata
+            with self.lock:
+                self.catalog[filename] = {
+                    "path": full_path,
+                    "rows": len(df),
+                    "source": source,
+                    "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+            self.logger.info(f"Saved: {filename}")
+            self._write_catalog()  # Write catalog after each successful save
+        except Exception as e:
+            # Cleanup on failure
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            self.logger.error(f"Failed to save {filename}: {e}")
+            raise
 
-    def _write_catalog(self):
-        """Creates the manifest file in the data/raw directory."""
+    def _get_expected_columns(self, source: str) -> List[str]:
+        """
+        Returns the expected columns for each source.
+        """
+        if source == "yfinance":
+            return ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+        elif source == "fred":
+            return ["Date", "Value"]
+        elif source == "worldbank":
+            return ["economy", "Date", "Value"]
+        else:
+            return []
+
+    def _write_catalog(self) -> None:
+        """
+        Creates the manifest file in the data/raw directory with backup.
+        """
         catalog_path = os.path.join(self.base_path, "catalog.json")
+        backup_path = catalog_path + ".bak"
+        if os.path.exists(catalog_path):
+            shutil.copy(catalog_path, backup_path)
         with open(catalog_path, 'w', encoding='utf-8') as f:
-            json.dump(self.catalog, f, indent=4, ensure_ascii=False)
+            json.dump(self.catalog, f, indent=4, ensure_ascii=False, sort_keys=True)
         self.logger.info(f"Data Catalog updated at {catalog_path}")

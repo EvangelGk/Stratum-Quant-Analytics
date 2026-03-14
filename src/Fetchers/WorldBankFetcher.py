@@ -4,10 +4,10 @@ from typing import List, Union
 from .BaseFetcher import BaseFetcher
 
 class WorldBankFetcher(BaseFetcher):
-    def __init__(self, api_key: str):
-        self.wb = self.wb(api_key=api_key)
+    def __init__(self):
+        pass  # No API key needed for World Bank
    
-    #Fetching data from the World Bank API.
+    # Fetching data from the World Bank API.
     def fetch(self, indicator: str, country: str, start_date: str, end_date: str) -> pd.DataFrame:
         # The wbgapi accepts a range of years
         start_year = int(pd.to_datetime(start_date).year)
