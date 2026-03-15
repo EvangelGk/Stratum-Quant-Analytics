@@ -7,7 +7,6 @@ import concurrent.futures
 from functools import partial
 import pyarrow as pa
 import pyarrow.parquet as pq
-from cryptography.fernet import Fernet
 
 from .AnalysisSuite.elasticity import elasticity
 from .AnalysisSuite.lag import lag_analysis
