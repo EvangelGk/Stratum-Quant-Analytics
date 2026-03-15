@@ -11,6 +11,7 @@ import logging
 import time
 import random
 from typing import Dict, Any, List, Tuple
+from exceptions.FetchersExceptions import FetcherError, TimeoutError, RateLimitError
 
 class BronzeLayer:
     """
@@ -67,8 +68,11 @@ class BronzeLayer:
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()  # Raise any exceptions
+                except (FetcherError, TimeoutError, RateLimitError) as e:
+                    self.logger.error(f"Fetcher error in task: {e}")
+                    self.fail_count += 1
                 except Exception as e:
-                    self.logger.error(f"Task failed: {e}")
+                    self.logger.error(f"Unexpected error in task: {e}")
                     self.fail_count += 1
         
         # Log summary
@@ -87,12 +91,23 @@ class BronzeLayer:
                 self._process_and_save(df, filename, source)
                 self.success_count += 1
                 break  # Success, exit retry loop
-            except Exception as e:
+            except FetcherError as e:
                 if attempt < self.config.max_retries - 1:
                     self.logger.warning(f"Attempt {attempt + 1} failed for {filename}: {e}. Retrying...")
                 else:
                     self.logger.error(f"Failed to fetch {filename} after {self.config.max_retries} attempts: {e}")
                     raise  # Re-raise after max retries
+            except TimeoutError as e:
+                if attempt < self.config.max_retries - 1:
+                    self.logger.warning(f"Timeout on attempt {attempt + 1} for {filename}: {e}. Retrying...")
+                else:
+                    raise
+            except RateLimitError as e:
+                self.logger.warning(f"Rate limit hit for {filename}: {e}. Waiting longer...")
+                time.sleep(60)  # Extra wait for rate limit
+            except Exception as e:
+                self.logger.error(f"Unexpected error for {filename}: {e}")
+                raise
 
     def _process_and_save(self, df: pd.DataFrame, filename: str, source: str) -> None:
         """
@@ -132,11 +147,17 @@ class BronzeLayer:
                 }
             self.logger.info(f"Saved: {filename}")
             self._write_catalog()  # Write catalog after each successful save
+        except FetcherError as e:
+            # Cleanup on failure
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            self.logger.error(f"Fetcher error for {filename}: {e}")
+            raise
         except Exception as e:
             # Cleanup on failure
             if os.path.exists(full_path):
                 os.remove(full_path)
-            self.logger.error(f"Failed to save {filename}: {e}")
+            self.logger.error(f"Unexpected error for {filename}: {e}")
             raise
 
     def _get_expected_columns(self, source: str) -> List[str]:

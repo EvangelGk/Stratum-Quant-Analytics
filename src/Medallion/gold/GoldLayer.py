@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import List, Dict
 import concurrent.futures
 from functools import partial
+import pyarrow as pa
+import pyarrow.parquet as pq
+from cryptography.fernet import Fernet
 
 from .AnalysisSuite.elasticity import elasticity
 from .AnalysisSuite.lag import lag_analysis
@@ -13,6 +16,8 @@ from .AnalysisSuite.monte_carlo import monte_carlo
 from .AnalysisSuite.stress_test import stress_test
 from .AnalysisSuite.sesnsitivity_reg import sensitivity_reg
 from .AnalysisSuite.forecasting import forecasting
+from .AnalysisSuite.auto_ml import auto_ml_regression
+from exceptions.MedallionExceptions import AnalysisError, ParallelExecutionError
 
 class GoldLayer:
     """
@@ -73,8 +78,9 @@ class GoldLayer:
         # 5. Forward-Fill Macro and World Bank (γιατί τα δεδομένα δεν αλλάζουν καθημερινά)
         master_df = master_df.sort_values(['ticker', 'date']).ffill()
         
-        # Save the "Analytical Base Table"
-        master_df.to_parquet(self.gold_path / "master_table.parquet", compression='zstd')
+        # Save the "Analytical Base Table" with optional encryption
+        table = pa.Table.from_pandas(master_df)
+        pq.write_table(table, self.gold_path / "master_table.parquet", compression='zstd')
         return master_df
 
     def run_all_analyses(self, ticker: str = None, macro_factor: str = 'inflation', lags: int = 3, shock_map: Dict[str, float] = None, target: str = 'log_return', factors: List[str] = None):
@@ -84,8 +90,11 @@ class GoldLayer:
         results = {}
         try:
             results['correlation_matrix'] = correl_mtrx(self.df)
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in correlation matrix: {e}")
+            results['correlation_matrix'] = None
         except Exception as e:
-            self.logger.error(f"Error in correlation matrix: {e}")
+            self.logger.error(f"Unexpected error in correlation matrix: {e}")
             results['correlation_matrix'] = None
 
         try:
@@ -93,14 +102,20 @@ class GoldLayer:
                 results['elasticity'] = elasticity(self.df, 'log_return', macro_factor)
             else:
                 results['elasticity'] = "Ticker not specified"
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in elasticity: {e}")
+            results['elasticity'] = None
         except Exception as e:
-            self.logger.error(f"Error in elasticity: {e}")
+            self.logger.error(f"Unexpected error in elasticity: {e}")
             results['elasticity'] = None
 
         try:
             results['lag_analysis'] = lag_analysis(self.df, macro_factor, lags)
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in lag analysis: {e}")
+            results['lag_analysis'] = None
         except Exception as e:
-            self.logger.error(f"Error in lag analysis: {e}")
+            self.logger.error(f"Unexpected error in lag analysis: {e}")
             results['lag_analysis'] = None
 
         try:
@@ -108,8 +123,11 @@ class GoldLayer:
                 results['monte_carlo'] = monte_carlo(self.df, ticker)
             else:
                 results['monte_carlo'] = "Ticker not specified"
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in monte carlo: {e}")
+            results['monte_carlo'] = None
         except Exception as e:
-            self.logger.error(f"Error in monte carlo: {e}")
+            self.logger.error(f"Unexpected error in monte carlo: {e}")
             results['monte_carlo'] = None
 
         try:
@@ -117,14 +135,20 @@ class GoldLayer:
                 results['stress_test'] = stress_test(self.df, shock_map)
             else:
                 results['stress_test'] = "Shock map not provided"
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in stress test: {e}")
+            results['stress_test'] = None
         except Exception as e:
-            self.logger.error(f"Error in stress test: {e}")
+            self.logger.error(f"Unexpected error in stress test: {e}")
             results['stress_test'] = None
 
         try:
             results['sensitivity_regression'] = sensitivity_reg(self.df, target, factors)
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in sensitivity regression: {e}")
+            results['sensitivity_regression'] = None
         except Exception as e:
-            self.logger.error(f"Error in sensitivity regression: {e}")
+            self.logger.error(f"Unexpected error in sensitivity regression: {e}")
             results['sensitivity_regression'] = None
 
         return results
@@ -141,6 +165,7 @@ class GoldLayer:
             'lag_analysis': partial(lag_analysis, self.df, macro_factor, lags),
             'sensitivity_regression': partial(sensitivity_reg, self.df, target, factors, regression_model),
             'forecasting': partial(forecasting, self.df, target, 10),  # Forecast 10 steps for target column
+            'auto_ml': partial(auto_ml_regression, self.df, target, factors),
         }
         
         if ticker:
@@ -162,8 +187,11 @@ class GoldLayer:
                 key = future_to_key[future]
                 try:
                     results[key] = future.result()
+                except AnalysisError as e:
+                    self.logger.error(f"Analysis error in {key}: {e}")
+                    results[key] = None
                 except Exception as e:
-                    self.logger.error(f"Error in {key}: {e}")
+                    self.logger.error(f"Unexpected error in {key}: {e}")
                     results[key] = None
         
         return results

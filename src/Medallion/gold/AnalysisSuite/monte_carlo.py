@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Union
+from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
 def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000) -> Union[np.ndarray, None]:
     """
@@ -18,15 +19,15 @@ def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int 
     """
     try:
         if 'ticker' not in df.columns or 'close' not in df.columns:
-            raise ValueError("DataFrame must contain 'ticker' and 'close' columns.")
+            raise DataValidationError("DataFrame must contain 'ticker' and 'close' columns.")
 
         data = df[df['ticker'] == ticker]['close']
         if data.empty:
-            raise ValueError(f"No data found for ticker {ticker}.")
+            raise DataValidationError(f"No data found for ticker {ticker}.")
 
         returns = np.log(data / data.shift(1)).dropna()
         if returns.empty:
-            raise ValueError("Insufficient data to compute returns.")
+            raise DataValidationError("Insufficient data to compute returns.")
 
         mu = returns.mean()
         sigma = returns.std()
@@ -37,7 +38,8 @@ def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int 
         price_paths = last_price * shocks.cumprod(axis=0)
 
         return price_paths
+    except DataValidationError:
+        raise
     except Exception as e:
-        print(f"Error in monte_carlo: {e}")
-        return None 
+        raise AnalysisError(f"Unexpected error in monte_carlo: {e}") from e 
 

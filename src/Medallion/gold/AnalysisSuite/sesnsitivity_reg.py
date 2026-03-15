@@ -2,6 +2,7 @@ import pandas as pd
 import statsmodels.api as sm
 from sklearn.linear_model import Ridge
 from typing import List, Union
+from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
 def sensitivity_reg(df: pd.DataFrame, target: str = 'log_return', factors: List[str] = None, model: str = 'OLS') -> Union[str, dict, None]:
     """
@@ -20,11 +21,11 @@ def sensitivity_reg(df: pd.DataFrame, target: str = 'log_return', factors: List[
     try:
         factors = factors or ['inflation', 'energy_index']
         if target not in df.columns:
-            raise ValueError(f"Target column {target} not found in DataFrame.")
+            raise DataValidationError(f"Target column {target} not found in DataFrame.")
 
         missing_factors = [f for f in factors if f not in df.columns]
         if missing_factors:
-            raise ValueError(f"Factor columns {missing_factors} not found in DataFrame.")
+            raise DataValidationError(f"Factor columns {missing_factors} not found in DataFrame.")
 
         if model == 'OLS':
             Y = df[target]
@@ -38,7 +39,8 @@ def sensitivity_reg(df: pd.DataFrame, target: str = 'log_return', factors: List[
             ridge.fit(X, Y)
             return {'coefficients': dict(zip(factors, ridge.coef_)), 'intercept': ridge.intercept_}
         else:
-            raise ValueError("Model must be 'OLS' or 'Ridge'.")
+            raise DataValidationError("Model must be 'OLS' or 'Ridge'.")
+    except DataValidationError:
+        raise
     except Exception as e:
-        print(f"Error in sensitivity_reg: {e}")
-        return None
+        raise AnalysisError(f"Unexpected error in sensitivity_reg: {e}") from e

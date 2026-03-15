@@ -8,11 +8,12 @@ import concurrent.futures
 import threading
 import uuid
 import numpy as np
+import dask.dataframe as dd
 
 # Import Schemas
 from silver.schema import financials_schema, macro_schema, worldbank_schema
 from Fetchers.ProjectConfig import ProjectConfig
-from exceptions import (
+from exceptions.MedallionExceptions import (
     CatalogNotFoundError, DataValidationError, ImputationError,
     StandardizationError, FileSaveError, OutlierDetectionError, ComplianceViolationError
 )
@@ -62,8 +63,10 @@ class SilverLayer:
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()  # Raise any exceptions
+                except (DataValidationError, ImputationError, StandardizationError, FileSaveError, OutlierDetectionError, ComplianceViolationError) as e:
+                    self.logger.error(f"Processing error in task: {e}")
                 except Exception as e:
-                    self.logger.error(f"Task failed: {e}")
+                    self.logger.error(f"Unexpected error in task: {e}")
 
         # Generate and save quality report
         self._generate_quality_report()
@@ -112,6 +115,14 @@ class SilverLayer:
                     "status": "success"
                 }
 
+        except (DataValidationError, ImputationError, StandardizationError, FileSaveError, OutlierDetectionError, ComplianceViolationError) as e:
+            with self.lock:
+                self.quality_reports[filename] = {
+                    "source": info['source'],
+                    "error": str(e),
+                    "processed_at": datetime.now().isoformat(),
+                    "status": "failed"
+                }
         except Exception as e:
             with self.lock:
                 self.quality_reports[filename] = {

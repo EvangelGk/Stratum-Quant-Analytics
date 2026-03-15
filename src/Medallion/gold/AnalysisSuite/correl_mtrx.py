@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from typing import Union
+from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
 def correl_mtrx(df: pd.DataFrame) -> Union[pd.DataFrame, None]:
     """
@@ -16,9 +17,10 @@ def correl_mtrx(df: pd.DataFrame) -> Union[pd.DataFrame, None]:
     try:
         numeric_df = df.select_dtypes(include=[np.number])
         if numeric_df.empty:
-            raise ValueError("No numeric columns found in DataFrame.")
+            raise DataValidationError("No numeric columns found in DataFrame.")
 
         return numeric_df.corr()
+    except DataValidationError:
+        raise
     except Exception as e:
-        print(f"Error in correl_mtrx: {e}")
-        return None
+        raise AnalysisError(f"Unexpected error in correl_mtrx: {e}") from e

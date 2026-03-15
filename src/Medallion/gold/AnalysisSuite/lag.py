@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Dict, Union
+from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
 def lag_analysis(df: pd.DataFrame, column: str, lags: int = 3) -> Union[Dict[str, float], None]:
     """
@@ -15,12 +16,13 @@ def lag_analysis(df: pd.DataFrame, column: str, lags: int = 3) -> Union[Dict[str
     """
     try:
         if column not in df.columns:
-            raise ValueError(f"Column {column} not found in DataFrame.")
+            raise DataValidationError(f"Column {column} not found in DataFrame.")
 
         if lags < 1:
-            raise ValueError("Lags must be at least 1.")
+            raise DataValidationError("Lags must be at least 1.")
 
         return {f"lag_{i}": df[column].corr(df[column].shift(i)) for i in range(1, lags + 1)}
+    except DataValidationError:
+        raise
     except Exception as e:
-        print(f"Error in lag_analysis: {e}")
-        return None
+        raise AnalysisError(f"Unexpected error in lag_analysis: {e}") from e

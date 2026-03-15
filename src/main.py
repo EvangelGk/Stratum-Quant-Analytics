@@ -1,6 +1,8 @@
 from Fetchers.ProjectConfig import ProjectConfig
 from Fetchers.Factory import DataFactory
-from Medallion.MedallionPipeline import MedallionPipeline
+from Medallion import MedallionPipeline
+from exceptions.MedallionExceptions import DataPipelineError
+from exceptions.FetchersExceptions import FetcherError
 
 def main():
     try:
@@ -23,8 +25,12 @@ def main():
         print("Full pipeline executed successfully.")
         print(f"Analysis Results Keys: {list(results.keys())}")
 
+    except FetcherError as e:
+        print(f"Fetcher Error: {e}. Check API keys or network.")
+    except DataPipelineError as e:
+        print(f"Data Pipeline Error: {e}. Check data integrity or resources.")
     except Exception as e:
-        print(f"Application failed: {e}")
+        print(f"Unexpected Application Error: {e}. Contact support.")
 
 if __name__ == "__main__":
     main()
