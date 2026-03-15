@@ -12,6 +12,10 @@ import time
 import random
 from typing import Dict, Any, List, Tuple
 from exceptions.FetchersExceptions import FetcherError, TimeoutError, RateLimitError
+from logger.Messages.FetchersMess import (
+    FETCHER_START, FETCHER_SUCCESS, FETCHER_CACHE_HIT, FETCHER_RETRY,
+    FETCHER_RATE_LIMIT, FETCHER_TIMEOUT, FETCHER_COMPLETION
+)
 
 class BronzeLayer:
     """
@@ -38,6 +42,7 @@ class BronzeLayer:
         Runs the data ingestion process in parallel.
         Prepares tasks, executes them with retries, and logs summary.
         """
+        print(FETCHER_START.format(source="multiple sources"))
         self.logger.info(f"Starting ingestion in {self.config.mode.value} mode...")
         targets = self.config.get_targets()
         
@@ -76,6 +81,9 @@ class BronzeLayer:
                     self.fail_count += 1
         
         # Log summary
+        total_files = self.success_count + self.fail_count
+        success_rate = (self.success_count / total_files * 100) if total_files > 0 else 0
+        print(FETCHER_COMPLETION.format(total_files=total_files, success_rate=f"{success_rate:.1f}"))
         self.logger.info(f"Ingestion completed. Success: {self.success_count}, Failures: {self.fail_count}")
 
     def _fetch_and_save(self, fetcher, params: Tuple[str, ...], filename: str, source: str) -> None:

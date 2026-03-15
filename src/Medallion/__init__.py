@@ -8,6 +8,10 @@ from .bronze import BronzeLayer
 from .silver.silver import SilverLayer
 from .gold.GoldLayer import GoldLayer
 from exceptions.MedallionExceptions import ParallelExecutionError
+from logger.Messages.MedallionMess import (
+    BRONZE_START, BRONZE_SUCCESS, SILVER_START, SILVER_SUCCESS,
+    GOLD_START, GOLD_SUCCESS, GOLD_PARALLEL_MODE, GOLD_SEQUENTIAL_MODE
+)
 
 class MedallionPipeline:
     """
@@ -37,19 +41,25 @@ class MedallionPipeline:
         self.gold.gold_path = self.gold_path
 
     def run_bronze(self) -> None:
+        print(BRONZE_START)
         with tqdm(total=1, desc="Bronze Layer") as pbar:
             self.bronze.run()
             pbar.update(1)
+        print(BRONZE_SUCCESS)
 
     def run_silver(self) -> None:
+        print(SILVER_START)
         with tqdm(total=1, desc="Silver Layer") as pbar:
             self.silver.run()
             pbar.update(1)
+        print(SILVER_SUCCESS)
 
     def run_gold(self) -> None:
+        print(GOLD_START)
         with tqdm(total=1, desc="Gold Layer") as pbar:
             self.gold.create_master_table()
             pbar.update(1)
+        print(GOLD_SUCCESS)
 
     def run_full_pipeline_parallel(self) -> Dict[str, Any]:
         """
@@ -87,6 +97,7 @@ class MedallionPipeline:
         return checks
 
     def run_full_pipeline_sequential(self) -> Dict[str, Any]:
+        print(GOLD_SEQUENTIAL_MODE)
         with tqdm(total=4, desc="Full Pipeline") as pbar:
             self.run_bronze()
             pbar.update(1)

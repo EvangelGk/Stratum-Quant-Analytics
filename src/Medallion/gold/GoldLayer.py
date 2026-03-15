@@ -18,6 +18,16 @@ from .AnalysisSuite.sesnsitivity_reg import sensitivity_reg
 from .AnalysisSuite.forecasting import forecasting
 from .AnalysisSuite.auto_ml import auto_ml_regression
 from exceptions.MedallionExceptions import AnalysisError, ParallelExecutionError
+from logger.Messages.MainMess import (
+    ANALYSIS_CORRELATION_MATRIX, ANALYSIS_ELASTICITY, ANALYSIS_LAG_ANALYSIS,
+    ANALYSIS_MONTE_CARLO, ANALYSIS_STRESS_TEST, ANALYSIS_SENSITIVITY_REGRESSION,
+    ANALYSIS_FORECASTING, ANALYSIS_AUTO_ML
+)
+from logger.Messages.DirectionsMess import (
+    LIVE_STEP_6_ANALYSIS_PROGRESS, LIVE_STEP_7_RESULTS_GENERATION
+)
+from logger.Catalog import catalog
+import time
 
 class GoldLayer:
     """
@@ -89,17 +99,29 @@ class GoldLayer:
         """
         results = {}
         try:
+            start_time = time.time()
             results['correlation_matrix'] = correl_mtrx(self.df)
+            duration = time.time() - start_time
+            if results['correlation_matrix'] is not None:
+                rows = len(results['correlation_matrix'].index) if hasattr(results['correlation_matrix'], 'index') else 0
+                cols = len(results['correlation_matrix'].columns) if hasattr(results['correlation_matrix'], 'columns') else 0
+                catalog.log_analysis_operation("correlation_matrix", None,
+                                             {"rows": rows, "columns": cols}, duration, True)
+                print(ANALYSIS_CORRELATION_MATRIX.format(rows=rows, columns=cols))
         except AnalysisError as e:
+            catalog.log_error("gold_layer", "AnalysisError", str(e), "correlation_matrix")
             self.logger.error(f"Analysis error in correlation matrix: {e}")
             results['correlation_matrix'] = None
         except Exception as e:
+            catalog.log_error("gold_layer", "UnexpectedError", str(e), "correlation_matrix")
             self.logger.error(f"Unexpected error in correlation matrix: {e}")
             results['correlation_matrix'] = None
 
         try:
             if ticker:
                 results['elasticity'] = elasticity(self.df, 'log_return', macro_factor)
+                if results['elasticity'] is not None:
+                    print(ANALYSIS_ELASTICITY.format(elasticity_value=f"{results['elasticity']:.4f}"))
             else:
                 results['elasticity'] = "Ticker not specified"
         except AnalysisError as e:
@@ -111,6 +133,13 @@ class GoldLayer:
 
         try:
             results['lag_analysis'] = lag_analysis(self.df, macro_factor, lags)
+            if results['lag_analysis'] is not None and isinstance(results['lag_analysis'], dict):
+                best_lag = max(results['lag_analysis'], key=results['lag_analysis'].get)
+                print(ANALYSIS_LAG_ANALYSIS.format(
+                    factor=macro_factor,
+                    best_lag=best_lag,
+                    correlation=f"{results['lag_analysis'][best_lag]:.4f}"
+                ))
         except AnalysisError as e:
             self.logger.error(f"Analysis error in lag analysis: {e}")
             results['lag_analysis'] = None
@@ -121,6 +150,14 @@ class GoldLayer:
         try:
             if ticker:
                 results['monte_carlo'] = monte_carlo(self.df, ticker)
+                if results['monte_carlo'] is not None:
+                    print(ANALYSIS_MONTE_CARLO.format(
+                        iterations=results['monte_carlo'].shape[1] if hasattr(results['monte_carlo'], 'shape') else 'N/A',
+                        ticker=ticker,
+                        days=results['monte_carlo'].shape[0] if hasattr(results['monte_carlo'], 'shape') else 'N/A',
+                        min_price=f"{results['monte_carlo'].min():.2f}" if hasattr(results['monte_carlo'], 'min') else 'N/A',
+                        max_price=f"{results['monte_carlo'].max():.2f}" if hasattr(results['monte_carlo'], 'max') else 'N/A'
+                    ))
             else:
                 results['monte_carlo'] = "Ticker not specified"
         except AnalysisError as e:
@@ -133,6 +170,11 @@ class GoldLayer:
         try:
             if shock_map:
                 results['stress_test'] = stress_test(self.df, shock_map)
+                if results['stress_test'] is not None:
+                    print(ANALYSIS_STRESS_TEST.format(
+                        shock_details=str(shock_map),
+                        max_drawdown="N/A"  # Could calculate if needed
+                    ))
             else:
                 results['stress_test'] = "Shock map not provided"
         except AnalysisError as e:
@@ -144,6 +186,21 @@ class GoldLayer:
 
         try:
             results['sensitivity_regression'] = sensitivity_reg(self.df, target, factors)
+            if results['sensitivity_regression'] is not None:
+                if isinstance(results['sensitivity_regression'], str):
+                    print(ANALYSIS_SENSITIVITY_REGRESSION.format(
+                        model_type="OLS",
+                        top_factors="N/A",
+                        coefficients="N/A",
+                        r_squared="N/A"
+                    ))
+                else:
+                    print(ANALYSIS_SENSITIVITY_REGRESSION.format(
+                        model_type="Ridge",
+                        top_factors=str(list(results['sensitivity_regression']['coefficients'].keys())),
+                        coefficients=str(list(results['sensitivity_regression']['coefficients'].values())),
+                        r_squared="N/A"
+                    ))
         except AnalysisError as e:
             self.logger.error(f"Analysis error in sensitivity regression: {e}")
             results['sensitivity_regression'] = None
@@ -157,6 +214,7 @@ class GoldLayer:
         """
         Run all analyses in parallel using multiprocessing for better performance.
         """
+        print(LIVE_STEP_7_RESULTS_GENERATION)
         results = {}
         
         # Define tasks as partial functions
