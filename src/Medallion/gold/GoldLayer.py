@@ -194,11 +194,18 @@ class GoldLayer:
                         coefficients="N/A",
                         r_squared="N/A"
                     ))
-                else:
+                elif isinstance(results['sensitivity_regression'], dict):
                     print(ANALYSIS_SENSITIVITY_REGRESSION.format(
                         model_type="Ridge",
-                        top_factors=str(list(results['sensitivity_regression']['coefficients'].keys())),
-                        coefficients=str(list(results['sensitivity_regression']['coefficients'].values())),
+                        top_factors=str(list(results['sensitivity_regression'].get('coefficients', {}).keys())),
+                        coefficients=str(list(results['sensitivity_regression'].get('coefficients', {}).values())),
+                        r_squared="N/A"
+                    ))
+                else:
+                    print(ANALYSIS_SENSITIVITY_REGRESSION.format(
+                        model_type="Unknown",
+                        top_factors="N/A",
+                        coefficients="N/A",
                         r_squared="N/A"
                     ))
         except AnalysisError as e:

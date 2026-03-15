@@ -69,14 +69,18 @@ def main():
 
         # Completion message with metrics
         metrics = catalog.get_metrics_summary()
+        if isinstance(results, dict):
+            result_keys = list(results.keys())
+        else:
+            result_keys = []
         print(LIVE_STEP_8_COMPLETION.format(
             total_time=f"{execution_time:.2f}",
             total_records=metrics.get('data_processed', 0),
             analyses_count=metrics.get('analyses_completed', 0),
-            files_created=len(results)
+            files_created=len(results) if hasattr(results, '__len__') else 0
         ))
 
-        print(MAIN_RESULTS_SUMMARY.format(result_keys=list(results.keys())))
+        print(MAIN_RESULTS_SUMMARY.format(result_keys=result_keys))
         print(MAIN_COMPLETION.format(execution_time=f"{execution_time:.2f}"))
 
         # Save session summary

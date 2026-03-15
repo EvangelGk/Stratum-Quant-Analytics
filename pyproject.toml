@@ -5,6 +5,7 @@ description = ""
 authors = [
     {name = "EvangelGK",email = "liagkan@gmail.comK"}
 ]
+
 requires-python = ">=3.14"
 dependencies = [
     "jupyter (>=1.1.1,<2.0.0)",
@@ -22,7 +23,9 @@ dependencies = [
     "pandera (>=0.29.0,<0.30.0)",
     "spicy (>=0.16.0,<0.17.0)",
     "statsmodels (>=0.14.6,<0.15.0)",
-    "scikit-learn (>=1.8.0,<2.0.0)"
+    "scikit-learn (>=1.8.0,<2.0.0)",
+    "pytest (>=9.0.2,<10.0.0)",
+    "fernet (>=1.0.1,<2.0.0)"
 ]
 
 
