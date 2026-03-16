@@ -1,17 +1,21 @@
 import concurrent.futures
 from pathlib import Path
-from typing import Dict, Any
-from Fetchers.ProjectConfig import ProjectConfig
+from typing import Any, Dict
+
 from Fetchers.Factory import DataFactory
+from Fetchers.ProjectConfig import ProjectConfig
+
 from .bronze import BronzeLayer
-from .silver.silver import SilverLayer
 from .gold.GoldLayer import GoldLayer
+from .silver.silver import SilverLayer
+
 
 class MedallionPipeline:
     """
     Orchestrates the entire Medallion Architecture with parallel execution.
     Handles Bronze (Ingestion), Silver (Transformation), Gold (Analytics).
     """
+
     def __init__(self, config: ProjectConfig, factory: DataFactory):
         self.config = config
         self.factory = factory

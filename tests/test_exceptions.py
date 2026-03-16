@@ -1,9 +1,9 @@
 import pytest
 
 from exceptions.MedallionExceptions import (
+    AnalysisError,
     DataPipelineError,
     DataValidationError,
-    AnalysisError,
 )
 
 

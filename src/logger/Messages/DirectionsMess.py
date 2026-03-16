@@ -238,7 +238,7 @@ Press Enter to continue or 'q' to quit...
 """
 
 LIVE_USER_PROMPT_CONFIG = """
-Would you like to modify configuration? (y/n): 
+Would you like to modify configuration? (y/n):
 
 OUTPUT DIRECTORIES:
 - data/raw/: Raw downloaded data

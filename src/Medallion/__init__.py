@@ -1,22 +1,32 @@
 import concurrent.futures
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
 from tqdm import tqdm
-from Fetchers.ProjectConfig import ProjectConfig
-from Fetchers.Factory import DataFactory
-from .bronze import BronzeLayer
-from .silver.silver import SilverLayer
-from .gold.GoldLayer import GoldLayer
+
 from exceptions.MedallionExceptions import ParallelExecutionError
+from Fetchers.Factory import DataFactory
+from Fetchers.ProjectConfig import ProjectConfig
 from logger.Messages.MedallionMess import (
-    BRONZE_START, BRONZE_SUCCESS, SILVER_START, SILVER_SUCCESS,
-    GOLD_START, GOLD_SUCCESS, GOLD_PARALLEL_MODE, GOLD_SEQUENTIAL_MODE
+    BRONZE_START,
+    BRONZE_SUCCESS,
+    GOLD_SEQUENTIAL_MODE,
+    GOLD_START,
+    GOLD_SUCCESS,
+    SILVER_START,
+    SILVER_SUCCESS,
 )
+
+from .bronze import BronzeLayer
+from .gold.GoldLayer import GoldLayer
+from .silver.silver import SilverLayer
+
 
 class MedallionPipeline:
     """
-    Orchestrates the entire Medallion Architecture with parallel execution and progress tracking.
+    Orchestrates the entire Medallion Architecture with parallel execution.
     """
+
     def __init__(self, config: ProjectConfig, factory: DataFactory):
         self.config = config
         self.factory = factory
@@ -76,7 +86,9 @@ class MedallionPipeline:
                     gold_future = executor.submit(self.run_gold)
                     gold_future.result()
                     pbar.update(1)
-                    analyses_future = executor.submit(self.gold.run_all_analyses_parallel)
+                    analyses_future = executor.submit(
+                        self.gold.run_all_analyses_parallel
+                    )
                     results = analyses_future.result()
                     pbar.update(1)
             return results
@@ -84,16 +96,25 @@ class MedallionPipeline:
             print(f"Parallel execution error: {e}. Falling back to sequential.")
             return self.run_full_pipeline_sequential()
         except Exception as e:
-            print(f"Unexpected error in parallel execution: {e}. Falling back to sequential.")
+            print(
+                f"Unexpected error in parallel execution: {e}. "
+                "Falling back to sequential."
+            )
             return self.run_full_pipeline_sequential()
 
     def health_check(self) -> Dict[str, bool]:
         """Perform health checks on data and system."""
         checks = {}
-        checks['raw_data_exists'] = self.raw_path.exists() and any(self.raw_path.iterdir())
-        checks['processed_data_exists'] = self.processed_path.exists() and any(self.processed_path.iterdir())
-        checks['gold_data_exists'] = (self.gold_path / "master_table.parquet").exists()
-        checks['config_valid'] = hasattr(self.config, 'fred_api_key') and self.config.fred_api_key
+        checks["raw_data_exists"] = self.raw_path.exists() and any(
+            self.raw_path.iterdir()
+        )
+        checks["processed_data_exists"] = self.processed_path.exists() and any(
+            self.processed_path.iterdir()
+        )
+        checks["gold_data_exists"] = (self.gold_path / "master_table.parquet").exists()
+        checks["config_valid"] = (
+            hasattr(self.config, "fred_api_key") and self.config.fred_api_key
+        )
         return checks
 
     def run_full_pipeline_sequential(self) -> Dict[str, Any]:

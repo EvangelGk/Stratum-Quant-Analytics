@@ -1,9 +1,14 @@
-import pandas as pd
-from pycaret.regression import setup, compare_models, predict_model
 from typing import Union
-from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
-def auto_ml_regression(df: pd.DataFrame, target: str, features: list) -> Union[dict, None]:
+import pandas as pd
+from pycaret.regression import compare_models, predict_model, setup
+
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
+
+def auto_ml_regression(
+    df: pd.DataFrame, target: str, features: list
+) -> Union[dict, None]:
     """
     Auto ML regression using PyCaret for best model selection.
 
@@ -23,7 +28,7 @@ def auto_ml_regression(df: pd.DataFrame, target: str, features: list) -> Union[d
         setup(data=data, target=target, silent=True, verbose=False)
         best_model = compare_models()
         predictions = predict_model(best_model, data=data)
-        return {'best_model': str(best_model), 'predictions': predictions}
+        return {"best_model": str(best_model), "predictions": predictions}
     except DataValidationError:
         raise
     except Exception as e:

@@ -1,5 +1,6 @@
 import pandas as pd
 
+
 def test_base_fetcher_cache(monkeypatch):
     """BaseFetcher should store and retrieve values from its cache."""
 
@@ -18,10 +19,13 @@ def test_base_fetcher_cache(monkeypatch):
 
     # Patch diskcache.Cache used in BaseFetcher
     import Fetchers.BaseFetcher as bf
+
     monkeypatch.setattr(bf.dc, "Cache", DummyCache)
 
     class DummyFetcher(bf.BaseFetcher):
-        def fetch(self, identifier: str, start_date: str, end_date: str) -> pd.DataFrame:
+        def fetch(
+            self, identifier: str, start_date: str, end_date: str
+        ) -> pd.DataFrame:
             return pd.DataFrame({"value": [1]})
 
     f = DummyFetcher()

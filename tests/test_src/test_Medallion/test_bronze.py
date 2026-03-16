@@ -1,8 +1,9 @@
 import os
+
 import pandas as pd
 
-from src.Medallion.bronze import BronzeLayer
 from src.Fetchers.ProjectConfig import ProjectConfig
+from src.Medallion.bronze import BronzeLayer
 
 
 class DummyConfig(ProjectConfig):
@@ -16,20 +17,30 @@ class DummyConfig(ProjectConfig):
 
 class DummyFetcher:
     def fetch(self, *args, **kwargs):
-        return pd.DataFrame({
-            "Date": ["2020-01-01"],
-            "Open": [1.0],
-            "High": [2.0],
-            "Low": [0.5],
-            "Close": [1.5],
-            "Adj Close": [1.4],
-            "Volume": [100]
-        })
+        return pd.DataFrame(
+            {
+                "Date": ["2020-01-01"],
+                "Open": [1.0],
+                "High": [2.0],
+                "Low": [0.5],
+                "Close": [1.5],
+                "Adj Close": [1.4],
+                "Volume": [100],
+            }
+        )
 
 
 def test_get_expected_columns():
     layer = BronzeLayer(DummyConfig(), factory=None)
-    assert layer._get_expected_columns("yfinance") == ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    assert layer._get_expected_columns("yfinance") == [
+        "Date",
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Adj Close",
+        "Volume",
+    ]
     assert layer._get_expected_columns("fred") == ["Date", "Value"]
     assert layer._get_expected_columns("worldbank") == ["economy", "Date", "Value"]
 
@@ -39,15 +50,17 @@ def test_process_and_save_writes_parquet(tmp_path, monkeypatch):
     layer = BronzeLayer(cfg, factory=None)
     layer.base_path = str(tmp_path)
 
-    df = pd.DataFrame({
-        "Date": ["2020-01-01"],
-        "Open": [1.0],
-        "High": [2.0],
-        "Low": [0.5],
-        "Close": [1.5],
-        "Adj Close": [1.4],
-        "Volume": [100]
-    })
+    df = pd.DataFrame(
+        {
+            "Date": ["2020-01-01"],
+            "Open": [1.0],
+            "High": [2.0],
+            "Low": [0.5],
+            "Close": [1.5],
+            "Adj Close": [1.4],
+            "Volume": [100],
+        }
+    )
 
     # Ensure that saving creates the file and updates catalog
     layer._process_and_save(df, "test_file", "yfinance")

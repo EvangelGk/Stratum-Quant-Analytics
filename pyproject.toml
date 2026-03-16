@@ -6,29 +6,63 @@ authors = [
     {name = "EvangelGK",email = "liagkan@gmail.comK"}
 ]
 
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
-    "jupyter (>=1.1.1,<2.0.0)",
-    "pandas (>=3.0.1,<4.0.0)",
-    "numpy (>=2.4.2,<3.0.0)",
-    "matplotlib (>=3.10.8,<4.0.0)",
-    "seaborn (>=0.13.2,<0.14.0)",
-    "scipy (>=1.17.1,<2.0.0)",
-    "pyarrow (>=23.0.1,<24.0.0)",
-    "fredapi (>=0.5.2,<0.6.0)",
-    "yfinance (>=1.2.0,<2.0.0)",
-    "wbgapi (>=1.0.14,<2.0.0)",
-    "dotenv (>=0.9.9,<0.10.0)",
-    "logging (>=0.4.9.6,<0.5.0.0)",
-    "pandera (>=0.29.0,<0.30.0)",
-    "spicy (>=0.16.0,<0.17.0)",
-    "statsmodels (>=0.14.6,<0.15.0)",
-    "scikit-learn (>=1.8.0,<2.0.0)",
-    "pytest (>=9.0.2,<10.0.0)",
-    "fernet (>=1.0.1,<2.0.0)"
+    "pandas>=3.0.1,<4.0.0",
+    "numpy>=2.4.2,<3.0.0",
+    "matplotlib>=3.10.8,<4.0.0",
+    "seaborn>=0.13.2,<1.0.0",
+    "scipy>=1.17.1,<2.0.0",
+    "pyarrow>=23.0.1,<24.0.0",
+    "fredapi>=0.5.2,<1.0.0",
+    "yfinance>=1.2.0,<2.0.0",
+    "wbgapi>=1.0.14,<2.0.0",
+    "dotenv>=0.9.9,<1.0.0",
+    "pandera>=0.29.0,<1.0.0",
+    "statsmodels>=0.14.6,<1.0.0",
+    "scikit-learn>=1.8.0,<2.0.0",
+    "pytest>=9.0.2,<10.0.0",
+    "fernet>=1.0.1,<2.0.0",
+    "diskcache>=5.6.3,<6.0.0",
+    "tqdm>=4.66.2,<5.0.0"
 ]
 
+[tool.poetry]
+packages = [
+    { include = "src"},
+    { include = "main.py"},
+    { include = "tests"}
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.15.6"
+jupyter = "^1.1.1"
+mypy = "^1.8.0"
+black = "^24.4.2"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "W",  # pycodestyle warnings
+    "I",  # isort
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

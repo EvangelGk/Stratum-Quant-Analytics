@@ -1,9 +1,14 @@
+from typing import Union
+
 import numpy as np
 import pandas as pd
-from typing import Union
-from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
-def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000) -> Union[np.ndarray, None]:
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
+
+def monte_carlo(
+    df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000
+) -> Union[np.ndarray, None]:
     """
     Geometric Brownian Motion (GBM) simulation.
     dS = S * mu * dt + S * sigma * dW
@@ -18,10 +23,12 @@ def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int 
     - Array of price paths (days x iterations), or None if error.
     """
     try:
-        if 'ticker' not in df.columns or 'close' not in df.columns:
-            raise DataValidationError("DataFrame must contain 'ticker' and 'close' columns.")
+        if "ticker" not in df.columns or "close" not in df.columns:
+            raise DataValidationError(
+                "DataFrame must contain 'ticker' and 'close' columns."
+            )
 
-        data = df[df['ticker'] == ticker]['close']
+        data = df[df["ticker"] == ticker]["close"]
         if data.empty:
             raise DataValidationError(f"No data found for ticker {ticker}.")
 
@@ -34,12 +41,13 @@ def monte_carlo(df: pd.DataFrame, ticker: str, days: int = 252, iterations: int 
         last_price = data.iloc[-1]
 
         # Vectorized Simulation (efficient)
-        shocks = np.exp((mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, (days, iterations)))
+        shocks = np.exp(
+            (mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, (days, iterations))
+        )
         price_paths = last_price * shocks.cumprod(axis=0)
 
         return price_paths
     except DataValidationError:
         raise
     except Exception as e:
-        raise AnalysisError(f"Unexpected error in monte_carlo: {e}") from e 
-
+        raise AnalysisError(f"Unexpected error in monte_carlo: {e}") from e

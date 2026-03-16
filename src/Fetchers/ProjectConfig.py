@@ -1,18 +1,22 @@
 import os
-from dotenv import load_dotenv
 from dataclasses import dataclass
 from enum import Enum
+
+from dotenv import load_dotenv
+
 
 class RunMode(Enum):
     SAMPLE = "sample"
     ACTUAL = "actual"
 
+
 @dataclass
 class ProjectConfig:
     """
-    Central Configuration Hub. 
+    Central Configuration Hub.
     Διαχειρίζεται τα API keys και τα περιβάλλοντα εκτέλεσης.
     """
+
     fred_api_key: str
     mode: RunMode = RunMode.SAMPLE
     start_date: str = "2016-01-01"
@@ -26,17 +30,17 @@ class ProjectConfig:
     def load_from_env(cls):
         # load .env file
         load_dotenv()
-        
+
         # validate and load FRED API key
         key = os.getenv("FRED_API_KEY")
         if not key:
             # error missing FRED API key
             raise ValueError("CRITICAL ERROR: FRED_API_KEY not found in .env file.")
-        
+
         # get the mode (default to 'sample' if not found)
         env_mode = os.getenv("ENVIRONMENT", "sample").lower()
         mode = RunMode.ACTUAL if env_mode == "actual" else RunMode.SAMPLE
-        
+
         # get dates and other configs
         start_date = os.getenv("START_DATE", "2016-01-01")
         end_date = os.getenv("END_DATE", "2026-12-31")
@@ -44,7 +48,7 @@ class ProjectConfig:
         max_retries = int(os.getenv("MAX_RETRIES", "4"))
         retry_delay_min = float(os.getenv("RETRY_DELAY_MIN", "1.0"))
         retry_delay_max = float(os.getenv("RETRY_DELAY_MAX", "3.0"))
-        
+
         return cls(
             fred_api_key=key,
             mode=mode,
@@ -53,7 +57,7 @@ class ProjectConfig:
             max_workers=max_workers,
             max_retries=max_retries,
             retry_delay_min=retry_delay_min,
-            retry_delay_max=retry_delay_max
+            retry_delay_max=retry_delay_max,
         )
 
     def get_targets(self):

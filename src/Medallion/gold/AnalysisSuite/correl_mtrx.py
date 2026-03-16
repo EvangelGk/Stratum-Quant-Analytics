@@ -1,7 +1,10 @@
+from typing import Union
+
 import numpy as np
 import pandas as pd
-from typing import Union
-from exceptions.MedallionExceptions import DataValidationError, AnalysisError
+
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 
 def correl_mtrx(df: pd.DataFrame) -> Union[pd.DataFrame, None]:
     """

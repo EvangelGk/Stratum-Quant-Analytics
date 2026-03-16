@@ -1,10 +1,17 @@
+from typing import Tuple, Union
+
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
-from typing import Union, Tuple
-import numpy as np
-from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
-def forecasting(df: pd.DataFrame, column: str, steps: int = 10, order: Tuple[int, int, int] = (5, 1, 0)) -> Union[pd.Series, None]:
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
+
+def forecasting(
+    df: pd.DataFrame,
+    column: str,
+    steps: int = 10,
+    order: Tuple[int, int, int] = (5, 1, 0),
+) -> Union[pd.Series, None]:
     """
     Time series forecasting using ARIMA model.
 
@@ -22,10 +29,12 @@ def forecasting(df: pd.DataFrame, column: str, steps: int = 10, order: Tuple[int
             raise DataValidationError(f"Column {column} not found in DataFrame.")
 
         # Assume df has a date column for time series
-        if 'date' not in df.columns:
-            raise DataValidationError("DataFrame must have a 'date' column for time series.")
+        if "date" not in df.columns:
+            raise DataValidationError(
+                "DataFrame must have a 'date' column for time series."
+            )
 
-        ts_data = df.set_index('date')[column].dropna()
+        ts_data = df.set_index("date")[column].dropna()
         if ts_data.empty:
             raise DataValidationError(f"No data in column {column}.")
 

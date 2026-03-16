@@ -5,14 +5,18 @@ from src.Fetchers.ProjectConfig import ProjectConfig, RunMode
 
 def test_load_from_env_missing_key(monkeypatch):
     # Ensure dotenv does not reload any stored API keys
-    monkeypatch.setattr("Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
+    )
     monkeypatch.delenv("FRED_API_KEY", raising=False)
     with pytest.raises(ValueError):
         ProjectConfig.load_from_env()
 
 
 def test_load_from_env_success(monkeypatch):
-    monkeypatch.setattr("Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
+    )
     monkeypatch.setenv("FRED_API_KEY", "dummy")
     monkeypatch.setenv("ENVIRONMENT", "actual")
     cfg = ProjectConfig.load_from_env()

@@ -1,10 +1,13 @@
 import json
+
 import pandas as pd
 import pytest
 
-from src.Medallion.silver.silver import SilverLayer
+from src.exceptions.MedallionExceptions import (
+    CatalogNotFoundError,
+)
 from src.Fetchers.ProjectConfig import ProjectConfig
-from src.exceptions.MedallionExceptions import CatalogNotFoundError, ComplianceViolationError
+from src.Medallion.silver.silver import SilverLayer
 
 
 class DummyConfig(ProjectConfig):
@@ -30,15 +33,25 @@ def test_standardize_and_impute_and_audit_columns(tmp_path):
     assert standardized["value"].max() <= 3.0
 
     # Test _impute: should fill missing values and compute imputed count
-    df2 = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]})
+    df2 = pd.DataFrame(
+        {"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]}
+    )
     imputed_df, imputed_count, outliers = layer._impute(df2.copy(), "fred")
     assert imputed_count >= 1
     assert outliers >= 0
     assert not imputed_df.isnull().any().any()
 
     # Test audit columns
-    audited = layer._add_audit_columns(imputed_df, "file", "fred", imputed_count, 2, 1, outliers)
-    for col in ["processed_at", "silver_run_id", "schema_version", "imputed_count", "outliers_clipped"]:
+    audited = layer._add_audit_columns(
+        imputed_df, "file", "fred", imputed_count, 2, 1, outliers
+    )
+    for col in [
+        "processed_at",
+        "silver_run_id",
+        "schema_version",
+        "imputed_count",
+        "outliers_clipped",
+    ]:
         assert col in audited.columns
 
 
@@ -71,7 +84,9 @@ def test_save_to_silver_creates_parquet(tmp_path):
     layer.processed_path = tmp_path / "processed"
     layer.processed_path.mkdir(parents=True, exist_ok=True)
 
-    df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01"]), "value": [1.0], "category": ["A"]})
+    df = pd.DataFrame(
+        {"date": pd.to_datetime(["2020-01-01"]), "value": [1.0], "category": ["A"]}
+    )
     layer._save_to_silver(df, "file", "fred")
     out_path = layer.processed_path / "fred" / "file_silver.parquet"
     assert out_path.exists()

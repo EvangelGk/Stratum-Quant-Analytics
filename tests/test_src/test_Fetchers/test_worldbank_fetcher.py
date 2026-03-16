@@ -10,11 +10,13 @@ def test_worldbank_fetcher_transforms_data(monkeypatch):
             @staticmethod
             def DataFrame(indicator, country, time=None):
                 # Create a wide-format DataFrame like wbgapi might
-                return pd.DataFrame({
-                    "economy": ["WLD", "WLD"],
-                    "YR2020": [1.0, 2.0],
-                    "YR2021": [1.5, 2.5]
-                })
+                return pd.DataFrame(
+                    {
+                        "economy": ["WLD", "WLD"],
+                        "YR2020": [1.0, 2.0],
+                        "YR2021": [1.5, 2.5],
+                    }
+                )
 
     monkeypatch.setattr(wb_module, "wb", DummyWB)
 

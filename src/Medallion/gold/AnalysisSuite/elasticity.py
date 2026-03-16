@@ -1,9 +1,13 @@
-import numpy as np
-import pandas as pd
 from typing import Union
-from exceptions.MedallionExceptions import DataValidationError, AnalysisError
 
-def elasticity(df: pd.DataFrame, asset_return: str, macro_factor: str) -> Union[float, None]:
+import pandas as pd
+
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
+
+def elasticity(
+    df: pd.DataFrame, asset_return: str, macro_factor: str
+) -> Union[float, None]:
     """
     Calculate elasticity: % Change in Asset / % Change in Macro Factor.
     Essential for pricing power analysis.
@@ -18,18 +22,24 @@ def elasticity(df: pd.DataFrame, asset_return: str, macro_factor: str) -> Union[
     """
     try:
         if asset_return not in df.columns or macro_factor not in df.columns:
-            raise DataValidationError(f"Columns {asset_return} or {macro_factor} not found in DataFrame.")
+            raise DataValidationError(
+                f"Columns {asset_return} or {macro_factor} not found in DataFrame."
+            )
 
         cov = df[[asset_return, macro_factor]].cov().iloc[0, 1]
         var_macro = df[macro_factor].var()
         if var_macro == 0:
-            raise AnalysisError("Variance of macro factor is zero, cannot compute beta.")
+            raise AnalysisError(
+                "Variance of macro factor is zero, cannot compute beta."
+            )
 
         beta = cov / var_macro
         avg_macro = df[macro_factor].mean()
         avg_asset = df[asset_return].mean()
         if avg_asset == 0:
-            raise AnalysisError("Average asset return is zero, cannot compute elasticity.")
+            raise AnalysisError(
+                "Average asset return is zero, cannot compute elasticity."
+            )
 
         return beta * (avg_macro / avg_asset)
     except DataValidationError:

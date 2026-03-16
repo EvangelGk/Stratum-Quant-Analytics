@@ -1,7 +1,5 @@
-import os
-
-from src.Medallion import MedallionPipeline
 from src.Fetchers.ProjectConfig import ProjectConfig
+from src.Medallion import MedallionPipeline
 
 
 class DummyConfig(ProjectConfig):

@@ -8,14 +8,17 @@ def test_yfinance_fetcher_wraps_errors_and_caches(monkeypatch):
     class DummyYF:
         @staticmethod
         def download(ticker, start=None, end=None, interval=None):
-            df = pd.DataFrame({
-                "Open": [1.0],
-                "High": [2.0],
-                "Low": [0.5],
-                "Close": [1.5],
-                "Adj Close": [1.4],
-                "Volume": [100]
-            }, index=pd.to_datetime(["2020-01-01"]))
+            df = pd.DataFrame(
+                {
+                    "Open": [1.0],
+                    "High": [2.0],
+                    "Low": [0.5],
+                    "Close": [1.5],
+                    "Adj Close": [1.4],
+                    "Volume": [100],
+                },
+                index=pd.to_datetime(["2020-01-01"]),
+            )
             return df
 
     monkeypatch.setattr(yf_module.YFinanceFetcher, "yf", DummyYF)

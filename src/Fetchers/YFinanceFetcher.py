@@ -1,6 +1,9 @@
 import pandas as pd
+
+from exceptions.FetchersExceptions import APIError, CacheError
+
 from .BaseFetcher import BaseFetcher
-from exceptions.FetchersExceptions import APIError, DataFetchError, CacheError
+
 
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
@@ -19,7 +22,9 @@ class YFinanceFetcher(BaseFetcher):
             raise CacheError(f"Cache read error: {e}") from e
 
         try:
-            data = self.yf.download(ticker, start=start_date, end=end_date, interval="1mo")
+            data = self.yf.download(
+                ticker, start=start_date, end=end_date, interval="1mo"
+            )
             df = data.reset_index()
         except Exception as e:
             raise APIError(f"YFinance API error: {e}") from e
@@ -30,4 +35,3 @@ class YFinanceFetcher(BaseFetcher):
             raise CacheError(f"Cache write error: {e}") from e
 
         return df
-        
