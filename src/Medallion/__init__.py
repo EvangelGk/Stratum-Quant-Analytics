@@ -42,13 +42,17 @@ class MedallionPipeline:
 
         self.bronze = BronzeLayer(config, factory)
         self.silver = SilverLayer(config)
-        self.gold = GoldLayer(config)
+        self.gold = None
 
         self.bronze.base_path = str(self.raw_path)
         self.silver.raw_path = self.raw_path
         self.silver.processed_path = self.processed_path
-        self.gold.processed_path = self.processed_path
-        self.gold.gold_path = self.gold_path
+    def _get_gold_layer(self) -> GoldLayer:
+        if self.gold is None:
+            self.gold = GoldLayer(self.config)
+            self.gold.processed_path = self.processed_path
+            self.gold.gold_path = self.gold_path
+        return self.gold
 
     def run_bronze(self) -> None:
         print(BRONZE_START)
@@ -67,7 +71,7 @@ class MedallionPipeline:
     def run_gold(self) -> None:
         print(GOLD_START)
         with tqdm(total=1, desc="Gold Layer") as pbar:
-            self.gold.create_master_table()
+            self._get_gold_layer().create_master_table()
             pbar.update(1)
         print(GOLD_SUCCESS)
 
@@ -87,7 +91,7 @@ class MedallionPipeline:
                     gold_future.result()
                     pbar.update(1)
                     analyses_future = executor.submit(
-                        self.gold.run_all_analyses_parallel
+                        self._get_gold_layer().run_all_analyses_parallel
                     )
                     results = analyses_future.result()
                     pbar.update(1)
@@ -112,7 +116,7 @@ class MedallionPipeline:
             self.processed_path.iterdir()
         )
         checks["gold_data_exists"] = (self.gold_path / "master_table.parquet").exists()
-        checks["config_valid"] = (
+        checks["config_valid"] = bool(
             hasattr(self.config, "fred_api_key") and self.config.fred_api_key
         )
         return checks
@@ -126,6 +130,6 @@ class MedallionPipeline:
             pbar.update(1)
             self.run_gold()
             pbar.update(1)
-            results = self.gold.run_all_analyses_parallel()
+            results = self._get_gold_layer().run_all_analyses_parallel()
             pbar.update(1)
         return results

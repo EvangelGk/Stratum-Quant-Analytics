@@ -25,7 +25,11 @@ from logger.Messages.MainMess import (
     MAIN_START,
     QUICK_START,
 )
-from Medallion import MedallionPipeline
+
+try:
+    from .Medallion import MedallionPipeline
+except ImportError:
+    from Medallion import MedallionPipeline
 
 # Setup logging
 logging.basicConfig(

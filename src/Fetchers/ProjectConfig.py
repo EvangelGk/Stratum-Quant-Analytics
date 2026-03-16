@@ -28,7 +28,6 @@ class ProjectConfig:
 
     @classmethod
     def load_from_env(cls):
-        # load .env file
         load_dotenv()
 
         # validate and load FRED API key

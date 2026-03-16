@@ -13,18 +13,42 @@ def sensitivity_reg(
     factors: List[str] = None,
     model: str = "OLS",
 ) -> Union[str, dict, None]:
-    """
-    Multivariate Regression to find coefficients of Macro factors.
-    Supports OLS (statsmodels) or Ridge (sklearn) for variations.
+    """Run multivariate macro sensitivity regression on equity log-returns.
 
-    Parameters:
-    - df: Master table DataFrame from GoldLayer.
-    - target: Target column (e.g., 'log_return').
-    - factors: List of factor columns (default: ['inflation', 'energy_index']).
-    - model: Regression model ('OLS' or 'Ridge').
+    Estimates the linear relationship between equity log-returns and a
+    set of macro factors via:
+
+        log_return = α + β₁·inflation + β₂·energy_index + … + ε
+
+    Two solvers are supported:
+
+    - **OLS** (``statsmodels``): Unbiased BLUE estimator under Gauss-Markov
+      assumptions.  Returns a full ``Summary`` object with t-stats, p-values,
+      R², and confidence intervals — the standard output for a risk
+      attribution report.
+    - **Ridge** (``scikit-learn``): L2-regularised estimator that shrinks
+      coefficients toward zero, reducing variance at the cost of slight bias.
+      Preferred when macro factors are collinear (e.g. inflation & energy
+      prices are highly correlated).  Returns a plain coefficient dict.
+
+    Args:
+        df: Master table ``DataFrame`` produced by ``GoldLayer``.  Must
+            contain ``target`` and all columns listed in ``factors``.
+        target: Dependent variable column, default ``'log_return'``.
+        factors: List of independent macro-factor column names.  Defaults
+            to ``['inflation', 'energy_index']``.
+        model: Regression solver — ``'OLS'`` or ``'Ridge'``.
 
     Returns:
-    - Model summary (OLS) or coefficients dict (Ridge), or None if error.
+        - ``'OLS'``: A ``statsmodels`` ``Summary`` object (printable).
+        - ``'Ridge'``: A ``dict`` with keys ``'coefficients'`` and
+          ``'intercept'``.
+        - ``None`` is never returned; specific exceptions are raised.
+
+    Raises:
+        DataValidationError: If ``target``, any factor column, or an
+            invalid model name is provided.
+        AnalysisError: On any fitting or runtime failure.
     """
     try:
         factors = factors or ["inflation", "energy_index"]

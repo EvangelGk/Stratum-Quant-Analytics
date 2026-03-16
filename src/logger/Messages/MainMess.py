@@ -1,6 +1,13 @@
 # Main Application Messages
 # Messages for main script execution and user interaction
 
+APPLICATION_TITLE = "=== Scenario Planner ==="
+
+QUICK_START = (
+    "Quick start: configure API keys, run the pipeline, then review output/ "
+    "and logs/."
+)
+
 MAIN_START = "Starting Scenario Planner application in {mode} mode."
 
 MAIN_CONFIG_LOADED = "Configuration loaded successfully. Using {config_details}."

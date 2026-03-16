@@ -133,16 +133,12 @@ class GoldLayer:
             results["correlation_matrix"] = correl_mtrx(self.df)
             duration = time.time() - start_time
             if results["correlation_matrix"] is not None:
-                rows = (
-                    len(results["correlation_matrix"].index)
-                    if hasattr(results["correlation_matrix"], "index")
-                    else 0
-                )
-                cols = (
-                    len(results["correlation_matrix"].columns)
-                    if hasattr(results["correlation_matrix"], "columns")
-                    else 0
-                )
+                if isinstance(results["correlation_matrix"], pd.DataFrame):
+                    rows = len(results["correlation_matrix"].index)
+                    cols = len(results["correlation_matrix"].columns)
+                else:
+                    rows = 0
+                    cols = 0
                 catalog.log_analysis_operation(
                     "correlation_matrix",
                     None,
@@ -254,7 +250,7 @@ class GoldLayer:
 
         try:
             results["sensitivity_regression"] = sensitivity_reg(
-                self.df, target, factors
+                self.df, target, factors, "OLS"
             )
             if results["sensitivity_regression"] is not None:
                 if isinstance(results["sensitivity_regression"], str):
@@ -354,7 +350,7 @@ class GoldLayer:
             max_workers=max_workers
         ) as executor:
             future_to_key = {executor.submit(task): key for key, task in tasks.items()}
-            for future in concurrent.futures.as_completed(future_to_key):
+            for future in future_to_key:
                 key = future_to_key[future]
                 try:
                     results[key] = future.result()

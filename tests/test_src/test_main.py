@@ -1,4 +1,4 @@
-from src.main import main as main_module
+import src.main as main_module
 
 
 def test_main_handles_missing_api_key(monkeypatch, capsys):

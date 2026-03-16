@@ -8,17 +8,34 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 def elasticity(
     df: pd.DataFrame, asset_return: str, macro_factor: str
 ) -> Union[float, None]:
-    """
-    Calculate elasticity: % Change in Asset / % Change in Macro Factor.
-    Essential for pricing power analysis.
+    """Compute the macro-factor elasticity of an asset's returns.
 
-    Parameters:
-    - df: Master table DataFrame from GoldLayer.
-    - asset_return: Column name for asset returns (e.g., 'log_return').
-    - macro_factor: Column name for macro factor (e.g., 'inflation').
+    Elasticity measures the sensitivity of an asset's return to a
+    *percentage change* in a macro variable.  It extends a simple OLS
+    beta by scaling for the relative magnitudes of each series:
+
+        elasticity = β · (μ_macro / μ_asset)
+
+    where β = Cov(asset, macro) / Var(macro).  This answers the practical
+    question: *"If inflation rises 1%, by what percentage do my returns
+    change?"* — essential for pricing-power and pass-through analysis.
+
+    Args:
+        df: Master table ``DataFrame`` produced by ``GoldLayer``.  Must
+            contain both ``asset_return`` and ``macro_factor`` columns.
+        asset_return: Column name for the asset log-returns,
+            e.g. ``'log_return'``.
+        macro_factor: Column name for the macro variable,
+            e.g. ``'inflation'`` or ``'energy_index'``.
 
     Returns:
-    - Elasticity value as float, or None if error.
+        Elasticity as a ``float``, or ``None`` on recoverable errors
+        (though specific errors are raised instead).
+
+    Raises:
+        DataValidationError: If either column is missing from ``df``.
+        AnalysisError: If the macro factor has zero variance (constant
+            series) or if the mean asset return is zero (division guard).
     """
     try:
         if asset_return not in df.columns or macro_factor not in df.columns:

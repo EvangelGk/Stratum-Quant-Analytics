@@ -24,10 +24,9 @@ class WorldBankFetcher(BaseFetcher):
         data = wb.data.DataFrame(
             indicator, country, time=range(start_year, end_year + 1)
         )
-        df = data.reset_index()
+        df = data.reset_index(drop=True)
         # Conversion from "Wide" to "Long" format to align with other fetchers
         df = df.melt(id_vars="economy", var_name="Date", value_name="Value")
         df["Date"] = df["Date"].str.replace("YR", "").astype(int)
         self._set_cached(key, df)
-        return df
         return df

@@ -28,11 +28,7 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [
-    { include = "src"},
-    { include = "main.py"},
-    { include = "tests"}
-]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -43,6 +39,8 @@ ruff = "^0.15.6"
 jupyter = "^1.1.1"
 mypy = "^1.8.0"
 black = "^24.4.2"
+pre-commit = "^4.0.0"
+pytest-xdist = "^3.5.0"
 
 [tool.ruff]
 line-length = 88
@@ -65,4 +63,31 @@ line-length = 88
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "yfinance.*",
+    "fredapi.*",
+    "wbgapi.*",
+    "pandera.*",
+    "diskcache.*",
+    "pycaret.*",
+    "statsmodels.*",
+    "sklearn.*",
+    "fernet.*",
+]
 ignore_missing_imports = true

@@ -9,16 +9,36 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 def stress_test(
     df: pd.DataFrame, shock_map: Dict[str, float]
 ) -> Union[Dict[str, str], None]:
-    """
-    Simulates 'Black Swan' events.
-    Example: {'inflation': 0.10, 'energy_index': 0.20} (10% & 20% increase)
+    """Estimate portfolio return impact under hypothetical macro shocks.
 
-    Parameters:
-    - df: Master table DataFrame from GoldLayer.
-    - shock_map: Dictionary of factor shocks (e.g., {'inflation': 0.1}).
+    For each factor in ``shock_map`` this function fits a simple OLS model:
+
+        log_return = α + β·factor + ε
+
+    then computes the *predicted impact* of an instantaneous shock Δ as:
+
+        predicted_impact = β · Δ
+
+    This is the classic **scenario analysis** technique used in risk
+    management: "If inflation jumps 10%, how many basis points do we lose?"
+    It deliberately avoids non-linear interaction terms to keep the result
+    interpretable by non-quants (CFOs, risk committees).
+
+    Args:
+        df: Master table ``DataFrame`` produced by ``GoldLayer``.  Must
+            contain ``'log_return'`` and every key in ``shock_map``.
+        shock_map: Mapping of factor name → shock magnitude as a decimal
+            (e.g. ``{'inflation': 0.10}`` means a 10% absolute increase).
 
     Returns:
-    - Dictionary with impact strings, or None if error.
+        A dict mapping each factor to a human-readable impact string such
+        as ``"Predicted impact on returns: -3.47%"``, or ``None`` on
+        recoverable errors (though specific errors are raised).
+
+    Raises:
+        DataValidationError: If ``'log_return'`` or any factor column is
+            absent from ``df``.
+        AnalysisError: On any statsmodels fitting or runtime failure.
     """
     try:
         if "log_return" not in df.columns:

@@ -11,10 +11,8 @@ import numpy as np
 import pandas as pd
 import pandera.errors
 
-# Import Schemas
-from silver.schema import financials_schema, macro_schema, worldbank_schema
-
-from exceptions.MedallionExceptions import (
+from Fetchers.ProjectConfig import ProjectConfig
+from src.exceptions.MedallionExceptions import (
     CatalogNotFoundError,
     ComplianceViolationError,
     DataValidationError,
@@ -23,7 +21,9 @@ from exceptions.MedallionExceptions import (
     OutlierDetectionError,
     StandardizationError,
 )
-from Fetchers.ProjectConfig import ProjectConfig
+
+# Import Schemas
+from .schema import financials_schema, macro_schema, worldbank_schema
 
 
 class SilverLayer:
@@ -269,7 +269,7 @@ class SilverLayer:
         df = df.copy()
         df["processed_at"] = datetime.now().isoformat()
         df["silver_run_id"] = self.silver_run_id
-        df["schema_version"] = self.schema_map[source].version
+        df["schema_version"] = "1.0"
         df["imputed_count"] = imputed_count
         df["outliers_clipped"] = outliers_clipped
         df["initial_rows"] = initial_rows
@@ -287,7 +287,7 @@ class SilverLayer:
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Memory Optimization: Convert string columns to category
-            for col in df.select_dtypes(include=["object"]):
+            for col in df.select_dtypes(include=["object", "str"]):
                 df[col] = df[col].astype("category")
 
             file_path = output_dir / f"{filename}_silver.parquet"

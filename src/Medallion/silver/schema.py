@@ -1,80 +1,6 @@
 import pandas as pd
-import pandera as pa
-from pandera import Check, Column, DataFrameSchema, Index
-
-# 1. Schema for Financial Data (yFinance)
-financials_schema = pa.DataFrameSchema(
-    {
-        "Date": Column(
-            pa.DateTime,
-            Check.in_range(
-                pd.Timestamp("2000-01-01"),
-                pd.Timestamp("2030-12-31"),
-                error="Date must be between 2000 and 2030",
-            ),
-        ),
-        "Close": Column(
-            float,
-            Check.greater_than(0, error="Close price must be positive"),
-            nullable=False,
-        ),
-        "Volume": Column(
-            float,
-            Check.greater_than_or_equal(0, error="Volume cannot be negative"),
-            nullable=True,
-        ),
-        "source_system": Column(
-            str, Check.isin(["yfinance"], error="Source must be yfinance")
-        ),
-        "ingested_at": Column(str, nullable=False),
-    },
-    strict="filter",
-    coerce=True,
-    version="1.0",
-)
-
-# 2. Schema for Macroeconomic Data (FRED/Inflation)
-macro_schema = pa.DataFrameSchema(
-    {
-        "Date": Column(
-            pa.DateTime,
-            Check.in_range(
-                pd.Timestamp("2000-01-01"),
-                pd.Timestamp("2030-12-31"),
-                error="Date must be between 2000 and 2030",
-            ),
-        ),
-        "Value": Column(
-            float,
-            Check.in_range(-20, 100, error="Value must be between -20 and 100"),
-            nullable=False,
-        ),
-        "source_system": Column(str, Check.isin(["fred"], error="Source must be fred")),
-    },
-    strict="filter",
-    coerce=True,
-    version="1.0",
-)
-
-# 3. Schema for World Bank
-worldbank_schema = pa.DataFrameSchema(
-    {
-        "Date": Column(
-            pa.Int,
-            Check.in_range(2000, 2030, error="Year must be between 2000 and 2030"),
-        ),
-        "Value": Column(float, nullable=True),
-        "economy": Column(
-            str, Check.str_length(1, 3, error="Economy code must be 1-3 characters")
-        ),
-        "source_system": Column(
-            str, Check.isin(["worldbank"], error="Source must be worldbank")
-        ),
-    },
-    strict="filter",
-    coerce=True,
-    version="1.0",
-)
+import pandera.pandas as pa
+from pandera.pandas import Check, Column, DataFrameSchema
 
 
 # --- Reusable Checks (Senior Practice: DRY) ---
@@ -86,7 +12,7 @@ def z_score_check(series: pd.Series, threshold: float = 3.5):
     return (z_scores <= threshold).all()
 
 
-# --- 1. Financials Schema ---
+# --- 1. Financials Schema (yFinance) ---
 financials_schema = DataFrameSchema(
     columns={
         "date": Column(pa.DateTime, nullable=False),
@@ -100,11 +26,12 @@ financials_schema = DataFrameSchema(
                 ),
             ],
         ),
-        "volume": Column(float, Check.greater_than_or_equal(0), nullable=True),
+        "volume": Column(
+            float, Check.greater_than_or_equal_to(0), nullable=True
+        ),
         "source_system": Column(str, Check.isin(["yfinance"])),
         "ingested_at": Column(str),
     },
-    # DataFrame-level Check: Η καρδιά του Senior Validation
     checks=[
         Check(
             lambda df: df["date"].is_monotonic_increasing,
@@ -119,22 +46,20 @@ financials_schema = DataFrameSchema(
     coerce=True,
 )
 
-# --- 2. Macro Schema ---
+# --- 2. Macro Schema (FRED) ---
 macro_schema = DataFrameSchema(
     columns={
         "date": Column(pa.DateTime, nullable=False),
         "value": Column(
             float,
             [
-                Check(
-                    lambda s: s.diff().abs().max() < 10,
-                    error="Suspiciously high volatility in macro value",
+                Check.in_range(
+                    -20, 100, error="Value must be between -20 and 100"
                 )
             ],
         ),
         "source_system": Column(str, Check.isin(["fred"])),
     },
-    index=Index(pa.Int, name="id", nullable=True),
     strict="filter",
     coerce=True,
 )

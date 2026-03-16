@@ -70,7 +70,7 @@ def test_sensitivity_reg_ols_and_ridge():
 def test_forecasting_runs():
     df = pd.DataFrame(
         {
-            "date": pd.date_range("2020-01-01", periods=10, freq="M"),
+            "date": pd.date_range("2020-01-01", periods=10, freq="ME"),
             "log_return": np.random.randn(10),
         }
     )

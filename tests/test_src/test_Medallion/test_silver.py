@@ -6,28 +6,17 @@ import pytest
 from src.exceptions.MedallionExceptions import (
     CatalogNotFoundError,
 )
-from src.Fetchers.ProjectConfig import ProjectConfig
-from src.Medallion.silver.silver import SilverLayer
+
+# DummyConfig and SilverLayer setup is handled by the shared fixtures
+# in tests/test_src/test_Medallion/conftest.py (silver_layer)
+# and tests/conftest.py (dummy_config).
 
 
-class DummyConfig(ProjectConfig):
-    def __init__(self):
-        super().__init__(fred_api_key="dummy")
-        self.max_workers = 1
-
-
-def test_standardize_and_impute_and_audit_columns(tmp_path):
-    cfg = DummyConfig()
-    layer = SilverLayer(cfg)
-    # Override paths to avoid writing in the project directory
-    layer.raw_path = tmp_path / "raw"
-    layer.processed_path = tmp_path / "processed"
-    layer.processed_path.mkdir(parents=True, exist_ok=True)
-    layer.raw_path.mkdir(parents=True, exist_ok=True)
+def test_standardize_and_impute_and_audit_columns(silver_layer):
 
     # Test _standardize: date alignment and unit normalization
     df = pd.DataFrame({"Date": ["2020-01-01", "2020-02-01"], "Value": [200.0, 300.0]})
-    standardized, unit_norm, temporal_aligned = layer._standardize(df.copy(), "fred")
+    standardized, unit_norm, temporal_aligned = silver_layer._standardize(df.copy(), "fred")
     assert temporal_aligned is True
     assert unit_norm is True
     assert standardized["value"].max() <= 3.0
@@ -36,13 +25,13 @@ def test_standardize_and_impute_and_audit_columns(tmp_path):
     df2 = pd.DataFrame(
         {"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]}
     )
-    imputed_df, imputed_count, outliers = layer._impute(df2.copy(), "fred")
+    imputed_df, imputed_count, outliers = silver_layer._impute(df2.copy(), "fred")
     assert imputed_count >= 1
     assert outliers >= 0
     assert not imputed_df.isnull().any().any()
 
     # Test audit columns
-    audited = layer._add_audit_columns(
+    audited = silver_layer._add_audit_columns(
         imputed_df, "file", "fred", imputed_count, 2, 1, outliers
     )
     for col in [
@@ -55,38 +44,23 @@ def test_standardize_and_impute_and_audit_columns(tmp_path):
         assert col in audited.columns
 
 
-def test_load_catalog_raises_when_missing(tmp_path):
-    cfg = DummyConfig()
-    layer = SilverLayer(cfg)
-    layer.raw_path = tmp_path / "raw"
-    layer.raw_path.mkdir(parents=True, exist_ok=True)
-
+def test_load_catalog_raises_when_missing(silver_layer):
     with pytest.raises(CatalogNotFoundError):
-        layer._load_catalog()
+        silver_layer._load_catalog()
 
 
-def test_load_catalog_reads_file(tmp_path):
-    cfg = DummyConfig()
-    layer = SilverLayer(cfg)
-    layer.raw_path = tmp_path / "raw"
-    layer.raw_path.mkdir(parents=True, exist_ok=True)
-
-    catalog_file = layer.raw_path / "catalog.json"
+def test_load_catalog_reads_file(silver_layer):
+    catalog_file = silver_layer.raw_path / "catalog.json"
     catalog_file.write_text(json.dumps({"a": {"path": "x"}}))
 
-    loaded = layer._load_catalog()
+    loaded = silver_layer._load_catalog()
     assert loaded == {"a": {"path": "x"}}
 
 
-def test_save_to_silver_creates_parquet(tmp_path):
-    cfg = DummyConfig()
-    layer = SilverLayer(cfg)
-    layer.processed_path = tmp_path / "processed"
-    layer.processed_path.mkdir(parents=True, exist_ok=True)
-
+def test_save_to_silver_creates_parquet(silver_layer):
     df = pd.DataFrame(
         {"date": pd.to_datetime(["2020-01-01"]), "value": [1.0], "category": ["A"]}
     )
-    layer._save_to_silver(df, "file", "fred")
-    out_path = layer.processed_path / "fred" / "file_silver.parquet"
+    silver_layer._save_to_silver(df, "file", "fred")
+    out_path = silver_layer.processed_path / "fred" / "file_silver.parquet"
     assert out_path.exists()

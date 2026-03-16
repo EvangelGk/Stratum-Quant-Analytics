@@ -9,18 +9,40 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 def monte_carlo(
     df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000
 ) -> Union[np.ndarray, None]:
-    """
-    Geometric Brownian Motion (GBM) simulation.
-    dS = S * mu * dt + S * sigma * dW
+    """Simulate future price paths using Geometric Brownian Motion (GBM).
 
-    Parameters:
-    - df: Master table DataFrame from GoldLayer.
-    - ticker: Stock ticker to simulate (e.g., 'AAPL').
-    - days: Number of days to simulate.
-    - iterations: Number of simulation paths.
+    Models stock price evolution via the stochastic differential equation:
+
+        dS = S·μ·dt + S·σ·dW
+
+    where μ is the annualised drift (mean log-return), σ is historical
+    volatility, and dW is a Wiener process increment drawn from N(0,1).
+    The discrete-time approximation is:
+
+        S_t = S_{t-1} · exp((μ - 0.5·σ²)·dt + σ·ε·√dt)
+
+    Running ``iterations`` independent paths produces a full probability
+    distribution of future prices rather than a single point estimate —
+    the industry-standard approach used by quantitative trading desks.
+
+    Args:
+        df: Master table ``DataFrame`` produced by ``GoldLayer``.  Must
+            contain ``'ticker'`` and ``'close'`` columns.
+        ticker: Equity ticker symbol to simulate, e.g. ``'AAPL'``.
+        days: Number of trading days to project forward.  252 corresponds
+            to one calendar year.
+        iterations: Number of independent Monte Carlo paths.  At 10,000
+            the standard error of the mean is below 1%.
 
     Returns:
-    - Array of price paths (days x iterations), or None if error.
+        A ``numpy`` array of shape ``(days, iterations)`` where each
+        column is one simulated price path, or ``None`` on recoverable
+        errors (though specific errors are raised instead).
+
+    Raises:
+        DataValidationError: If required columns are absent or the ticker
+            has no data in ``df``.
+        AnalysisError: On any unexpected numerical or runtime failure.
     """
     try:
         if "ticker" not in df.columns or "close" not in df.columns:

@@ -1,14 +1,10 @@
-from src.Fetchers.ProjectConfig import ProjectConfig
 from src.Medallion import MedallionPipeline
 
-
-class DummyConfig(ProjectConfig):
-    def __init__(self):
-        super().__init__(fred_api_key="dummy")
+# DummyConfig is provided by the shared dummy_config fixture in tests/conftest.py.
 
 
-def test_health_check_reports_all_paths(tmp_path):
-    cfg = DummyConfig()
+def test_health_check_reports_all_paths(dummy_config, tmp_path):
+    cfg = dummy_config
     # Create a minimal factory stub
     factory = object()
 
