@@ -1,5 +1,4 @@
 import hashlib
-import importlib
 import json
 import logging
 import os
@@ -32,15 +31,7 @@ from logger.Messages.MainMess import (
     MAIN_START,
     QUICK_START,
 )
-
-
-def _get_pipeline_class() -> Any:
-    """Resolve MedallionPipeline for both package and script execution modes."""
-    try:
-        module = importlib.import_module(".Medallion", package=__package__)
-    except Exception:
-        module = importlib.import_module("Medallion")
-    return getattr(module, "MedallionPipeline")
+from Medallion import MedallionPipeline
 
 # Setup logging
 logging.basicConfig(
@@ -128,8 +119,7 @@ def main() -> None:
         # Initialize and run full pipeline
         logger.info(MAIN_PIPELINE_START)
         pipeline_start = time.time()
-        pipeline_cls = _get_pipeline_class()
-        pipeline = pipeline_cls(config=config, factory=factory)
+        pipeline = MedallionPipeline(config=config, factory=factory)
 
         # Choose parallel or sequential
         if config.should_use_parallel_pipeline() and config.mode == RunMode.ACTUAL:

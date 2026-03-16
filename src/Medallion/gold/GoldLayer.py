@@ -1,6 +1,8 @@
 import concurrent.futures
+import json
 import logging
 import time
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -31,7 +33,7 @@ from .AnalysisSuite.forecasting import forecasting
 from .AnalysisSuite.governance import governance_report
 from .AnalysisSuite.lag import lag_analysis
 from .AnalysisSuite.monte_carlo import monte_carlo
-from .AnalysisSuite.sesnsitivity_reg import sensitivity_reg
+from .AnalysisSuite.sensitivity_reg import sensitivity_reg
 from .AnalysisSuite.stress_test import stress_test
 
 
@@ -44,9 +46,12 @@ class GoldLayer:
     def __init__(self, config: Any) -> None:
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.processed_path = Path("./data/processed")
-        self.gold_path = Path("./data/gold")
+        _root = Path(__file__).parents[3]
+        self.processed_path = _root / "data" / "processed"
+        self.gold_path = _root / "data" / "gold"
         self.gold_path.mkdir(parents=True, exist_ok=True)
+        self.governance_path = self.gold_path / "governance"
+        self.governance_path.mkdir(parents=True, exist_ok=True)
         self.df = self._load_or_create_master_table()
 
     def _load_or_create_master_table(self) -> pd.DataFrame:
@@ -143,13 +148,19 @@ class GoldLayer:
         return int(seed) if seed is not None else None
 
     def _evaluate_governance_gate(
-        self, report: Optional[Dict[str, Any]]
+        self,
+        report: Optional[Dict[str, Any]],
+        ticker: Optional[str] = None,
     ) -> Dict[str, Any]:
-        hard_fail = bool(getattr(self.config, "governance_hard_fail", False))
+        profile = self._resolve_governance_profile(ticker=ticker)
+        hard_fail = bool(profile["hard_fail"])
         gate_reasons: List[str] = []
         gate: Dict[str, Any] = {
+            "schema_version": "governance-gate.v1",
             "hard_fail": hard_fail,
             "passed": True,
+            "regime": profile["regime"],
+            "severity": "pass",
             "reasons": gate_reasons,
         }
 
@@ -167,12 +178,12 @@ class GoldLayer:
 
         reasons: List[str] = []
         oos_r2 = report.get("out_of_sample", {}).get("r2")
-        min_r2 = float(getattr(self.config, "governance_min_r2", -0.25))
+        min_r2 = float(profile["min_r2"])
         if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
             reasons.append(f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}")
 
         normalized_shift = report.get("stability", {}).get("normalized_mean_shift")
-        max_shift = float(getattr(self.config, "governance_max_normalized_shift", 2.5))
+        max_shift = float(profile["max_normalized_shift"])
         if (
             isinstance(normalized_shift, (float, int))
             and float(normalized_shift) > max_shift
@@ -183,7 +194,7 @@ class GoldLayer:
             )
 
         leakage_flags = report.get("leakage_flags", []) or []
-        max_leakage = int(getattr(self.config, "governance_max_leakage_flags", 1))
+        max_leakage = int(profile["max_leakage_flags"])
         if len(leakage_flags) > max_leakage:
             reasons.append(
                 "leakage_flags_above_threshold:"
@@ -200,9 +211,7 @@ class GoldLayer:
         )
         if considered > 0:
             ratio = stationary_count / considered
-            min_ratio = float(
-                getattr(self.config, "governance_min_stationary_ratio", 0.4)
-            )
+            min_ratio = float(profile["min_stationary_ratio"])
             if ratio < min_ratio:
                 reasons.append(
                     "stationarity_ratio_below_threshold:"
@@ -210,9 +219,7 @@ class GoldLayer:
                 )
 
         walk_forward = report.get("walk_forward", {}) or {}
-        min_walk_forward_r2 = float(
-            getattr(self.config, "governance_min_walk_forward_r2", -0.25)
-        )
+        min_walk_forward_r2 = float(profile["min_walk_forward_r2"])
         walk_forward_avg_r2 = walk_forward.get("avg_r2")
         if (
             isinstance(walk_forward_avg_r2, (float, int))
@@ -224,9 +231,7 @@ class GoldLayer:
             )
 
         model_risk_score = report.get("model_risk_score")
-        max_model_risk = float(
-            getattr(self.config, "governance_max_model_risk_score", 0.6)
-        )
+        max_model_risk = float(profile["max_model_risk_score"])
         if (
             isinstance(model_risk_score, (float, int))
             and float(model_risk_score) > max_model_risk
@@ -236,10 +241,211 @@ class GoldLayer:
                 f"{float(model_risk_score):.4f}>{max_model_risk:.4f}"
             )
 
+        if isinstance(model_risk_score, (float, int)):
+            score = float(model_risk_score)
+            warn_thr = float(profile["model_risk_warn_threshold"])
+            fail_thr = float(profile["model_risk_fail_threshold"])
+            if score >= fail_thr:
+                gate["severity"] = "fail"
+            elif score >= warn_thr:
+                gate["severity"] = "warn"
+            else:
+                gate["severity"] = "pass"
+
+            report.setdefault("risk_band", {})
+            report["risk_band"] = {
+                "label": gate["severity"],
+                "warn_threshold": warn_thr,
+                "fail_threshold": fail_thr,
+                "score": score,
+            }
+
         if hard_fail and reasons:
             gate["passed"] = False
         gate_reasons.extend(reasons)
         return gate
+
+    def _resolve_governance_profile(
+        self, ticker: Optional[str] = None
+    ) -> Dict[str, Any]:
+        regime = str(getattr(self.config, "governance_regime", "normal")).lower()
+        if regime not in {"normal", "stress", "crisis"}:
+            regime = "normal"
+
+        profile: Dict[str, Any] = {
+            "regime": regime,
+            "hard_fail": bool(getattr(self.config, "governance_hard_fail", True)),
+            "min_r2": float(getattr(self.config, "governance_min_r2", -0.25)),
+            "max_normalized_shift": float(
+                getattr(self.config, "governance_max_normalized_shift", 2.5)
+            ),
+            "max_leakage_flags": int(
+                getattr(self.config, "governance_max_leakage_flags", 1)
+            ),
+            "min_stationary_ratio": float(
+                getattr(self.config, "governance_min_stationary_ratio", 0.4)
+            ),
+            "min_walk_forward_r2": float(
+                getattr(self.config, "governance_min_walk_forward_r2", -0.25)
+            ),
+            "max_model_risk_score": float(
+                getattr(self.config, "governance_max_model_risk_score", 0.6)
+            ),
+            "model_risk_warn_threshold": float(
+                getattr(self.config, "governance_model_risk_warn_threshold", 0.4)
+            ),
+            "model_risk_fail_threshold": float(
+                getattr(self.config, "governance_model_risk_fail_threshold", 0.6)
+            ),
+        }
+
+        if ticker:
+            overrides_map: Dict[str, Any] = (
+                getattr(self.config, "governance_ticker_overrides", {}) or {}
+            )
+            ticker_overrides: Dict[str, Any] = overrides_map.get(ticker, {})
+            _float_keys = {
+                "min_r2",
+                "max_normalized_shift",
+                "min_stationary_ratio",
+                "min_walk_forward_r2",
+                "max_model_risk_score",
+                "model_risk_warn_threshold",
+                "model_risk_fail_threshold",
+            }
+            for k, v in ticker_overrides.items():
+                if k in _float_keys and k in profile:
+                    profile[k] = float(v)
+                elif k == "max_leakage_flags" and k in profile:
+                    profile[k] = int(v)
+                elif k == "hard_fail" and k in profile:
+                    profile[k] = bool(v)
+
+        warn_threshold = float(profile["model_risk_warn_threshold"])
+        fail_threshold = float(profile["model_risk_fail_threshold"])
+        max_shift = float(profile["max_normalized_shift"])
+        max_model_risk = float(profile["max_model_risk_score"])
+        min_r2 = float(profile["min_r2"])
+
+        if fail_threshold < warn_threshold:
+            (
+                warn_threshold,
+                fail_threshold,
+            ) = (
+                fail_threshold,
+                warn_threshold,
+            )
+
+        if regime == "stress":
+            max_shift *= 1.2
+            max_model_risk = min(1.0, max_model_risk + 0.05)
+        elif regime == "crisis":
+            max_shift *= 1.4
+            max_model_risk = min(1.0, max_model_risk + 0.1)
+            min_r2 -= 0.05
+
+        profile["model_risk_warn_threshold"] = warn_threshold
+        profile["model_risk_fail_threshold"] = fail_threshold
+        profile["max_normalized_shift"] = max_shift
+        profile["max_model_risk_score"] = max_model_risk
+        profile["min_r2"] = min_r2
+
+        return profile
+
+    def _export_governance_decision(
+        self,
+        gate: Dict[str, Any],
+        report: Optional[Dict[str, Any]],
+        run_mode: str,
+    ) -> None:
+        from logger.Catalog import catalog
+
+        context = catalog.get_run_context()
+        payload: Dict[str, Any] = {
+            "schema_version": "governance-decision.v1",
+            "generated_at": datetime.now().isoformat(),
+            "run_mode": run_mode,
+            "run_id": context.get("run_id"),
+            "correlation_id": context.get("correlation_id"),
+            "gate": gate,
+            "report": report,
+        }
+        decision_file = (
+            self.governance_path
+            / f"governance_decision_{int(time.time() * 1000)}.json"
+        )
+        with decision_file.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    def read_governance_history(
+        self, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Load all governance decision artifacts, sorted oldest-first."""
+        files: List[Path] = sorted(
+            self.governance_path.glob("governance_decision_*.json")
+        )
+        if limit is not None:
+            files = files[-limit:]
+        history: List[Dict[str, Any]] = []
+        for f in files:
+            try:
+                with f.open("r", encoding="utf-8") as fh:
+                    history.append(json.load(fh))
+            except (json.JSONDecodeError, OSError):
+                pass
+        return history
+
+    def governance_trend_summary(self, last_n: int = 20) -> Dict[str, Any]:
+        """Compute trend statistics over the last_n governance decisions."""
+        history = self.read_governance_history(limit=last_n)
+        if not history:
+            return {"status": "no_history", "count": 0}
+
+        passed_count = sum(
+            1 for h in history if h.get("gate", {}).get("passed") is True
+        )
+        severity_counts: Dict[str, int] = {}
+        risk_scores: List[float] = []
+        walk_r2s: List[float] = []
+        for h in history:
+            sev = h.get("gate", {}).get("severity", "unknown")
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            report = h.get("report") or {}
+            score = report.get("model_risk_score")
+            if isinstance(score, (float, int)):
+                risk_scores.append(float(score))
+            wf_r2 = (report.get("walk_forward") or {}).get("avg_r2")
+            if isinstance(wf_r2, (float, int)):
+                walk_r2s.append(float(wf_r2))
+
+        total = len(history)
+        pass_rate = passed_count / total if total else 0.0
+        direction = "stable"
+        if len(risk_scores) >= 4:
+            mid = len(risk_scores) // 2
+            first_avg = sum(risk_scores[:mid]) / mid
+            second_avg = sum(risk_scores[mid:]) / (len(risk_scores) - mid)
+            delta = second_avg - first_avg
+            if delta > 0.05:
+                direction = "deteriorating"
+            elif delta < -0.05:
+                direction = "improving"
+
+        return {
+            "status": "ok",
+            "count": total,
+            "pass_rate": round(pass_rate, 4),
+            "severity_distribution": severity_counts,
+            "avg_model_risk_score": (
+                round(sum(risk_scores) / len(risk_scores), 4)
+                if risk_scores
+                else None
+            ),
+            "worst_walk_forward_r2": (
+                round(min(walk_r2s), 4) if walk_r2s else None
+            ),
+            "direction": direction,
+        }
 
     def _blocked_results(self, reason: str) -> Dict[str, Any]:
         return {
@@ -313,8 +519,13 @@ class GoldLayer:
                     getattr(self.config, "governance_walk_forward_windows", 4)
                 ),
             )
-            gate = self._evaluate_governance_gate(results["governance_report"])
+            gate = self._evaluate_governance_gate(
+                results["governance_report"], ticker=selected_ticker
+            )
             results["governance_gate"] = gate
+            self._export_governance_decision(
+                gate, results.get("governance_report"), "sequential"
+            )
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
@@ -322,8 +533,9 @@ class GoldLayer:
         except AnalysisError as e:
             self.logger.error(f"Analysis error in governance report: {e}")
             results["governance_report"] = None
-            gate = self._evaluate_governance_gate(None)
+            gate = self._evaluate_governance_gate(None, ticker=selected_ticker)
             results["governance_gate"] = gate
+            self._export_governance_decision(gate, None, "sequential")
             if not gate.get("passed", True):
                 blocked_reason = (
                     "blocked_by_governance_gate:"
@@ -334,8 +546,9 @@ class GoldLayer:
         except Exception as e:
             self.logger.error(f"Unexpected error in governance report: {e}")
             results["governance_report"] = None
-            gate = self._evaluate_governance_gate(None)
+            gate = self._evaluate_governance_gate(None, ticker=selected_ticker)
             results["governance_gate"] = gate
+            self._export_governance_decision(gate, None, "sequential")
             if not gate.get("passed", True):
                 blocked_reason = (
                     "blocked_by_governance_gate:"
@@ -525,16 +738,26 @@ class GoldLayer:
                 bool(getattr(self.config, "enforce_reproducibility", True)),
                 int(getattr(self.config, "governance_walk_forward_windows", 4)),
             )
-            gate = self._evaluate_governance_gate(results["governance_report"])
+            gate = self._evaluate_governance_gate(
+                results["governance_report"], ticker=selected_ticker
+            )
             results["governance_gate"] = gate
+            self._export_governance_decision(
+                gate, results.get("governance_report"), "parallel"
+            )
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 results["correlation_matrix"] = correl_mtrx(self.df)
                 return results
         except Exception:
-            gate = self._evaluate_governance_gate(results.get("governance_report"))
+            gate = self._evaluate_governance_gate(
+                results.get("governance_report"), ticker=selected_ticker
+            )
             results["governance_gate"] = gate
+            self._export_governance_decision(
+                gate, results.get("governance_report"), "parallel"
+            )
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))

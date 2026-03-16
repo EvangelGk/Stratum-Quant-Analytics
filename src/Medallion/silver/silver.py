@@ -11,8 +11,7 @@ import numpy as np
 import pandas as pd
 import pandera.errors
 
-from Fetchers.ProjectConfig import ProjectConfig
-from src.exceptions.MedallionExceptions import (
+from exceptions.MedallionExceptions import (
     CatalogNotFoundError,
     ComplianceViolationError,
     DataValidationError,
@@ -21,6 +20,7 @@ from src.exceptions.MedallionExceptions import (
     OutlierDetectionError,
     StandardizationError,
 )
+from Fetchers.ProjectConfig import ProjectConfig
 
 # Import Schemas
 from .schema import financials_schema, macro_schema, worldbank_schema
@@ -211,15 +211,17 @@ class SilverLayer:
             if df.empty:
                 return df, 0, 0
 
-            total_cells = len(df) * len(df.columns)
             initial_nulls = df.isnull().sum().sum()
-            null_percentage = (initial_nulls / total_cells) * 100
 
-            # Compliance Check: Reject if >30% nulls
-            if null_percentage > 30:
+            # Compliance Check: Reject if ANY numeric column exceeds 30% nulls.
+            # Checking per-column prevents dense columns from masking sparse ones.
+            numeric_null_pct = df.select_dtypes(include=[float, int]).isnull().mean() * 100
+            worst_col = numeric_null_pct.idxmax() if not numeric_null_pct.empty else None
+            max_col_null_pct = float(numeric_null_pct.max()) if worst_col is not None else 0.0
+            if max_col_null_pct > 30:
                 raise ComplianceViolationError(
-                    f"Data quality violation: {null_percentage:.2f}% nulls"
-                    f" exceed 30% threshold for {source}"
+                    f"Data quality violation: column '{worst_col}' has {max_col_null_pct:.2f}%"
+                    f" nulls, exceeding 30% threshold for {source}"
                 )
 
             # Outlier Detection with Z-Score and Winsorization

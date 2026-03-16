@@ -198,6 +198,9 @@ All configuration is driven by environment variables (see `.env.example`):
 | `GOVERNANCE_WALK_FORWARD_WINDOWS` | `4` | Walk-forward backtesting windows |
 | `GOVERNANCE_MIN_WALK_FORWARD_R2` | `-0.25` | Minimum walk-forward average R2 |
 | `GOVERNANCE_MAX_MODEL_RISK_SCORE` | `0.6` | Maximum composite model risk score |
+| `GOVERNANCE_REGIME` | `normal` | Governance policy profile: `normal` / `stress` / `crisis` |
+| `GOVERNANCE_MODEL_RISK_WARN_THRESHOLD` | `0.4` | Warning band threshold for model risk score |
+| `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD` | `0.6` | Failure band threshold for model risk score |
 | `GIT_COMMIT_SHA` | `unversioned` | Optional code lineage identifier for run-contract logs |
 
 ---

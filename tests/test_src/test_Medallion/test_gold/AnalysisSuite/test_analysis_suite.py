@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from src.Medallion.gold.AnalysisSuite.sesnsitivity_reg import sensitivity_reg
 
 from src.Medallion.gold.AnalysisSuite.auto_ml import auto_ml_regression
 from src.Medallion.gold.AnalysisSuite.correl_mtrx import correl_mtrx
@@ -9,7 +10,6 @@ from src.Medallion.gold.AnalysisSuite.forecasting import forecasting
 from src.Medallion.gold.AnalysisSuite.governance import governance_report
 from src.Medallion.gold.AnalysisSuite.lag import lag_analysis
 from src.Medallion.gold.AnalysisSuite.monte_carlo import monte_carlo
-from src.Medallion.gold.AnalysisSuite.sesnsitivity_reg import sensitivity_reg
 from src.Medallion.gold.AnalysisSuite.stress_test import stress_test
 
 
@@ -105,6 +105,7 @@ def test_auto_ml_regression_patched(monkeypatch):
     assert "predictions" in result
 
 
+@pytest.mark.governance
 def test_governance_report_runs_with_temporal_split():
     df = pd.DataFrame(
         {
@@ -131,3 +132,4 @@ def test_governance_report_runs_with_temporal_split():
     assert "rolling_regime" in report["stability"]
     assert "walk_forward" in report
     assert "model_risk_score" in report
+    assert 0.0 <= report["model_risk_score"] <= 1.0

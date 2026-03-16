@@ -48,6 +48,8 @@ The application will:
    - If `GOVERNANCE_HARD_FAIL=true`, advanced analyses are blocked when governance thresholds fail.
    - Gate checks include out-of-sample R2, walk-forward R2, leakage flags,
       stationarity ratio, normalized drift, and composite model risk score.
+   - Regime profiles are configurable with `GOVERNANCE_REGIME` (`normal`, `stress`, `crisis`).
+   - Model risk bands are labeled as `pass` / `warn` / `fail` based on score thresholds.
 
 - **Run contract lineage**
    - Every run logs reproducibility and lineage hashes:
@@ -199,6 +201,12 @@ Edit `src/Fetchers/ProjectConfig.py` for:
 - Stage-level success/error accounting is tracked in pipeline logs.
 - Rolling SLO windows are emitted for 5-minute and 1-hour windows.
 - SLA snapshots include p95 latency, throughput, success rate, and error rate.
+
+### Governance Decision Artifacts
+- Each pipeline run exports a versioned governance decision artifact under
+   `data/gold/governance/`.
+- Artifacts include run context (`run_id`, `correlation_id`), gate decision,
+   severity band, and full governance report payload.
 
 ### Key Metrics
 - Records processed per data source

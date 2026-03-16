@@ -51,3 +51,8 @@ jobs:
         env:
           FRED_API_KEY: ci_dummy_key
         run: poetry run pytest --tb=short -q
+
+      - name: Pytest — governance gate checks
+        env:
+          FRED_API_KEY: ci_dummy_key
+        run: poetry run pytest -m governance -q

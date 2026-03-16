@@ -1,5 +1,6 @@
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,12 @@ class ProjectConfig:
     governance_walk_forward_windows: int = 4
     governance_min_walk_forward_r2: float = -0.25
     governance_max_model_risk_score: float = 0.6
+    governance_regime: str = "normal"
+    governance_model_risk_warn_threshold: float = 0.4
+    governance_model_risk_fail_threshold: float = 0.6
+    governance_ticker_overrides: Dict[str, Dict[str, float]] = field(
+        default_factory=dict
+    )
 
     @staticmethod
     def _parse_positive_int(raw_value: str, field_name: str, default: int) -> int:
@@ -166,11 +173,46 @@ class ProjectConfig:
             "GOVERNANCE_MAX_MODEL_RISK_SCORE",
             0.6,
         )
+        governance_regime = os.getenv("GOVERNANCE_REGIME", "normal").strip().lower()
+        if governance_regime not in {"normal", "stress", "crisis"}:
+            governance_regime = "normal"
+        governance_model_risk_warn_threshold = cls._parse_non_negative_float(
+            os.getenv("GOVERNANCE_MODEL_RISK_WARN_THRESHOLD", "0.4"),
+            "GOVERNANCE_MODEL_RISK_WARN_THRESHOLD",
+            0.4,
+        )
+        governance_model_risk_fail_threshold = cls._parse_non_negative_float(
+            os.getenv("GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD", "0.6"),
+            "GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD",
+            0.6,
+        )
+        if governance_model_risk_fail_threshold < governance_model_risk_warn_threshold:
+            (
+                governance_model_risk_warn_threshold,
+                governance_model_risk_fail_threshold,
+            ) = (
+                governance_model_risk_fail_threshold,
+                governance_model_risk_warn_threshold,
+            )
         governance_min_stationary_ratio = min(
             max(governance_min_stationary_ratio, 0.0), 1.0
         )
         if retry_delay_max < retry_delay_min:
             retry_delay_min, retry_delay_max = retry_delay_max, retry_delay_min
+
+        raw_ticker_overrides = os.getenv("GOVERNANCE_TICKER_OVERRIDES", "").strip()
+        governance_ticker_overrides: Dict[str, Dict[str, float]] = {}
+        if raw_ticker_overrides:
+            try:
+                parsed = json.loads(raw_ticker_overrides)
+                if isinstance(parsed, dict):
+                    governance_ticker_overrides = {
+                        k: {ik: float(iv) for ik, iv in v.items()}
+                        for k, v in parsed.items()
+                        if isinstance(v, dict)
+                    }
+            except (ValueError, TypeError, KeyError):
+                pass
 
         return cls(
             fred_api_key=key,
@@ -191,6 +233,14 @@ class ProjectConfig:
             governance_walk_forward_windows=governance_walk_forward_windows,
             governance_min_walk_forward_r2=governance_min_walk_forward_r2,
             governance_max_model_risk_score=governance_max_model_risk_score,
+            governance_regime=governance_regime,
+            governance_model_risk_warn_threshold=(
+                governance_model_risk_warn_threshold
+            ),
+            governance_model_risk_fail_threshold=(
+                governance_model_risk_fail_threshold
+            ),
+            governance_ticker_overrides=governance_ticker_overrides,
         )
 
     def get_targets(self) -> List[str]:
@@ -222,5 +272,13 @@ class ProjectConfig:
             "governance_walk_forward_windows": self.governance_walk_forward_windows,
             "governance_min_walk_forward_r2": self.governance_min_walk_forward_r2,
             "governance_max_model_risk_score": self.governance_max_model_risk_score,
+            "governance_regime": self.governance_regime,
+            "governance_model_risk_warn_threshold": (
+                self.governance_model_risk_warn_threshold
+            ),
+            "governance_model_risk_fail_threshold": (
+                self.governance_model_risk_fail_threshold
+            ),
+            "governance_ticker_overrides": self.governance_ticker_overrides,
             "targets": self.get_targets(),
         }
