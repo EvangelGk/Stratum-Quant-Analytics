@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any, Optional
 
 import diskcache as dc
 import pandas as pd
@@ -11,22 +12,22 @@ Includes caching for performance.
 
 
 class BaseFetcher(ABC):
-    def __init__(self):
+    def __init__(self) -> None:
         self.cache = dc.Cache(
             str(Path(__file__).parents[1] / "cache")
         )  # Cache in src/cache
 
     @abstractmethod
-    def fetch(self, identifier: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def fetch(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
         """
         :param identifier: Ticker (yfinance) ή Series ID (FRED)
         """
         pass
 
-    def _get_cached(self, key: str) -> pd.DataFrame or None:
+    def _get_cached(self, key: str) -> Optional[pd.DataFrame]:
         return self.cache.get(key)
 
     def _set_cached(
         self, key: str, data: pd.DataFrame, expire: int = 86400
-    ):  # 24 hours
+    ) -> None:  # 24 hours
         self.cache.set(key, data, expire=expire)

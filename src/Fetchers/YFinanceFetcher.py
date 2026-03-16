@@ -8,7 +8,7 @@ from .BaseFetcher import BaseFetcher
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     # Fetching data from Yahoo Finance with caching.

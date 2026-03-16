@@ -130,7 +130,7 @@ class BronzeLayer:
         )
 
     def _fetch_and_save(
-        self, fetcher, params: Tuple[str, ...], filename: str, source: str
+        self, fetcher: Any, params: Tuple[str, ...], filename: str, source: str
     ) -> None:
         """
         Fetches data with retry logic and saves it.

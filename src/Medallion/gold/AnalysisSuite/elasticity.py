@@ -1,4 +1,4 @@
-from typing import Union
+from typing import cast
 
 import pandas as pd
 
@@ -7,7 +7,7 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
 def elasticity(
     df: pd.DataFrame, asset_return: str, macro_factor: str
-) -> Union[float, None]:
+) -> float:
     """Compute the macro-factor elasticity of an asset's returns.
 
     Elasticity measures the sensitivity of an asset's return to a
@@ -58,7 +58,7 @@ def elasticity(
                 "Average asset return is zero, cannot compute elasticity."
             )
 
-        return beta * (avg_macro / avg_asset)
+        return cast(float, beta * (avg_macro / avg_asset))
     except DataValidationError:
         raise  # Re-raise specific errors
     except AnalysisError:

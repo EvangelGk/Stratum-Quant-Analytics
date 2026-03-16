@@ -3,7 +3,7 @@ import logging
 import time
 from functools import partial
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,7 @@ class GoldLayer:
     Responsibility: Feature Engineering & Unified Analytical View.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
         self.processed_path = Path("./data/processed")
@@ -117,13 +117,13 @@ class GoldLayer:
 
     def run_all_analyses(
         self,
-        ticker: str = None,
+        ticker: Optional[str] = None,
         macro_factor: str = "inflation",
         lags: int = 3,
-        shock_map: Dict[str, float] = None,
+        shock_map: Optional[Dict[str, float]] = None,
         target: str = "log_return",
-        factors: List[str] = None,
-    ):
+        factors: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Run all analyses and return results in a dictionary.
         """
@@ -303,32 +303,33 @@ class GoldLayer:
 
     def run_all_analyses_parallel(
         self,
-        ticker: str = None,
+        ticker: Optional[str] = None,
         macro_factor: str = "inflation",
         lags: int = 3,
-        shock_map: Dict[str, float] = None,
+        shock_map: Optional[Dict[str, float]] = None,
         target: str = "log_return",
-        factors: List[str] = None,
+        factors: Optional[List[str]] = None,
         max_workers: int = 4,
         regression_model: str = "OLS",
-    ):
+    ) -> Dict[str, Any]:
         """
         Run all analyses in parallel using multiprocessing for better performance.
         """
         print(LIVE_STEP_7_RESULTS_GENERATION)
-        results = {}
+        results: Dict[str, Any] = {}
+        safe_factors = factors or ["inflation", "energy_index"]
 
         # Define tasks as partial functions
-        tasks = {
+        tasks: Dict[str, Callable[[], Any]] = {
             "correlation_matrix": partial(correl_mtrx, self.df),
             "lag_analysis": partial(lag_analysis, self.df, macro_factor, lags),
             "sensitivity_regression": partial(
-                sensitivity_reg, self.df, target, factors, regression_model
+                sensitivity_reg, self.df, target, safe_factors, regression_model
             ),
             "forecasting": partial(
                 forecasting, self.df, target, 10
             ),  # Forecast 10 steps for target column
-            "auto_ml": partial(auto_ml_regression, self.df, target, factors),
+            "auto_ml": partial(auto_ml_regression, self.df, target, safe_factors),
         }
 
         if ticker:
@@ -349,9 +350,10 @@ class GoldLayer:
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers
         ) as executor:
-            future_to_key = {executor.submit(task): key for key, task in tasks.items()}
-            for future in future_to_key:
-                key = future_to_key[future]
+            future_to_key: Dict[concurrent.futures.Future[Any], str] = {
+                executor.submit(task): key for key, task in tasks.items()
+            }
+            for future, key in future_to_key.items():
                 try:
                     results[key] = future.result()
                 except AnalysisError as e:

@@ -1,4 +1,4 @@
-from typing import Union
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
 def monte_carlo(
     df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000
-) -> Union[np.ndarray, None]:
+) -> np.ndarray:
     """Simulate future price paths using Geometric Brownian Motion (GBM).
 
     Models stock price evolution via the stochastic differential equation:
@@ -68,7 +68,7 @@ def monte_carlo(
         )
         price_paths = last_price * shocks.cumprod(axis=0)
 
-        return price_paths
+        return cast(np.ndarray, price_paths)
     except DataValidationError:
         raise
     except Exception as e:

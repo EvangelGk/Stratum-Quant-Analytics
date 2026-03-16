@@ -1,5 +1,7 @@
+import importlib
 import logging
 import time
+from typing import Any
 
 from exceptions.FetchersExceptions import FetcherError
 from exceptions.MedallionExceptions import DataPipelineError
@@ -26,10 +28,13 @@ from logger.Messages.MainMess import (
     QUICK_START,
 )
 
-try:
-    from .Medallion import MedallionPipeline
-except ImportError:
-    from Medallion import MedallionPipeline
+def _get_pipeline_class() -> Any:
+    """Resolve MedallionPipeline for both package and script execution modes."""
+    try:
+        module = importlib.import_module(".Medallion", package=__package__)
+    except Exception:
+        module = importlib.import_module("Medallion")
+    return getattr(module, "MedallionPipeline")
 
 # Setup logging
 logging.basicConfig(
@@ -38,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     start_time = time.time()
 
     print(APPLICATION_TITLE)
@@ -73,7 +78,8 @@ def main():
         # Initialize and run full pipeline
         logger.info(MAIN_PIPELINE_START)
         pipeline_start = time.time()
-        pipeline = MedallionPipeline(config=config, factory=factory)
+        pipeline_cls = _get_pipeline_class()
+        pipeline = pipeline_cls(config=config, factory=factory)
 
         # Choose parallel or sequential
         if config.mode.value == "production":  # Assuming config has mode

@@ -1,6 +1,6 @@
 import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from tqdm import tqdm
 
@@ -42,11 +42,12 @@ class MedallionPipeline:
 
         self.bronze = BronzeLayer(config, factory)
         self.silver = SilverLayer(config)
-        self.gold = None
+        self.gold: Optional[GoldLayer] = None
 
         self.bronze.base_path = str(self.raw_path)
         self.silver.raw_path = self.raw_path
         self.silver.processed_path = self.processed_path
+
     def _get_gold_layer(self) -> GoldLayer:
         if self.gold is None:
             self.gold = GoldLayer(self.config)

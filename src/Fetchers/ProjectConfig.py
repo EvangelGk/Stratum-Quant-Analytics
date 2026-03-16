@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from enum import Enum
+from typing import List
 
 from dotenv import load_dotenv
 
@@ -27,7 +28,7 @@ class ProjectConfig:
     retry_delay_max: float = 3.0
 
     @classmethod
-    def load_from_env(cls):
+    def load_from_env(cls) -> "ProjectConfig":
         load_dotenv()
 
         # validate and load FRED API key
@@ -59,7 +60,7 @@ class ProjectConfig:
             retry_delay_max=retry_delay_max,
         )
 
-    def get_targets(self):
+    def get_targets(self) -> List[str]:
         """Επιστρέφει τα tickers βάσει του mode."""
         if self.mode == RunMode.SAMPLE:
             return ["AAPL", "F"]

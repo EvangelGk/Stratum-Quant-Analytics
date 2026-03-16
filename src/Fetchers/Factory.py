@@ -1,3 +1,5 @@
+from typing import Optional
+
 from .BaseFetcher import BaseFetcher
 from .FredFetcher import FredFetcher
 from .WorldBankFetcher import WorldBankFetcher
@@ -10,7 +12,7 @@ class DataFactory:
     and ensures proper instantiation.
     """
 
-    def __init__(self, fred_api_key: str = None):
+    def __init__(self, fred_api_key: Optional[str] = None) -> None:
         self._fetchers = {
             "yfinance": YFinanceFetcher(),
             "fred": FredFetcher(api_key=fred_api_key) if fred_api_key else None,

@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import statsmodels.api as sm
@@ -10,9 +10,9 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 def sensitivity_reg(
     df: pd.DataFrame,
     target: str = "log_return",
-    factors: List[str] = None,
+    factors: Optional[List[str]] = None,
     model: str = "OLS",
-) -> Union[str, dict, None]:
+) -> Any:
     """Run multivariate macro sensitivity regression on equity log-returns.
 
     Estimates the linear relationship between equity log-returns and a

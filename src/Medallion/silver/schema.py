@@ -1,15 +1,16 @@
 import pandas as pd
 import pandera.pandas as pa
 from pandera.pandas import Check, Column, DataFrameSchema
+from typing import cast
 
 
 # --- Reusable Checks (Senior Practice: DRY) ---
-def z_score_check(series: pd.Series, threshold: float = 3.5):
+def z_score_check(series: pd.Series, threshold: float = 3.5) -> bool:
     """Ελέγχει αν υπάρχουν τιμές που ξεφεύγουν στατιστικά (Outliers)."""
     if series.std() == 0:
         return True
     z_scores = (series - series.mean()).abs() / series.std()
-    return (z_scores <= threshold).all()
+    return cast(bool, (z_scores <= threshold).all())
 
 
 # --- 1. Financials Schema (yFinance) ---

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class ApplicationCatalog:
@@ -27,7 +27,7 @@ class ApplicationCatalog:
         log_file: str = "application_catalog.log",
         max_bytes: int = 5_242_880,
         backup_count: int = 3,
-    ):
+    ) -> None:
         self.log_file = Path("logs") / log_file
         self.log_file.parent.mkdir(exist_ok=True)
 
@@ -44,7 +44,7 @@ class ApplicationCatalog:
                 super().__init__()
                 self.session_id = session_id
 
-            def filter(self, record):
+            def filter(self, record: logging.LogRecord) -> bool:
                 if not hasattr(record, "session_id"):
                     record.session_id = self.session_id
                 if not hasattr(record, "operation"):
@@ -85,7 +85,7 @@ class ApplicationCatalog:
             self.logger.addHandler(console_handler)
 
         # Metrics storage
-        self.session_metrics = {
+        self.session_metrics: Dict[str, Any] = {
             "session_id": self.session_id,
             "session_start": datetime.now().isoformat(),
             "operations": [],
@@ -98,10 +98,10 @@ class ApplicationCatalog:
         self,
         operation: str,
         component: str,
-        metrics: Dict[str, Any] = None,
-        details: Dict[str, Any] = None,
+        metrics: Optional[Dict[str, Any]] = None,
+        details: Optional[Dict[str, Any]] = None,
         message: str = "",
-    ):
+    ) -> None:
         """Log an operation with structured metrics and details.
 
         This function is thread-safe and appends operations into an in-memory timeline.
@@ -146,8 +146,8 @@ class ApplicationCatalog:
         files: int = 0,
         duration: float = 0.0,
         success: bool = True,
-        error: str = None,
-    ):
+        error: Optional[str] = None,
+    ) -> None:
         """Log data-related operations with specific metrics."""
         metrics = {
             "records_processed": records,
@@ -170,12 +170,12 @@ class ApplicationCatalog:
     def log_analysis_operation(
         self,
         analysis_type: str,
-        target: str = None,
-        metrics: Dict = None,
+        target: Optional[str] = None,
+        metrics: Optional[Dict[str, Any]] = None,
         duration: float = 0.0,
         success: bool = True,
-        error: str = None,
-    ):
+        error: Optional[str] = None,
+    ) -> None:
         """Log analysis operations with specific metrics."""
         analysis_metrics = {
             "duration_seconds": duration,
@@ -197,11 +197,11 @@ class ApplicationCatalog:
     def log_system_metrics(
         self,
         component: str,
-        cpu_usage: float = None,
-        memory_usage: float = None,
-        disk_usage: float = None,
-        network_requests: int = None,
-    ):
+        cpu_usage: Optional[float] = None,
+        memory_usage: Optional[float] = None,
+        disk_usage: Optional[float] = None,
+        network_requests: Optional[int] = None,
+    ) -> None:
         """Log system performance metrics."""
         metrics = {
             "cpu_percent": cpu_usage,
@@ -218,8 +218,12 @@ class ApplicationCatalog:
         )
 
     def log_error(
-        self, component: str, error_type: str, error_message: str, operation: str = None
-    ):
+        self,
+        component: str,
+        error_type: str,
+        error_message: str,
+        operation: Optional[str] = None,
+    ) -> None:
         """Log errors with categorization."""
         metrics = {"error_count": 1, "error_type": error_type}
 
@@ -350,7 +354,7 @@ class ApplicationCatalog:
             "cwd": os.getcwd(),
             "environment_variables": {
                 k: os.environ.get(k)
-                for k in ["FRED_API_KEY", "PYTHONPATH", "PATH"]
+                for k in ["PYTHONPATH"]
                 if os.environ.get(k)
             },
             "timestamp": datetime.now().isoformat(),

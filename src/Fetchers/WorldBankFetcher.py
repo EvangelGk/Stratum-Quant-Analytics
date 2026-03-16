@@ -5,7 +5,7 @@ from .BaseFetcher import BaseFetcher
 
 
 class WorldBankFetcher(BaseFetcher):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     # Fetching data from the World Bank API with caching.

@@ -49,5 +49,5 @@ jobs:
 
       - name: Pytest — test suite
         env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          FRED_API_KEY: ci_dummy_key
         run: poetry run pytest --tb=short -q

@@ -5,7 +5,7 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -204,12 +204,12 @@ class SilverLayer:
                 f"Failed to standardize data for source {source}: {e}"
             ) from e
 
-    def _impute(self, df: pd.DataFrame, source: str) -> Tuple[pd.DataFrame, int]:
+    def _impute(self, df: pd.DataFrame, source: str) -> Tuple[pd.DataFrame, int, int]:
         """Handle missing values with Quantile Winsorization
         and Z-Score outlier detection."""
         try:
             if df.empty:
-                return df, 0
+                return df, 0, 0
 
             total_cells = len(df) * len(df.columns)
             initial_nulls = df.isnull().sum().sum()
@@ -232,7 +232,7 @@ class SilverLayer:
                         # Z-Score check: |z| > 3.5
                         z_scores = np.abs((series - series.mean()) / series.std())
                         outliers = z_scores > 3.5
-                        outliers_clipped += outliers.sum()
+                        outliers_clipped += int(outliers.sum())
 
                         # Quantile Winsorization at P1 and P99
                         lower_bound = series.quantile(0.01)
@@ -311,7 +311,7 @@ class SilverLayer:
                     f"Catalog not found at {catalog_file}. Run Bronze Layer first."
                 )
             with open(catalog_file, "r") as f:
-                return json.load(f)
+                return cast(Dict[str, Any], json.load(f))
         except CatalogNotFoundError:
             raise
         except Exception as e:
