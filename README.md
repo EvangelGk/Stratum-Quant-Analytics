@@ -188,6 +188,17 @@ All configuration is driven by environment variables (see `.env.example`):
 | `END_DATE` | `2026-12-31` | Historical data end |
 | `MAX_WORKERS` | `10` | Thread pool size for parallel fetching |
 | `MAX_RETRIES` | `4` | Retry attempts per failed request |
+| `RANDOM_SEED` | `42` | Deterministic seed for stochastic analyses |
+| `ENFORCE_REPRODUCIBILITY` | `true` | Enforce deterministic policy where supported |
+| `GOVERNANCE_HARD_FAIL` | `true` | Block advanced analyses if governance gate fails |
+| `GOVERNANCE_MIN_R2` | `-0.25` | Minimum out-of-sample R2 threshold |
+| `GOVERNANCE_MAX_NORMALIZED_SHIFT` | `2.5` | Maximum train/test normalized drift |
+| `GOVERNANCE_MAX_LEAKAGE_FLAGS` | `1` | Maximum tolerated leakage flags |
+| `GOVERNANCE_MIN_STATIONARY_RATIO` | `0.4` | Minimum stationary-series ratio |
+| `GOVERNANCE_WALK_FORWARD_WINDOWS` | `4` | Walk-forward backtesting windows |
+| `GOVERNANCE_MIN_WALK_FORWARD_R2` | `-0.25` | Minimum walk-forward average R2 |
+| `GOVERNANCE_MAX_MODEL_RISK_SCORE` | `0.6` | Maximum composite model risk score |
+| `GIT_COMMIT_SHA` | `unversioned` | Optional code lineage identifier for run-contract logs |
 
 ---
 

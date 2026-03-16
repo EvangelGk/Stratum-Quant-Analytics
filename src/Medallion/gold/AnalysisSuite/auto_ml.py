@@ -1,19 +1,30 @@
-from typing import Union
+import importlib
+from typing import Any, Callable, Optional, Union, cast
 
 import pandas as pd
 
+from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
+compare_models: Optional[Callable[..., Any]] = None
+predict_model: Optional[Callable[..., Any]] = None
+setup: Optional[Callable[..., Any]] = None
+
 try:
-    from pycaret.regression import compare_models, predict_model, setup
-except ImportError:
+    pycaret_regression = importlib.import_module("pycaret.regression")
+    compare_models = getattr(pycaret_regression, "compare_models", None)
+    predict_model = getattr(pycaret_regression, "predict_model", None)
+    setup = getattr(pycaret_regression, "setup", None)
+except Exception:
     compare_models = None
     predict_model = None
     setup = None
 
-from exceptions.MedallionExceptions import AnalysisError, DataValidationError
-
 
 def auto_ml_regression(
-    df: pd.DataFrame, target: str, features: list
+    df: pd.DataFrame,
+    target: str,
+    features: list,
+    random_state: Optional[int] = None,
 ) -> Union[dict, None]:
     """Select and fit the best regression model automatically via PyCaret.
 
@@ -63,10 +74,21 @@ def auto_ml_regression(
         if target not in df.columns or not all(f in df.columns for f in features):
             raise DataValidationError("Columns not found.")
 
+        setup_fn = cast(Callable[..., Any], setup)
+        compare_models_fn = cast(Callable[..., Any], compare_models)
+        predict_model_fn = cast(Callable[..., Any], predict_model)
+
         data = df[features + [target]].dropna()
-        setup(data=data, target=target, silent=True, verbose=False)
-        best_model = compare_models()
-        predictions = predict_model(best_model, data=data)
+        setup_fn(
+            data=data,
+            target=target,
+            silent=True,
+            verbose=False,
+            session_id=random_state,
+            fold_shuffle=False,
+        )
+        best_model = compare_models_fn()
+        predictions = predict_model_fn(best_model, data=data)
         return {"best_model": str(best_model), "predictions": predictions}
     except DataValidationError:
         raise

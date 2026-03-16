@@ -16,7 +16,9 @@ def test_standardize_and_impute_and_audit_columns(silver_layer):
 
     # Test _standardize: date alignment and unit normalization
     df = pd.DataFrame({"Date": ["2020-01-01", "2020-02-01"], "Value": [200.0, 300.0]})
-    standardized, unit_norm, temporal_aligned = silver_layer._standardize(df.copy(), "fred")
+    standardized, unit_norm, temporal_aligned = silver_layer._standardize(
+        df.copy(), "fred"
+    )
     assert temporal_aligned is True
     assert unit_norm is True
     assert standardized["value"].max() <= 3.0

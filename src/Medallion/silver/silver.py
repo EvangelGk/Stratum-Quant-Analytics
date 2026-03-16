@@ -39,7 +39,7 @@ class SilverLayer:
         self.silver_run_id = str(uuid.uuid4())  # Unique ID for this run
 
         # Use Pathlib for absolute safety on Windows/Linux
-        self.root_path = Path(__file__).parents[2]
+        self.root_path = Path(__file__).parents[3]
         self.raw_path = self.root_path / "data" / "raw"
         self.processed_path = self.root_path / "data" / "processed"
 
@@ -219,7 +219,7 @@ class SilverLayer:
             if null_percentage > 30:
                 raise ComplianceViolationError(
                     f"Data quality violation: {null_percentage:.2f}% nulls"
-                    "exceed 30% threshold for {source}"
+                    f" exceed 30% threshold for {source}"
                 )
 
             # Outlier Detection with Z-Score and Winsorization
@@ -230,14 +230,17 @@ class SilverLayer:
                     series = df[col].dropna()
                     if len(series) > 0:
                         # Z-Score check: |z| > 3.5
-                        z_scores = np.abs((series - series.mean()) / series.std())
+                        std = series.std()
+                        if std == 0 or pd.isna(std):
+                            continue
+                        z_scores = np.abs((series - series.mean()) / std)
                         outliers = z_scores > 3.5
                         outliers_clipped += int(outliers.sum())
 
                         # Quantile Winsorization at P1 and P99
                         lower_bound = series.quantile(0.01)
                         upper_bound = series.quantile(0.99)
-                        df[col] = np.clip(series, lower_bound, upper_bound)
+                        df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
 
             # Vectorized Imputation: Forward Fill for time series
             df = df.sort_values("date").reset_index(drop=True)

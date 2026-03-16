@@ -3,7 +3,7 @@ name = "scenario-planner"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "EvangelGK",email = "liagkan@gmail.comK"}
+    {name = "EvangelGK",email = "liagkan@gmail.com"}
 ]
 
 requires-python = ">=3.11"
@@ -17,7 +17,7 @@ dependencies = [
     "fredapi>=0.5.2,<1.0.0",
     "yfinance>=1.2.0,<2.0.0",
     "wbgapi>=1.0.14,<2.0.0",
-    "dotenv>=0.9.9,<1.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
     "pandera>=0.29.0,<1.0.0",
     "statsmodels>=0.14.6,<1.0.0",
     "scikit-learn>=1.8.0,<2.0.0",
@@ -44,6 +44,7 @@ pytest-xdist = "^3.5.0"
 
 [tool.ruff]
 line-length = 88
+extend-exclude = ["notebooks/*.ipynb"]
 
 [tool.ruff.lint]
 select = [

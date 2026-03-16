@@ -1,7 +1,8 @@
+from typing import cast
+
 import pandas as pd
 import pandera.pandas as pa
 from pandera.pandas import Check, Column, DataFrameSchema
-from typing import cast
 
 
 # --- Reusable Checks (Senior Practice: DRY) ---
@@ -68,7 +69,7 @@ macro_schema = DataFrameSchema(
 # --- 3. World Bank Schema ---
 worldbank_schema = DataFrameSchema(
     columns={
-        "date": Column(pa.Int, Check.in_range(2000, 2030)),
+        "date": Column(pa.DateTime, nullable=False),
         "value": Column(float, nullable=True),
         "economy": Column(
             str,

@@ -38,6 +38,21 @@ The application will:
 - Run comprehensive analyses
 - Generate reports and save results
 
+## Reproducibility and Governance Controls
+
+- **Reproducibility policy**
+   - `RANDOM_SEED` controls deterministic stochastic analyses.
+   - `ENFORCE_REPRODUCIBILITY=true` enforces seed propagation where supported.
+
+- **Governance hard-fail gate**
+   - If `GOVERNANCE_HARD_FAIL=true`, advanced analyses are blocked when governance thresholds fail.
+   - Gate checks include out-of-sample R2, walk-forward R2, leakage flags,
+      stationarity ratio, normalized drift, and composite model risk score.
+
+- **Run contract lineage**
+   - Every run logs reproducibility and lineage hashes:
+      config hash, data catalog hash, pyproject hash, and optional code version (`GIT_COMMIT_SHA`).
+
 ## Understanding the Output
 
 ### On Screen Messages
@@ -179,6 +194,11 @@ Edit `src/Fetchers/ProjectConfig.py` for:
 - `logs/application_catalog.log`: Detailed operation logs
 - `logs/session_summary_*.json`: Session performance summaries
 - Real-time metrics during execution
+
+### SLO/SLA Observability
+- Stage-level success/error accounting is tracked in pipeline logs.
+- Rolling SLO windows are emitted for 5-minute and 1-hour windows.
+- SLA snapshots include p95 latency, throughput, success rate, and error rate.
 
 ### Key Metrics
 - Records processed per data source

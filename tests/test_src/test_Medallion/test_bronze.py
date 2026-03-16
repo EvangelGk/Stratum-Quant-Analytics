@@ -33,7 +33,11 @@ def test_get_expected_columns(bronze_layer):
         "Volume",
     ]
     assert bronze_layer._get_expected_columns("fred") == ["Date", "Value"]
-    assert bronze_layer._get_expected_columns("worldbank") == ["economy", "Date", "Value"]
+    assert bronze_layer._get_expected_columns("worldbank") == [
+        "economy",
+        "Date",
+        "Value",
+    ]
 
 
 def test_process_and_save_writes_parquet(bronze_layer):
@@ -64,3 +68,19 @@ def test_process_and_save_raises_on_bad_columns(bronze_layer):
         assert "missing required columns" in str(e)
     else:
         raise AssertionError("Expected ValueError for missing columns")
+
+
+def test_provider_circuit_breaker_opens_after_repeated_failures(bronze_layer):
+    source = "fred"
+    bronze_layer.provider_state[source] = {
+        "last_request_ts": 0.0,
+        "consecutive_failures": 0.0,
+        "circuit_open_until": 0.0,
+    }
+
+    bronze_layer._record_provider_failure(source)
+    bronze_layer._record_provider_failure(source)
+    bronze_layer._record_provider_failure(source)
+
+    assert bronze_layer.provider_state[source]["consecutive_failures"] >= 3
+    assert bronze_layer.provider_state[source]["circuit_open_until"] > 0

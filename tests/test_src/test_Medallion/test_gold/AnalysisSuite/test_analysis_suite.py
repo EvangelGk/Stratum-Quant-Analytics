@@ -6,6 +6,7 @@ from src.Medallion.gold.AnalysisSuite.auto_ml import auto_ml_regression
 from src.Medallion.gold.AnalysisSuite.correl_mtrx import correl_mtrx
 from src.Medallion.gold.AnalysisSuite.elasticity import elasticity
 from src.Medallion.gold.AnalysisSuite.forecasting import forecasting
+from src.Medallion.gold.AnalysisSuite.governance import governance_report
 from src.Medallion.gold.AnalysisSuite.lag import lag_analysis
 from src.Medallion.gold.AnalysisSuite.monte_carlo import monte_carlo
 from src.Medallion.gold.AnalysisSuite.sesnsitivity_reg import sensitivity_reg
@@ -81,7 +82,7 @@ def test_forecasting_runs():
 def test_auto_ml_regression_patched(monkeypatch):
     import src.Medallion.gold.AnalysisSuite.auto_ml as auto_ml_module
 
-    def dummy_setup(data, target, silent, verbose):
+    def dummy_setup(*args, **kwargs):
         return None
 
     class DummyModel:
@@ -102,3 +103,31 @@ def test_auto_ml_regression_patched(monkeypatch):
     result = auto_ml_regression(df, target="y", features=["x"])
     assert result["best_model"] == "DummyModel"
     assert "predictions" in result
+
+
+def test_governance_report_runs_with_temporal_split():
+    df = pd.DataFrame(
+        {
+            "date": pd.date_range("2018-01-31", periods=60, freq="ME"),
+            "log_return": np.random.randn(60) * 0.02,
+            "inflation": np.linspace(0.01, 0.03, 60),
+            "energy_index": np.linspace(0.2, 0.4, 60) + np.random.randn(60) * 0.01,
+        }
+    )
+
+    report = governance_report(
+        df,
+        target="log_return",
+        factors=["inflation", "energy_index"],
+    )
+
+    assert report["status"] == "ok"
+    assert "out_of_sample" in report
+    assert "stability" in report
+    assert "leakage_flags" in report
+    assert "stationarity" in report
+    assert "reproducibility" in report
+    assert "multiple_testing" in report
+    assert "rolling_regime" in report["stability"]
+    assert "walk_forward" in report
+    assert "model_risk_score" in report

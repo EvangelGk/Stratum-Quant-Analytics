@@ -42,6 +42,20 @@ class BronzeLayer:
         )
         self.success_count = 0
         self.fail_count = 0
+        self.provider_limits = {
+            "yfinance": 60,
+            "fred": 30,
+            "worldbank": 20,
+        }
+        self.provider_state: Dict[str, Dict[str, float]] = {
+            source: {
+                "last_request_ts": 0.0,
+                "consecutive_failures": 0.0,
+                "circuit_open_until": 0.0,
+            }
+            for source in self.provider_limits.keys()
+        }
+        self.circuit_breaker_threshold = 3
 
     def run(self) -> None:
         """
@@ -138,15 +152,19 @@ class BronzeLayer:
         """
         for attempt in range(self.config.max_retries):
             try:
+                self._wait_for_circuit(source)
+                self._acquire_rate_slot(source)
                 delay = random.uniform(
                     self.config.retry_delay_min, self.config.retry_delay_max
                 )
                 time.sleep(delay)  # Random delay to avoid rate limits
                 df = fetcher.fetch(*params)
                 self._process_and_save(df, filename, source)
+                self._record_provider_success(source)
                 self.success_count += 1
                 break  # Success, exit retry loop
             except FetcherError as e:
+                self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
                     self.logger.warning(
                         f"Attempt {attempt + 1} failed for {filename}: {e}. Retrying..."
@@ -160,6 +178,7 @@ class BronzeLayer:
                     )
                     raise  # Re-raise after max retries
             except TimeoutError as e:
+                self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
                     self.logger.warning(
                         f"Timeout on attempt {attempt + 1} for {filename}: {e}."
@@ -168,13 +187,73 @@ class BronzeLayer:
                 else:
                     raise
             except RateLimitError as e:
+                self._record_provider_failure(source)
                 self.logger.warning(
                     f"Rate limit hit for {filename}: {e}. Waiting longer..."
                 )
                 time.sleep(60)  # Extra wait for rate limit
             except Exception as e:
+                self._record_provider_failure(source)
                 self.logger.error(f"Unexpected error for {filename}: {e}")
                 raise
+
+    def _acquire_rate_slot(self, source: str) -> None:
+        requests_per_minute = self.provider_limits.get(source, 20)
+        min_interval = 60.0 / max(requests_per_minute, 1)
+        with self.lock:
+            state = self.provider_state.setdefault(
+                source,
+                {
+                    "last_request_ts": 0.0,
+                    "consecutive_failures": 0.0,
+                    "circuit_open_until": 0.0,
+                },
+            )
+            now = time.time()
+            elapsed = now - state["last_request_ts"]
+            wait_for = max(0.0, min_interval - elapsed)
+
+        if wait_for > 0:
+            time.sleep(wait_for)
+
+        with self.lock:
+            self.provider_state[source]["last_request_ts"] = time.time()
+
+    def _wait_for_circuit(self, source: str) -> None:
+        with self.lock:
+            state = self.provider_state.setdefault(
+                source,
+                {
+                    "last_request_ts": 0.0,
+                    "consecutive_failures": 0.0,
+                    "circuit_open_until": 0.0,
+                },
+            )
+            open_until = state["circuit_open_until"]
+        now = time.time()
+        if open_until > now:
+            sleep_for = open_until - now
+            self.logger.warning(
+                "Circuit breaker active for %s. Cooling down for %.2fs",
+                source,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+
+    def _record_provider_success(self, source: str) -> None:
+        with self.lock:
+            state = self.provider_state[source]
+            state["consecutive_failures"] = 0.0
+            state["circuit_open_until"] = 0.0
+
+    def _record_provider_failure(self, source: str) -> None:
+        with self.lock:
+            state = self.provider_state[source]
+            state["consecutive_failures"] += 1.0
+            failures = int(state["consecutive_failures"])
+            if failures >= self.circuit_breaker_threshold:
+                cooldown = min(15.0 * failures, 300.0)
+                state["circuit_open_until"] = time.time() + cooldown
 
     def _process_and_save(self, df: pd.DataFrame, filename: str, source: str) -> None:
         """

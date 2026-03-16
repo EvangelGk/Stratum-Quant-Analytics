@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -7,7 +7,11 @@ from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
 
 def monte_carlo(
-    df: pd.DataFrame, ticker: str, days: int = 252, iterations: int = 10000
+    df: pd.DataFrame,
+    ticker: str,
+    days: int = 252,
+    iterations: int = 10000,
+    random_state: Optional[int] = None,
 ) -> np.ndarray:
     """Simulate future price paths using Geometric Brownian Motion (GBM).
 
@@ -62,9 +66,10 @@ def monte_carlo(
         sigma = returns.std()
         last_price = data.iloc[-1]
 
-        # Vectorized Simulation (efficient)
+        # Vectorized Simulation (efficient and optionally deterministic)
+        rng = np.random.default_rng(random_state)
         shocks = np.exp(
-            (mu - 0.5 * sigma**2) + sigma * np.random.normal(0, 1, (days, iterations))
+            (mu - 0.5 * sigma**2) + sigma * rng.normal(0, 1, (days, iterations))
         )
         price_paths = last_price * shocks.cumprod(axis=0)
 

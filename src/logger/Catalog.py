@@ -3,7 +3,8 @@ import logging
 import threading
 import time
 import uuid
-from datetime import datetime
+from contextvars import ContextVar
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -33,6 +34,12 @@ class ApplicationCatalog:
 
         self.lock = threading.Lock()
         self.session_id = str(uuid.uuid4())
+        self._run_id_ctx: ContextVar[str] = ContextVar(
+            f"catalog_run_id_{self.session_id}", default="unassigned"
+        )
+        self._correlation_id_ctx: ContextVar[str] = ContextVar(
+            f"catalog_correlation_id_{self.session_id}", default="unassigned"
+        )
 
         # Setup structured logging (JSON logs at file path)
         self.logger = logging.getLogger("ApplicationCatalog")
@@ -47,6 +54,10 @@ class ApplicationCatalog:
             def filter(self, record: logging.LogRecord) -> bool:
                 if not hasattr(record, "session_id"):
                     record.session_id = self.session_id
+                if not hasattr(record, "run_id"):
+                    record.run_id = "unassigned"
+                if not hasattr(record, "correlation_id"):
+                    record.correlation_id = "unassigned"
                 if not hasattr(record, "operation"):
                     record.operation = "unknown"
                 if not hasattr(record, "metrics"):
@@ -69,7 +80,8 @@ class ApplicationCatalog:
             file_handler.setFormatter(
                 logging.Formatter(
                     '{"timestamp": "%(asctime)s", "session_id": '
-                    '"%(session_id)s", "level": "%(levelname)s", '
+                    '"%(session_id)s", "run_id": "%(run_id)s", '
+                    '"correlation_id": "%(correlation_id)s", "level": "%(levelname)s", '
                     '"component": "%(name)s", "operation": '
                     '"%(operation)s", "metrics": %(metrics)s, '
                     '"details": %(details)s, "message": "%(message)s"}'
@@ -92,6 +104,20 @@ class ApplicationCatalog:
             "data_metrics": {},
             "performance_metrics": {},
             "error_metrics": {},
+            "sla_metrics": {},
+        }
+
+    def set_run_context(self, run_id: str, correlation_id: str) -> None:
+        with self.lock:
+            self._run_id_ctx.set(run_id)
+            self._correlation_id_ctx.set(correlation_id)
+            self.session_metrics["run_id"] = run_id
+            self.session_metrics["correlation_id"] = correlation_id
+
+    def get_run_context(self) -> Dict[str, str]:
+        return {
+            "run_id": self._run_id_ctx.get(),
+            "correlation_id": self._correlation_id_ctx.get(),
         }
 
     def log_operation(
@@ -118,6 +144,8 @@ class ApplicationCatalog:
         """
         extra = {
             "session_id": self.session_id,
+            "run_id": self._run_id_ctx.get(),
+            "correlation_id": self._correlation_id_ctx.get(),
             "operation": operation,
             "metrics": json.dumps(metrics or {}),
             "details": json.dumps(details or {}),
@@ -133,10 +161,108 @@ class ApplicationCatalog:
                     "timestamp": datetime.now().isoformat(),
                     "operation": operation,
                     "component": component,
+                    "run_id": self._run_id_ctx.get(),
+                    "correlation_id": self._correlation_id_ctx.get(),
                     "metrics": metrics or {},
                     "details": details or {},
                 }
             )
+
+    def log_sla_snapshot(
+        self,
+        component: str,
+        p95_latency_seconds: float,
+        error_rate: float,
+        success_rate: float,
+        throughput_ops_per_sec: float,
+    ) -> None:
+        metrics = {
+            "p95_latency_seconds": p95_latency_seconds,
+            "error_rate": error_rate,
+            "success_rate": success_rate,
+            "throughput_ops_per_sec": throughput_ops_per_sec,
+        }
+        self.log_operation(
+            "sla_snapshot",
+            component,
+            metrics,
+            {},
+            "SLA snapshot captured",
+        )
+        with self.lock:
+            self.session_metrics["sla_metrics"] = metrics
+
+    def log_slo_window(
+        self,
+        component: str,
+        window_seconds: int,
+        operation_name: str,
+    ) -> None:
+        now = datetime.now()
+        window_start = now - timedelta(seconds=window_seconds)
+
+        with self.lock:
+            window_ops = [
+                op
+                for op in self.session_metrics["operations"]
+                if op.get("operation") == operation_name
+                and datetime.fromisoformat(op["timestamp"]) >= window_start
+            ]
+
+        if not window_ops:
+            self.log_operation(
+                "slo_window",
+                component,
+                {
+                    "window_seconds": window_seconds,
+                    "operation": operation_name,
+                    "events": 0,
+                },
+                {},
+                "No operations found for SLO window",
+            )
+            return
+
+        durations = [
+            float(op.get("metrics", {}).get("duration_seconds", 0.0))
+            for op in window_ops
+            if op.get("metrics", {}).get("duration_seconds") is not None
+        ]
+        successes = [
+            bool(op.get("metrics", {}).get("success", False)) for op in window_ops
+        ]
+        success_count = sum(1 for s in successes if s)
+        total_events = len(window_ops)
+        failure_count = total_events - success_count
+        success_rate = success_count / total_events if total_events else 0.0
+        error_rate = failure_count / total_events if total_events else 0.0
+
+        p95_duration = 0.0
+        if durations:
+            sorted_durations = sorted(durations)
+            p95_index = max(
+                0,
+                min(
+                    len(sorted_durations) - 1,
+                    int(0.95 * (len(sorted_durations) - 1)),
+                ),
+            )
+            p95_duration = float(sorted_durations[p95_index])
+
+        self.log_operation(
+            "slo_window",
+            component,
+            {
+                "window_seconds": window_seconds,
+                "operation": operation_name,
+                "events": total_events,
+                "success_rate": success_rate,
+                "error_rate": error_rate,
+                "p95_duration_seconds": p95_duration,
+            },
+            {},
+            "SLO rolling window computed",
+        )
 
     def log_data_operation(
         self,
@@ -295,6 +421,10 @@ class ApplicationCatalog:
             summary = {
                 "session_info": {
                     "session_id": self.session_id,
+                    "run_id": self.session_metrics.get("run_id", "unassigned"),
+                    "correlation_id": self.session_metrics.get(
+                        "correlation_id", "unassigned"
+                    ),
                     "start_time": self.session_metrics["session_start"],
                     "end_time": datetime.now().isoformat(),
                     "total_duration_seconds": total_duration,
@@ -322,6 +452,7 @@ class ApplicationCatalog:
                     ),
                 },
                 "error_metrics": self.session_metrics["error_metrics"],
+                "sla_metrics": self.session_metrics.get("sla_metrics", {}),
                 "performance_metrics": {
                     "average_operation_duration": total_duration / total_operations
                     if total_operations > 0

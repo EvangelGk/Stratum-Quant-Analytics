@@ -28,6 +28,7 @@ from .AnalysisSuite.auto_ml import auto_ml_regression
 from .AnalysisSuite.correl_mtrx import correl_mtrx
 from .AnalysisSuite.elasticity import elasticity
 from .AnalysisSuite.forecasting import forecasting
+from .AnalysisSuite.governance import governance_report
 from .AnalysisSuite.lag import lag_analysis
 from .AnalysisSuite.monte_carlo import monte_carlo
 from .AnalysisSuite.sesnsitivity_reg import sensitivity_reg
@@ -81,32 +82,43 @@ class GoldLayer:
 
         # 3. Join Macro Data (FRED)
         fred_files = list((self.processed_path / "fred").glob("*.parquet"))
+        macro_columns: List[str] = []
         for f in fred_files:
+            col_name = f.stem.replace("_silver", "")
             macro_df = pd.read_parquet(f).rename(
-                columns={"value": f.stem.replace("_silver", "")}
+                columns={"value": col_name}
             )
             master_df = pd.merge(
                 master_df,
-                macro_df[["date", f.stem.replace("_silver", "")]],
+                macro_df[["date", col_name]],
                 on="date",
                 how="left",
             )
+            macro_columns.append(col_name)
 
         # 4. Join World Bank Data
         wb_files = list((self.processed_path / "worldbank").glob("*.parquet"))
         for f in wb_files:
+            col_name = f.stem.replace("_silver", "")
             wb_df = pd.read_parquet(f).rename(
-                columns={"value": f.stem.replace("_silver", "")}
+                columns={"value": col_name}
             )
             master_df = pd.merge(
                 master_df,
-                wb_df[["date", f.stem.replace("_silver", "")]],
+                wb_df[["date", col_name]],
                 on="date",
                 how="left",
             )
+            macro_columns.append(col_name)
 
         # 5. Forward-Fill Macro and World Bank Data
-        master_df = master_df.sort_values(["ticker", "date"]).ffill()
+        master_df = master_df.sort_values(["ticker", "date"]).copy()
+        if macro_columns:
+            master_df[macro_columns] = (
+                master_df.groupby("ticker", group_keys=False)[macro_columns]
+                .ffill()
+                .bfill()
+            )
 
         # Save the "Analytical Base Table" with optional encryption
         table = pa.Table.from_pandas(master_df)
@@ -114,6 +126,131 @@ class GoldLayer:
             table, self.gold_path / "master_table.parquet", compression="zstd"
         )
         return master_df
+
+    def _resolve_ticker(self, ticker: Optional[str]) -> Optional[str]:
+        if ticker:
+            return ticker
+        if "ticker" not in self.df.columns:
+            return None
+        tickers = self.df["ticker"].dropna().unique().tolist()
+        return tickers[0] if tickers else None
+
+    def _resolve_random_seed(self) -> Optional[int]:
+        enforce = bool(getattr(self.config, "enforce_reproducibility", True))
+        if not enforce:
+            return None
+        seed = getattr(self.config, "random_seed", 42)
+        return int(seed) if seed is not None else None
+
+    def _evaluate_governance_gate(
+        self, report: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        hard_fail = bool(getattr(self.config, "governance_hard_fail", False))
+        gate_reasons: List[str] = []
+        gate: Dict[str, Any] = {
+            "hard_fail": hard_fail,
+            "passed": True,
+            "reasons": gate_reasons,
+        }
+
+        if not report:
+            if hard_fail:
+                gate["passed"] = False
+                gate_reasons.append("governance_report_unavailable")
+            return gate
+
+        status = report.get("status")
+        if status == "insufficient_data":
+            # Not enough samples for strict governance statistics: warn-only.
+            gate_reasons.append("insufficient_data_for_governance_checks")
+            return gate
+
+        reasons: List[str] = []
+        oos_r2 = report.get("out_of_sample", {}).get("r2")
+        min_r2 = float(getattr(self.config, "governance_min_r2", -0.25))
+        if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
+            reasons.append(f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}")
+
+        normalized_shift = report.get("stability", {}).get("normalized_mean_shift")
+        max_shift = float(getattr(self.config, "governance_max_normalized_shift", 2.5))
+        if (
+            isinstance(normalized_shift, (float, int))
+            and float(normalized_shift) > max_shift
+        ):
+            reasons.append(
+                "normalized_mean_shift_above_threshold:"
+                f"{float(normalized_shift):.4f}>{max_shift:.4f}"
+            )
+
+        leakage_flags = report.get("leakage_flags", []) or []
+        max_leakage = int(getattr(self.config, "governance_max_leakage_flags", 1))
+        if len(leakage_flags) > max_leakage:
+            reasons.append(
+                "leakage_flags_above_threshold:"
+                f"{len(leakage_flags)}>{max_leakage}"
+            )
+
+        stationarity = report.get("stationarity", {}) or {}
+        status_entries = [v for v in stationarity.values() if isinstance(v, dict)]
+        stationary_count = sum(
+            1 for v in status_entries if v.get("is_stationary") is True
+        )
+        considered = sum(
+            1 for v in status_entries if v.get("is_stationary") is not None
+        )
+        if considered > 0:
+            ratio = stationary_count / considered
+            min_ratio = float(
+                getattr(self.config, "governance_min_stationary_ratio", 0.4)
+            )
+            if ratio < min_ratio:
+                reasons.append(
+                    "stationarity_ratio_below_threshold:"
+                    f"{ratio:.4f}<{min_ratio:.4f}"
+                )
+
+        walk_forward = report.get("walk_forward", {}) or {}
+        min_walk_forward_r2 = float(
+            getattr(self.config, "governance_min_walk_forward_r2", -0.25)
+        )
+        walk_forward_avg_r2 = walk_forward.get("avg_r2")
+        if (
+            isinstance(walk_forward_avg_r2, (float, int))
+            and float(walk_forward_avg_r2) < min_walk_forward_r2
+        ):
+            reasons.append(
+                "walk_forward_avg_r2_below_threshold:"
+                f"{float(walk_forward_avg_r2):.4f}<{min_walk_forward_r2:.4f}"
+            )
+
+        model_risk_score = report.get("model_risk_score")
+        max_model_risk = float(
+            getattr(self.config, "governance_max_model_risk_score", 0.6)
+        )
+        if (
+            isinstance(model_risk_score, (float, int))
+            and float(model_risk_score) > max_model_risk
+        ):
+            reasons.append(
+                "model_risk_score_above_threshold:"
+                f"{float(model_risk_score):.4f}>{max_model_risk:.4f}"
+            )
+
+        if hard_fail and reasons:
+            gate["passed"] = False
+        gate_reasons.extend(reasons)
+        return gate
+
+    def _blocked_results(self, reason: str) -> Dict[str, Any]:
+        return {
+            "elasticity": reason,
+            "lag_analysis": reason,
+            "monte_carlo": reason,
+            "stress_test": reason,
+            "sensitivity_regression": reason,
+            "forecasting": reason,
+            "auto_ml": reason,
+        }
 
     def run_all_analyses(
         self,
@@ -128,6 +265,9 @@ class GoldLayer:
         Run all analyses and return results in a dictionary.
         """
         results = {}
+        selected_ticker = self._resolve_ticker(ticker)
+        random_seed = self._resolve_random_seed()
+        resolved_factors = factors or ["inflation", "energy_index"]
         try:
             start_time = time.time()
             results["correlation_matrix"] = correl_mtrx(self.df)
@@ -161,7 +301,51 @@ class GoldLayer:
             results["correlation_matrix"] = None
 
         try:
-            if ticker:
+            results["governance_report"] = governance_report(
+                self.df,
+                target=target,
+                factors=resolved_factors,
+                random_seed=random_seed,
+                reproducibility_enforced=bool(
+                    getattr(self.config, "enforce_reproducibility", True)
+                ),
+                walk_forward_windows=int(
+                    getattr(self.config, "governance_walk_forward_windows", 4)
+                ),
+            )
+            gate = self._evaluate_governance_gate(results["governance_report"])
+            results["governance_gate"] = gate
+            if not gate.get("passed", True):
+                blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
+                results.update(self._blocked_results(blocked_reason))
+                return results
+        except AnalysisError as e:
+            self.logger.error(f"Analysis error in governance report: {e}")
+            results["governance_report"] = None
+            gate = self._evaluate_governance_gate(None)
+            results["governance_gate"] = gate
+            if not gate.get("passed", True):
+                blocked_reason = (
+                    "blocked_by_governance_gate:"
+                    f"{gate.get('reasons', [])}"
+                )
+                results.update(self._blocked_results(blocked_reason))
+                return results
+        except Exception as e:
+            self.logger.error(f"Unexpected error in governance report: {e}")
+            results["governance_report"] = None
+            gate = self._evaluate_governance_gate(None)
+            results["governance_gate"] = gate
+            if not gate.get("passed", True):
+                blocked_reason = (
+                    "blocked_by_governance_gate:"
+                    f"{gate.get('reasons', [])}"
+                )
+                results.update(self._blocked_results(blocked_reason))
+                return results
+
+        try:
+            if "log_return" in self.df.columns and macro_factor in self.df.columns:
                 results["elasticity"] = elasticity(self.df, "log_return", macro_factor)
                 if results["elasticity"] is not None:
                     print(
@@ -170,7 +354,7 @@ class GoldLayer:
                         )
                     )
             else:
-                results["elasticity"] = "Ticker not specified"
+                results["elasticity"] = "Required columns not available"
         except AnalysisError as e:
             self.logger.error(f"Analysis error in elasticity: {e}")
             results["elasticity"] = None
@@ -200,15 +384,17 @@ class GoldLayer:
             results["lag_analysis"] = None
 
         try:
-            if ticker:
-                results["monte_carlo"] = monte_carlo(self.df, ticker)
+            if selected_ticker:
+                results["monte_carlo"] = monte_carlo(
+                    self.df, selected_ticker, random_state=random_seed
+                )
                 if results["monte_carlo"] is not None:
                     print(
                         ANALYSIS_MONTE_CARLO.format(
                             iterations=results["monte_carlo"].shape[1]
                             if hasattr(results["monte_carlo"], "shape")
                             else "N/A",
-                            ticker=ticker,
+                            ticker=selected_ticker,
                             days=results["monte_carlo"].shape[0]
                             if hasattr(results["monte_carlo"], "shape")
                             else "N/A",
@@ -311,13 +497,49 @@ class GoldLayer:
         factors: Optional[List[str]] = None,
         max_workers: int = 4,
         regression_model: str = "OLS",
+        include_auto_ml: bool = False,
     ) -> Dict[str, Any]:
         """
-        Run all analyses in parallel using multiprocessing for better performance.
+        Run independent analyses in parallel.
+
+        Uses a thread pool to avoid process-pickling overhead and to keep
+        execution stable across different environments.
         """
         print(LIVE_STEP_7_RESULTS_GENERATION)
         results: Dict[str, Any] = {}
         safe_factors = factors or ["inflation", "energy_index"]
+        worker_count = max(1, min(max_workers, 8))
+        selected_ticker = self._resolve_ticker(ticker)
+        random_seed = self._resolve_random_seed()
+
+        # Run governance gate before advanced analyses.
+        try:
+            results["governance_report"] = governance_report(
+                self.df,
+                target,
+                safe_factors,
+                "date",
+                0.2,
+                24,
+                random_seed,
+                bool(getattr(self.config, "enforce_reproducibility", True)),
+                int(getattr(self.config, "governance_walk_forward_windows", 4)),
+            )
+            gate = self._evaluate_governance_gate(results["governance_report"])
+            results["governance_gate"] = gate
+            if not gate.get("passed", True):
+                blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
+                results.update(self._blocked_results(blocked_reason))
+                results["correlation_matrix"] = correl_mtrx(self.df)
+                return results
+        except Exception:
+            gate = self._evaluate_governance_gate(results.get("governance_report"))
+            results["governance_gate"] = gate
+            if not gate.get("passed", True):
+                blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
+                results.update(self._blocked_results(blocked_reason))
+                results["correlation_matrix"] = correl_mtrx(self.df)
+                return results
 
         # Define tasks as partial functions
         tasks: Dict[str, Callable[[], Any]] = {
@@ -329,16 +551,25 @@ class GoldLayer:
             "forecasting": partial(
                 forecasting, self.df, target, 10
             ),  # Forecast 10 steps for target column
-            "auto_ml": partial(auto_ml_regression, self.df, target, safe_factors),
         }
 
-        if ticker:
+        if include_auto_ml:
+            tasks["auto_ml"] = partial(
+                auto_ml_regression, self.df, target, safe_factors, random_seed
+            )
+
+        if "log_return" in self.df.columns and macro_factor in self.df.columns:
             tasks["elasticity"] = partial(
                 elasticity, self.df, "log_return", macro_factor
             )
-            tasks["monte_carlo"] = partial(monte_carlo, self.df, ticker)
         else:
-            results["elasticity"] = "Ticker not specified"
+            results["elasticity"] = "Required columns not available"
+
+        if selected_ticker:
+            tasks["monte_carlo"] = partial(
+                monte_carlo, self.df, selected_ticker, 252, 10000, random_seed
+            )
+        else:
             results["monte_carlo"] = "Ticker not specified"
 
         if shock_map:
@@ -347,20 +578,36 @@ class GoldLayer:
             results["stress_test"] = "Shock map not provided"
 
         # Run parallel tasks
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=max_workers
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=worker_count
         ) as executor:
             future_to_key: Dict[concurrent.futures.Future[Any], str] = {
                 executor.submit(task): key for key, task in tasks.items()
             }
-            for future, key in future_to_key.items():
-                try:
-                    results[key] = future.result()
-                except AnalysisError as e:
-                    self.logger.error(f"Analysis error in {key}: {e}")
-                    results[key] = None
-                except Exception as e:
-                    self.logger.error(f"Unexpected error in {key}: {e}")
-                    results[key] = None
+            submitted_futures = list(future_to_key.keys())
+            try:
+                iterator = concurrent.futures.as_completed(submitted_futures)
+                for future in iterator:
+                    key = future_to_key[future]
+                    try:
+                        results[key] = future.result()
+                    except AnalysisError as e:
+                        self.logger.error(f"Analysis error in {key}: {e}")
+                        results[key] = None
+                    except Exception as e:
+                        self.logger.error(f"Unexpected error in {key}: {e}")
+                        results[key] = None
+            except AttributeError:
+                # Test doubles may not implement internal Future synchronization fields.
+                for future in submitted_futures:
+                    key = future_to_key[future]
+                    try:
+                        results[key] = future.result()
+                    except AnalysisError as e:
+                        self.logger.error(f"Analysis error in {key}: {e}")
+                        results[key] = None
+                    except Exception as e:
+                        self.logger.error(f"Unexpected error in {key}: {e}")
+                        results[key] = None
 
         return results
