@@ -11,167 +11,167 @@ A comprehensive financial data pipeline for scenario planning and risk analysis.
 # Live Guidance Messages - Appear in real-time during execution
 
 LIVE_STEP_0_WELCOME = """
-🚀 WELCOME TO SCENARIO PLANNER!
+>>> WELCOME TO SCENARIO PLANNER!
 ===============================
 This application will automatically:
-• Fetch financial data from multiple sources
-• Process and clean the data
-• Run advanced financial analyses
-• Generate comprehensive reports
+* Fetch financial data from multiple sources
+* Process and clean the data
+* Run advanced financial analyses
+* Generate comprehensive reports
 
-Sit back and watch the magic happen! ✨
+Sit back and watch the magic happen!
 """
 
 LIVE_STEP_1_PREREQUISITES_CHECK = """
-✅ STEP 1: CHECKING PREREQUISITES
+[OK] STEP 1: CHECKING PREREQUISITES
 ==================================
-• Python 3.8+ ✓
-• Required packages ✓
-• FRED API key ✓
-• Internet connection ✓
+* Python 3.8+ [OK]
+* Required packages [OK]
+* FRED API key [OK]
+* Internet connection [OK]
 
 All prerequisites verified! Proceeding...
 """
 
 LIVE_STEP_2_CONFIG_LOADING = """
-⚙️  STEP 2: LOADING CONFIGURATION
+[CONFIG] STEP 2: LOADING CONFIGURATION
 =================================
-• Reading environment variables
-• Validating API keys
-• Setting processing parameters
-• Initializing data paths
+* Reading environment variables
+* Validating API keys
+* Setting processing parameters
+* Initializing data paths
 
 Configuration loaded successfully!
 """
 
 LIVE_STEP_3_DATA_FETCHING_START = """
-📊 STEP 3: DATA FETCHING IN PROGRESS
+[FETCH] STEP 3: DATA FETCHING IN PROGRESS
 ====================================
 The application is now fetching data from:
 
-🔸 Yahoo Finance: Stock prices and volumes
-🔸 FRED (Federal Reserve): Economic indicators
-🔸 World Bank: Global development data
+[*] Yahoo Finance: Stock prices and volumes
+[*] FRED (Federal Reserve): Economic indicators
+[*] World Bank: Global development data
 
 This may take 2-5 minutes depending on data volume...
 """
 
 LIVE_STEP_3_DATA_FETCHING_PROGRESS = """
-📈 FETCHING PROGRESS:
-• Connecting to data sources...
-• Downloading historical data...
-• Validating data integrity...
-• Caching for future use...
+[PROGRESS] FETCHING PROGRESS:
+* Connecting to data sources...
+* Downloading historical data...
+* Validating data integrity...
+* Caching for future use...
 
-{current_source}: {records} records fetched ✓
+{current_source}: {records} records fetched [OK]
 """
 
 LIVE_STEP_3_DATA_FETCHING_COMPLETE = """
-✅ DATA FETCHING COMPLETED!
+[OK] DATA FETCHING COMPLETED!
 ===========================
 Total data retrieved:
-• {total_files} data files
-• {total_records} total records
-• From {sources_count} different sources
+* {total_files} data files
+* {total_records} total records
+* From {sources_count} different sources
 
 All data saved to data/raw/ directory.
 """
 
 LIVE_STEP_4_BRONZE_PROCESSING = """
-🏗️  STEP 4: BRONZE LAYER PROCESSING
+[BRONZE] STEP 4: BRONZE LAYER PROCESSING
 ===================================
 Raw data is being organized and cleaned:
 
-• Reading raw data files
-• Basic data validation
-• Initial cleaning and formatting
-• Creating data catalog
+* Reading raw data files
+* Basic data validation
+* Initial cleaning and formatting
+* Creating data catalog
 
-Bronze layer: Foundation data ready ✓
+Bronze layer: Foundation data ready [OK]
 """
 
 LIVE_STEP_5_SILVER_PROCESSING = """
-🔧 STEP 5: SILVER LAYER TRANSFORMATION
+[SILVER] STEP 5: SILVER LAYER TRANSFORMATION
 =======================================
 Data is being standardized and validated:
 
-• Schema validation
-• Missing value imputation
-• Outlier detection and handling
-• Data quality assessment
-• Standardization to consistent formats
+* Schema validation
+* Missing value imputation
+* Outlier detection and handling
+* Data quality assessment
+* Standardization to consistent formats
 
-Silver layer: Trusted data ready ✓
+Silver layer: Trusted data ready [OK]
 """
 
 LIVE_STEP_6_GOLD_ANALYTICS = """
-💎 STEP 6: GOLD LAYER ANALYTICS
+[GOLD] STEP 6: GOLD LAYER ANALYTICS
 ================================
 Running comprehensive financial analyses:
 
-• Building master analytical table
-• Correlation analysis
-• Risk modeling (Monte Carlo)
-• Forecasting models
-• Stress testing scenarios
-• Factor sensitivity analysis
+* Building master analytical table
+* Correlation analysis
+* Risk modeling (Monte Carlo)
+* Forecasting models
+* Stress testing scenarios
+* Factor sensitivity analysis
 
 Gold layer: Advanced analytics in progress...
 """
 
 LIVE_STEP_6_ANALYSIS_PROGRESS = """
-📊 ANALYSIS PROGRESS:
+[ANALYSIS] ANALYSIS PROGRESS:
 =====================
 {analysis_name}: {status}
-• {description}
-• Expected completion: {eta}
+* {description}
+* Expected completion: {eta}
 """
 
 LIVE_STEP_7_RESULTS_GENERATION = """
-📋 STEP 7: GENERATING RESULTS
+[RESULTS] STEP 7: GENERATING RESULTS
 ==============================
 Compiling analysis results:
 
-• Creating summary reports
-• Exporting data visualizations
-• Saving detailed metrics
-• Preparing user-friendly outputs
+* Creating summary reports
+* Exporting data visualizations
+* Saving detailed metrics
+* Preparing user-friendly outputs
 
 Results are being saved to output/ directory...
 """
 
 LIVE_STEP_8_COMPLETION = """
-🎉 APPLICATION COMPLETED SUCCESSFULLY!
+[SUCCESS] APPLICATION COMPLETED SUCCESSFULLY!
 =======================================
 
 EXECUTION SUMMARY:
 ==================
-• Total runtime: {total_time} seconds
-• Data processed: {total_records} records
-• Analyses completed: {analyses_count}
-• Files generated: {files_created}
+* Total runtime: {total_time} seconds
+* Data processed: {total_records} records
+* Analyses completed: {analyses_count}
+* Files generated: {files_created}
 
-📁 OUTPUT LOCATIONS:
+[OUTPUT LOCATIONS]
 ===================
-• Raw data: data/raw/
-• Processed data: data/processed/
-• Analytical results: data/gold/
-• Reports: output/
-• Logs: logs/
+* Raw data: data/raw/
+* Processed data: data/processed/
+* Analytical results: data/gold/
+* Reports: output/
+* Logs: logs/
 
-📖 WHAT TO DO NEXT:
+[WHAT TO DO NEXT]
 ===================
 1. Check output/ for analysis results
 2. Review logs/ for detailed metrics
 3. Open USER_GUIDE.md for interpretation help
 4. Run again with different parameters if needed
 
-Thank you for using Scenario Planner! 🚀
+Thank you for using Scenario Planner!
 """
 
 # Error Guidance Messages
 LIVE_ERROR_API_KEY = """
-❌ API KEY ERROR
+[ERROR] API KEY ERROR
 ================
 The FRED API key is missing or invalid.
 
@@ -183,39 +183,39 @@ SOLUTION:
 """
 
 LIVE_ERROR_NETWORK = """
-🌐 NETWORK ERROR
+[ERROR] NETWORK ERROR
 ================
 Unable to connect to data sources.
 
 POSSIBLE SOLUTIONS:
-• Check your internet connection
-• Try again in a few minutes
-• Some APIs may have temporary issues
-• Check firewall/antivirus settings
+* Check your internet connection
+* Try again in a few minutes
+* Some APIs may have temporary issues
+* Check firewall/antivirus settings
 """
 
 LIVE_ERROR_MEMORY = """
-💾 MEMORY ERROR
+[ERROR] MEMORY ERROR
 ===============
 System ran out of memory during processing.
 
 SOLUTIONS:
-• Close other applications
-• Reduce date ranges in configuration
-• Use sequential processing instead of parallel
-• Add more RAM to your system
+* Close other applications
+* Reduce date ranges in configuration
+* Use sequential processing instead of parallel
+* Add more RAM to your system
 """
 
 LIVE_ERROR_DATA_QUALITY = """
-🔍 DATA QUALITY ERROR
+[ERROR] DATA QUALITY ERROR
 ======================
 Issues found in downloaded data.
 
 ACTIONS:
-• Check data/raw/ for corrupted files
-• Verify API keys are correct
-• Some data sources may be temporarily unavailable
-• Review logs/ for specific error details
+* Check data/raw/ for corrupted files
+* Verify API keys are correct
+* Some data sources may be temporarily unavailable
+* Review logs/ for specific error details
 """
 
 # Progress Indicators
@@ -226,10 +226,10 @@ Estimated time remaining: {eta}
 """
 
 LIVE_CURRENT_STATUS = """
-🔄 CURRENT STATUS: {status}
-⏱️  ELAPSED TIME: {elapsed}
-📊 PROGRESS: {progress}%
-🎯 NEXT: {next_step}
+[STATUS] CURRENT STATUS: {status}
+[TIME] ELAPSED TIME: {elapsed}
+[PROGRESS] PROGRESS: {progress}%
+[NEXT] NEXT: {next_step}
 """
 
 # Interactive Prompts (for future enhancement)

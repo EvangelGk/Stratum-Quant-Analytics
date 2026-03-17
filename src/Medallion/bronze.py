@@ -264,6 +264,8 @@ class BronzeLayer:
             self.logger.warning(f"No data for {filename}")
             return
 
+        df = self._normalize_source_columns(df, source)
+
         # Basic validation: check for required columns based on source
         expected_columns = self._get_expected_columns(source)
         if not all(col in df.columns for col in expected_columns):
@@ -309,6 +311,66 @@ class BronzeLayer:
                 os.remove(full_path)
             self.logger.error(f"Unexpected error for {filename}: {e}")
             raise
+
+    def _normalize_source_columns(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
+        """Normalize common provider column aliases to Bronze canonical schema."""
+        if df.empty:
+            return df
+
+        work_df = df.copy()
+
+        if source == "yfinance" and isinstance(work_df.columns, pd.MultiIndex):
+            level0 = [str(col[0]) for col in work_df.columns]
+            level1 = [str(col[1]) for col in work_df.columns]
+            known = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+            work_df.columns = (
+                level0
+                if len(known.intersection(level0)) >= len(known.intersection(level1))
+                else level1
+            )
+
+        alias_map: Dict[str, str] = {}
+        if source == "yfinance":
+            alias_map = {
+                "date": "Date",
+                "datetime": "Date",
+                "index": "Date",
+                "open": "Open",
+                "high": "High",
+                "low": "Low",
+                "close": "Close",
+                "adj close": "Adj Close",
+                "adjclose": "Adj Close",
+                "adjusted close": "Adj Close",
+                "volume": "Volume",
+            }
+        elif source == "fred":
+            alias_map = {
+                "date": "Date",
+                "index": "Date",
+                "value": "Value",
+            }
+        elif source == "worldbank":
+            alias_map = {
+                "economy": "economy",
+                "country": "economy",
+                "date": "Date",
+                "time": "Date",
+                "value": "Value",
+            }
+
+        renamed = {}
+        for col in work_df.columns:
+            key = str(col).strip().lower().replace("_", " ")
+            key = " ".join(key.split())
+            renamed[col] = alias_map.get(key, str(col))
+        work_df = work_df.rename(columns=renamed)
+
+        if source == "yfinance" and "Adj Close" not in work_df.columns:
+            if "Close" in work_df.columns:
+                work_df["Adj Close"] = work_df["Close"]
+
+        return work_df
 
     def _get_expected_columns(self, source: str) -> List[str]:
         """

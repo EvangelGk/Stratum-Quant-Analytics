@@ -8,7 +8,7 @@ authors = [
 
 requires-python = ">=3.11"
 dependencies = [
-    "pandas>=3.0.1,<4.0.0",
+    "pandas>=2.2.0,<3.0.0",
     "numpy>=2.4.2,<3.0.0",
     "matplotlib>=3.10.8,<4.0.0",
     "seaborn>=0.13.2,<1.0.0",
@@ -24,7 +24,9 @@ dependencies = [
     "pytest>=9.0.2,<10.0.0",
     "fernet>=1.0.1,<2.0.0",
     "diskcache>=5.6.3,<6.0.0",
-    "tqdm>=4.66.2,<5.0.0"
+    "tqdm>=4.66.2,<5.0.0",
+    "streamlit>=1.45.0,<2.0.0",
+    "plotly>=5.24.0,<6.0.0"
 ]
 
 [tool.poetry]

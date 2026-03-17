@@ -76,8 +76,22 @@ class GoldLayer:
         financial_files = list((self.processed_path / "yfinance").glob("*.parquet"))
         if not financial_files:
             raise ValueError("No financial data files found in processed/yfinance")
-        dfs = [pd.read_parquet(f) for f in financial_files]
+        dfs: List[pd.DataFrame] = []
+        for f in financial_files:
+            fin_df = pd.read_parquet(f)
+            if "ticker" not in fin_df.columns:
+                # Example: aapl_financials_silver.parquet -> AAPL
+                derived_ticker = f.stem.replace("_financials_silver", "").upper()
+                fin_df["ticker"] = derived_ticker
+            else:
+                fin_df["ticker"] = fin_df["ticker"].astype(str).str.upper()
+            dfs.append(fin_df)
         master_df = pd.concat(dfs, ignore_index=True)
+
+        if "close" not in master_df.columns:
+            raise ValueError("Financial dataset missing required 'close' column")
+        if "date" not in master_df.columns:
+            raise ValueError("Financial dataset missing required 'date' column")
 
         # 2. Master Feature: Log Returns (The Senior Standard)
         # Formula: ln(P_t / P_{t-1})

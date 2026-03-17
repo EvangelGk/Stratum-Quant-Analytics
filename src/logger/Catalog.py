@@ -147,8 +147,8 @@ class ApplicationCatalog:
             "run_id": self._run_id_ctx.get(),
             "correlation_id": self._correlation_id_ctx.get(),
             "operation": operation,
-            "metrics": json.dumps(metrics or {}),
-            "details": json.dumps(details or {}),
+            "metrics": json.dumps(metrics or {}, default=str),
+            "details": json.dumps(details or {}, default=str),
         }
 
         # Log to output (file + console)
@@ -468,7 +468,7 @@ class ApplicationCatalog:
                 summary["operations_timeline"] = self.session_metrics["operations"]
 
         with open(summary_file, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, default=str)
 
         self.logger.info(f"Session summary saved to {summary_file}")
         return summary_file

@@ -70,6 +70,25 @@ def test_process_and_save_raises_on_bad_columns(bronze_layer):
         raise AssertionError("Expected ValueError for missing columns")
 
 
+def test_process_and_save_accepts_lowercase_yfinance_columns(bronze_layer):
+    df = pd.DataFrame(
+        {
+            "date": ["2020-01-01"],
+            "open": [1.0],
+            "high": [2.0],
+            "low": [0.5],
+            "close": [1.5],
+            "volume": [100],
+        }
+    )
+
+    bronze_layer._process_and_save(df, "lowercase_test", "yfinance")
+    parquet_path = os.path.join(
+        bronze_layer.base_path, "yfinance", "lowercase_test.parquet"
+    )
+    assert os.path.exists(parquet_path)
+
+
 def test_provider_circuit_breaker_opens_after_repeated_failures(bronze_layer):
     source = "fred"
     bronze_layer.provider_state[source] = {
