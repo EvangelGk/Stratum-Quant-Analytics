@@ -361,8 +361,7 @@ def governance_report(
                 "policy": "stochastic analyses must declare/propagate random_state",
             },
             "coefficients": {
-                factor: float(coef)
-                for factor, coef in zip(valid_factors, model.coef_)
+                factor: float(coef) for factor, coef in zip(valid_factors, model.coef_)
             },
             "intercept": float(model.intercept_),
         }

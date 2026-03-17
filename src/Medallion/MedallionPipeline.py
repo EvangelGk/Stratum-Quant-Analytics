@@ -1,10 +1,13 @@
-﻿import time
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from tqdm import tqdm
 
-from exceptions.MedallionExceptions import ParallelExecutionError
+from exceptions.MedallionExceptions import (
+    ComplianceViolationError,
+    ParallelExecutionError,
+)
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig
 from logger.Catalog import catalog
@@ -32,7 +35,14 @@ class MedallionPipeline:
         self.config = config
         self.factory = factory
         self.project_root = Path(__file__).parents[1]
-        self.data_path = self.project_root / ".." / "data"
+        user_id = getattr(self.config, "data_user_id", "default")
+        safe_user = (
+            "".join(
+                ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)
+            )
+            or "default"
+        )
+        self.data_path = self.project_root / ".." / "data" / "users" / safe_user
         self.raw_path = self.data_path / "raw"
         self.processed_path = self.data_path / "processed"
         self.gold_path = self.data_path / "gold"
@@ -56,6 +66,9 @@ class MedallionPipeline:
             self.gold = GoldLayer(self.config)
             self.gold.processed_path = self.processed_path
             self.gold.gold_path = self.gold_path
+            self.gold.governance_path = self.gold_path / "governance"
+            self.gold.governance_path.mkdir(parents=True, exist_ok=True)
+            self.gold.initialize_data()  # load data only after paths are finalised
         return self.gold
 
     def _reset_stage_tracking(self) -> None:
@@ -69,8 +82,20 @@ class MedallionPipeline:
         error_message = ""
         try:
             with tqdm(total=1, desc="Bronze Layer") as pbar:
-                self.bronze.run()
+                summary = self.bronze.run()
                 pbar.update(1)
+            failed = (
+                int(summary.get("fail_count", 0)) if isinstance(summary, dict) else 0
+            )
+            missing_sources = (
+                summary.get("missing_sources", []) if isinstance(summary, dict) else []
+            )
+            if failed > 0 or missing_sources:
+                error_message = (
+                    f"bronze_integrity_violation: fail_count={failed}, "
+                    f"missing_sources={missing_sources}"
+                )
+                raise ComplianceViolationError(error_message)
             success = True
         except Exception as e:
             error_message = str(e)
@@ -98,9 +123,27 @@ class MedallionPipeline:
         error_message = ""
         try:
             with tqdm(total=1, desc="Silver Layer") as pbar:
-                self.silver.run()
+                summary = self.silver.run()
                 pbar.update(1)
-            success = True
+            failed = summary.get("failed_count", 0) if isinstance(summary, dict) else 0
+            missing_sources = (
+                summary.get("missing_sources", []) if isinstance(summary, dict) else []
+            )
+            success = failed == 0
+            if not success or missing_sources:
+                error_message = (
+                    f"{failed} entit{'y' if failed == 1 else 'ies'} failed: "
+                    f"{summary.get('failed_entities', [])}, "
+                    f"missing_sources={missing_sources}"
+                )
+                success = False
+                if bool(getattr(self.config, "silver_hard_fail", True)):
+                    raise ParallelExecutionError(
+                        "Silver hard-fail enabled and data quality guardrails were "
+                        "violated: "
+                        f"{error_message}"
+                    )
+                print(f"Silver soft-fail mode active: {error_message}")
         except Exception as e:
             error_message = str(e)
             raise
@@ -196,12 +239,9 @@ class MedallionPipeline:
         except ParallelExecutionError as e:
             print(f"Parallel execution error: {e}. Falling back to sequential.")
             return self.run_full_pipeline_sequential()
-        except Exception as e:
-            print(
-                f"Unexpected error in parallel execution: {e}. "
-                "Falling back to sequential."
-            )
-            return self.run_full_pipeline_sequential()
+        except Exception:
+            # Surface architectural failures instead of masking them by fallback.
+            raise
 
     def health_check(self) -> Dict[str, bool]:
         """Perform health checks on data and system."""

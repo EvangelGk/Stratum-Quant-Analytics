@@ -141,12 +141,14 @@ def test_governance_hard_fail_blocks_advanced_analyses(monkeypatch):
                 "log_return": [-0.01, -0.01, -0.01, -0.01],
                 "inflation": [0.1, 0.2, 0.3, 0.4],
                 "energy_index": [0.2, 0.3, 0.4, 0.5],
-                "date": pd.to_datetime([
-                    "2020-01-01",
-                    "2020-02-01",
-                    "2020-03-01",
-                    "2020-04-01",
-                ]),
+                "date": pd.to_datetime(
+                    [
+                        "2020-01-01",
+                        "2020-02-01",
+                        "2020-03-01",
+                        "2020-04-01",
+                    ]
+                ),
             }
         ),
     )
@@ -325,9 +327,9 @@ def test_read_governance_history(tmp_path):
             "gate": {"passed": True, "severity": "pass"},
             "report": {"model_risk_score": score},
         }
-        (
-            gold.governance_path / f"governance_decision_{ts}.json"
-        ).write_text(json.dumps(payload), encoding="utf-8")
+        (gold.governance_path / f"governance_decision_{ts}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
 
     history = gold.read_governance_history()
     assert len(history) == 2
@@ -355,9 +357,9 @@ def test_governance_trend_summary(tmp_path):
                 "walk_forward": {"avg_r2": 0.1},
             },
         }
-        (
-            gold.governance_path / f"governance_decision_{1000000 + i}.json"
-        ).write_text(json.dumps(payload), encoding="utf-8")
+        (gold.governance_path / f"governance_decision_{1000000 + i}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
 
     summary = gold.governance_trend_summary()
     assert summary["status"] == "ok"

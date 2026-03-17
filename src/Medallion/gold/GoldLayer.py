@@ -52,6 +52,17 @@ class GoldLayer:
         self.gold_path.mkdir(parents=True, exist_ok=True)
         self.governance_path = self.gold_path / "governance"
         self.governance_path.mkdir(parents=True, exist_ok=True)
+        self.df: pd.DataFrame = pd.DataFrame()  # deferred; call initialize_data()
+
+    def initialize_data(self) -> None:
+        """Explicitly load (or build) the master table after paths are finalised.
+
+        The pipeline calls this after overriding processed_path / gold_path so
+        that the correct directories are always used regardless of launch context.
+        """
+        self.gold_path.mkdir(parents=True, exist_ok=True)
+        self.governance_path = self.gold_path / "governance"
+        self.governance_path.mkdir(parents=True, exist_ok=True)
         self.df = self._load_or_create_master_table()
 
     def _load_or_create_master_table(self) -> pd.DataFrame:
@@ -104,9 +115,7 @@ class GoldLayer:
         macro_columns: List[str] = []
         for f in fred_files:
             col_name = f.stem.replace("_silver", "")
-            macro_df = pd.read_parquet(f).rename(
-                columns={"value": col_name}
-            )
+            macro_df = pd.read_parquet(f).rename(columns={"value": col_name})
             master_df = pd.merge(
                 master_df,
                 macro_df[["date", col_name]],
@@ -119,9 +128,7 @@ class GoldLayer:
         wb_files = list((self.processed_path / "worldbank").glob("*.parquet"))
         for f in wb_files:
             col_name = f.stem.replace("_silver", "")
-            wb_df = pd.read_parquet(f).rename(
-                columns={"value": col_name}
-            )
+            wb_df = pd.read_parquet(f).rename(columns={"value": col_name})
             master_df = pd.merge(
                 master_df,
                 wb_df[["date", col_name]],
@@ -194,7 +201,9 @@ class GoldLayer:
         oos_r2 = report.get("out_of_sample", {}).get("r2")
         min_r2 = float(profile["min_r2"])
         if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
-            reasons.append(f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}")
+            reasons.append(
+                f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}"
+            )
 
         normalized_shift = report.get("stability", {}).get("normalized_mean_shift")
         max_shift = float(profile["max_normalized_shift"])
@@ -211,8 +220,7 @@ class GoldLayer:
         max_leakage = int(profile["max_leakage_flags"])
         if len(leakage_flags) > max_leakage:
             reasons.append(
-                "leakage_flags_above_threshold:"
-                f"{len(leakage_flags)}>{max_leakage}"
+                f"leakage_flags_above_threshold:{len(leakage_flags)}>{max_leakage}"
             )
 
         stationarity = report.get("stationarity", {}) or {}
@@ -228,8 +236,7 @@ class GoldLayer:
             min_ratio = float(profile["min_stationary_ratio"])
             if ratio < min_ratio:
                 reasons.append(
-                    "stationarity_ratio_below_threshold:"
-                    f"{ratio:.4f}<{min_ratio:.4f}"
+                    f"stationarity_ratio_below_threshold:{ratio:.4f}<{min_ratio:.4f}"
                 )
 
         walk_forward = report.get("walk_forward", {}) or {}
@@ -385,8 +392,7 @@ class GoldLayer:
             "report": report,
         }
         decision_file = (
-            self.governance_path
-            / f"governance_decision_{int(time.time() * 1000)}.json"
+            self.governance_path / f"governance_decision_{int(time.time() * 1000)}.json"
         )
         with decision_file.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -451,13 +457,9 @@ class GoldLayer:
             "pass_rate": round(pass_rate, 4),
             "severity_distribution": severity_counts,
             "avg_model_risk_score": (
-                round(sum(risk_scores) / len(risk_scores), 4)
-                if risk_scores
-                else None
+                round(sum(risk_scores) / len(risk_scores), 4) if risk_scores else None
             ),
-            "worst_walk_forward_r2": (
-                round(min(walk_r2s), 4) if walk_r2s else None
-            ),
+            "worst_walk_forward_r2": (round(min(walk_r2s), 4) if walk_r2s else None),
             "direction": direction,
         }
 
@@ -551,10 +553,7 @@ class GoldLayer:
             results["governance_gate"] = gate
             self._export_governance_decision(gate, None, "sequential")
             if not gate.get("passed", True):
-                blocked_reason = (
-                    "blocked_by_governance_gate:"
-                    f"{gate.get('reasons', [])}"
-                )
+                blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 return results
         except Exception as e:
@@ -564,10 +563,7 @@ class GoldLayer:
             results["governance_gate"] = gate
             self._export_governance_decision(gate, None, "sequential")
             if not gate.get("passed", True):
-                blocked_reason = (
-                    "blocked_by_governance_gate:"
-                    f"{gate.get('reasons', [])}"
-                )
+                blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 return results
 
@@ -594,8 +590,7 @@ class GoldLayer:
             if results["lag_analysis"] is not None and isinstance(
                 results["lag_analysis"], dict
             ):
-                best_lag = max(results["lag_analysis"], key=results["lag_analysis"]
-                .get)
+                best_lag = max(results["lag_analysis"], key=results["lag_analysis"].get)
                 print(
                     ANALYSIS_LAG_ANALYSIS.format(
                         factor=macro_factor,

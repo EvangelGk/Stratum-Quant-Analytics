@@ -7,13 +7,17 @@ from .BaseFetcher import BaseFetcher
 
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
+    CACHE_SCHEMA_VERSION = "v2"
 
     def __init__(self) -> None:
         super().__init__()
 
     # Fetching data from Yahoo Finance with caching.
     def fetch(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-        key = f"yfinance_{ticker}_{start_date}_{end_date}"
+        key = (
+            f"yfinance_{self.CACHE_SCHEMA_VERSION}_"
+            f"{ticker}_{start_date}_{end_date}"
+        )
         try:
             cached = self._get_cached(key)
             if cached is not None:
@@ -104,6 +108,10 @@ class YFinanceFetcher(BaseFetcher):
         if "Adj Close" not in df.columns and "Close" in df.columns:
             df["Adj Close"] = df["Close"]
 
+        # Some provider payloads may include duplicate OHLCV columns.
+        # Keep a single canonical column per field by taking the first non-null value.
+        df = self._collapse_duplicate_columns(df)
+
         required_order = [
             "Date",
             "Open",
@@ -118,3 +126,24 @@ class YFinanceFetcher(BaseFetcher):
             raise APIError(f"Normalized yfinance data missing columns: {missing}")
 
         return df[required_order]
+
+    def _collapse_duplicate_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        if not df.columns.duplicated().any():
+            return df
+
+        work = df.copy()
+        for col_name in list(dict.fromkeys(work.columns)):
+            duplicated_positions = [
+                idx for idx, name in enumerate(work.columns) if name == col_name
+            ]
+            if len(duplicated_positions) <= 1:
+                continue
+            dup_block = work.iloc[:, duplicated_positions]
+            # Row-wise first non-null across duplicate columns.
+            collapsed = dup_block.bfill(axis=1).iloc[:, 0]
+            work = work.drop(columns=[col_name])
+            work[col_name] = collapsed
+
+        # Preserve deterministic order after reconstruction.
+        ordered_unique = list(dict.fromkeys(df.columns))
+        return work[ordered_unique]

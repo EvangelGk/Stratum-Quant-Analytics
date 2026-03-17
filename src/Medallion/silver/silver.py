@@ -1,5 +1,5 @@
 import concurrent.futures
-import importlib
+import hashlib
 import json
 import logging
 import threading
@@ -13,30 +13,19 @@ import pandas as pd
 import pandera.errors
 
 from Fetchers.ProjectConfig import ProjectConfig
-
-
-def _import_first(*module_names: str) -> Any:
-    for module_name in module_names:
-        try:
-            return importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            continue
-    raise ModuleNotFoundError(f"Unable to import any of: {module_names}")
-
-
-_medallion_exc = _import_first(
-    "src.exceptions.MedallionExceptions", "exceptions.MedallionExceptions"
+from exceptions.MedallionExceptions import (
+    CatalogNotFoundError,
+    ComplianceViolationError,
+    DataValidationError,
+    FileSaveError,
+    ImputationError,
+    OutlierDetectionError,
+    SchemaMismatchError,
+    StandardizationError,
 )
 
-CatalogNotFoundError = _medallion_exc.CatalogNotFoundError
-ComplianceViolationError = _medallion_exc.ComplianceViolationError
-DataValidationError = _medallion_exc.DataValidationError
-FileSaveError = _medallion_exc.FileSaveError
-ImputationError = _medallion_exc.ImputationError
-OutlierDetectionError = _medallion_exc.OutlierDetectionError
-StandardizationError = _medallion_exc.StandardizationError
-
 # Import Schemas
+from .contracts import EXPECTED_SOURCES, SOURCE_CONTRACTS
 from .schema import financials_schema, macro_schema, worldbank_schema
 
 
@@ -51,6 +40,7 @@ class SilverLayer:
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
         self.silver_run_id = str(uuid.uuid4())  # Unique ID for this run
+        self.user_id = getattr(self.config, "data_user_id", "default")
 
         # Use Pathlib for absolute safety on Windows/Linux
         self.root_path = Path(__file__).parents[3]
@@ -69,22 +59,33 @@ class SilverLayer:
 
         self.lock = threading.Lock()
         self.quality_reports: Dict[str, Dict[str, Any]] = {}
+        self.dead_letter_path = self.processed_path / "quality" / "dead_letter.jsonl"
 
-    def run(self) -> None:
-        """Orchestrates the processing of all catalog files in parallel."""
+    def run(self) -> Dict[str, Any]:
+        """Orchestrates the processing of all catalog files in parallel.
+
+        Returns a summary dict with keys:
+            success_count, failed_count, failed_entities
+        """
         self.logger.info("--- Silver Layer: Processing Started ---")
         catalog = self._load_catalog()
+        if not catalog:
+            raise DataValidationError(
+                "Silver hard stop: raw catalog is empty. No entities to process."
+            )
 
         # Prepare tasks for parallel execution
         tasks: List[Tuple[str, Dict[str, Any]]] = [
             (filename, info) for filename, info in catalog.items()
         ]
+        if not tasks:
+            raise DataValidationError(
+                "Silver hard stop: no tasks resolved from catalog."
+            )
 
         # Execute tasks in parallel
         max_workers = min(self.config.max_workers, len(tasks))
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=max_workers
-        ) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(self._process_entity, filename, info)
                 for filename, info in tasks
@@ -99,6 +100,7 @@ class SilverLayer:
                     FileSaveError,
                     OutlierDetectionError,
                     ComplianceViolationError,
+                    SchemaMismatchError,
                 ) as e:
                     self.logger.error(f"Processing error in task: {e}")
                 except Exception as e:
@@ -106,6 +108,25 @@ class SilverLayer:
 
         # Generate and save quality report
         self._generate_quality_report()
+
+        # Build outcome summary from quality_reports
+        failed_entities: List[str] = [
+            k for k, v in self.quality_reports.items() if v.get("status") == "failed"
+        ]
+        source_success: Dict[str, int] = {"yfinance": 0, "fred": 0, "worldbank": 0}
+        for report in self.quality_reports.values():
+            src = report.get("source")
+            if src in source_success and report.get("status") == "success":
+                source_success[src] += 1
+        missing_sources = [s for s, count in source_success.items() if count == 0]
+        success_count = len(self.quality_reports) - len(failed_entities)
+        return {
+            "success_count": success_count,
+            "failed_count": len(failed_entities),
+            "failed_entities": failed_entities,
+            "source_success": source_success,
+            "missing_sources": missing_sources,
+        }
 
     def _process_entity(self, filename: str, info: Dict[str, Any]) -> None:
         """Processes a single entity with audit trail and quality tracking."""
@@ -116,14 +137,20 @@ class SilverLayer:
             df = pd.read_parquet(info["path"])
             initial_rows = len(df)
             initial_nulls = df.isnull().sum().sum()
+            input_hash = self._hash_input_frame(df)
+
+            # Shift-left Data Contract checks before heavy transformations.
+            self._preflight_contract_checks(df, info["source"], filename, info)
 
             # 2. Standardization (Units, Names, Dates)
             df, unit_normalized, temporal_aligned = self._standardize(
-                df, info["source"]
+                df, info["source"], filename
             )
 
             # 3. Strategic Imputation with Winsorization
-            df, imputed_count, outliers_clipped = self._impute(df, info["source"])
+            df, imputed_count, outliers_clipped, max_col_null_pct = self._impute(
+                df, info["source"]
+            )
 
             # 4. Pandera Validation (The Ultimate Quality Gate)
             try:
@@ -157,6 +184,9 @@ class SilverLayer:
                     "final_nulls": int(validated_df.isnull().sum().sum()),
                     "imputed_count": int(imputed_count),
                     "outliers_clipped": int(outliers_clipped),
+                    "max_col_null_pct": float(max_col_null_pct),
+                    "input_hash": input_hash,
+                    "input_path": str(info.get("path", "")),
                     "unit_normalized": unit_normalized,
                     "temporal_aligned": temporal_aligned,
                     "processed_at": datetime.now().isoformat(),
@@ -170,6 +200,7 @@ class SilverLayer:
             FileSaveError,
             OutlierDetectionError,
             ComplianceViolationError,
+            SchemaMismatchError,
         ) as e:
             with self.lock:
                 self.quality_reports[filename] = {
@@ -178,6 +209,7 @@ class SilverLayer:
                     "processed_at": datetime.now().isoformat(),
                     "status": "failed",
                 }
+            self._append_dead_letter(filename, info, e)
         except Exception as e:
             with self.lock:
                 self.quality_reports[filename] = {
@@ -186,10 +218,11 @@ class SilverLayer:
                     "processed_at": datetime.now().isoformat(),
                     "status": "failed",
                 }
+            self._append_dead_letter(filename, info, e)
             raise
 
     def _standardize(
-        self, df: pd.DataFrame, source: str
+        self, df: pd.DataFrame, source: str, entity_name: str
     ) -> Tuple[pd.DataFrame, bool, bool]:
         """Unifies structure and measurement units with business alignment."""
         try:
@@ -205,9 +238,15 @@ class SilverLayer:
                 df["date"] = df["date"] + pd.offsets.MonthEnd(0)
                 temporal_aligned = True
 
-            # Unit Normalization: Convert percentages to decimals automatically
-            if source in ["fred", "worldbank"] and "value" in df.columns:
-                # Detect if values are in percentage format and convert to decimals
+            # Unit normalization is intentionally explicit to avoid corrupting
+            # absolute/index indicators (e.g., CPI indexes, energy usage levels).
+            contract = SOURCE_CONTRACTS.get(source)
+            percentage_entities = contract.percentage_entities if contract else set()
+            if (
+                source in ["fred", "worldbank"]
+                and "value" in df.columns
+                and entity_name in percentage_entities
+            ):
                 if df["value"].max() > 1.0:
                     df["value"] = df["value"] / 100.0
                     unit_normalized = True
@@ -218,12 +257,14 @@ class SilverLayer:
                 f"Failed to standardize data for source {source}: {e}"
             ) from e
 
-    def _impute(self, df: pd.DataFrame, source: str) -> Tuple[pd.DataFrame, int, int]:
+    def _impute(
+        self, df: pd.DataFrame, source: str
+    ) -> Tuple[pd.DataFrame, int, int, float]:
         """Handle missing values with Quantile Winsorization
         and Z-Score outlier detection."""
         try:
             if df.empty:
-                return df, 0, 0
+                return df, 0, 0, 0.0
 
             initial_nulls = df.isnull().sum().sum()
 
@@ -238,13 +279,15 @@ class SilverLayer:
             max_col_null_pct = (
                 float(numeric_null_pct.max()) if worst_col is not None else 0.0
             )
+            dynamic_threshold = self._resolve_dynamic_null_threshold(source)
             # Small samples are common in unit tests and pilot runs; enforce
             # the strict null-threshold only when we have enough observations.
-            if len(df) >= 10 and max_col_null_pct > 30:
+            if len(df) >= 10 and max_col_null_pct > dynamic_threshold:
                 raise ComplianceViolationError(
                     "Data quality violation: "
                     f"column '{worst_col}' has {max_col_null_pct:.2f}%"
-                    f" nulls, exceeding 30% threshold for {source}"
+                    f" nulls, exceeding dynamic threshold {dynamic_threshold:.2f}%"
+                    f" for {source}"
                 )
 
             # Outlier Detection with Z-Score and Winsorization
@@ -275,7 +318,7 @@ class SilverLayer:
             imputed_count = initial_nulls - final_nulls
 
             # Update quality report with outlier info
-            return df, imputed_count, outliers_clipped
+            return df, imputed_count, outliers_clipped, max_col_null_pct
         except ComplianceViolationError:
             raise
         except Exception as e:
@@ -302,9 +345,19 @@ class SilverLayer:
         df["outliers_clipped"] = outliers_clipped
         df["initial_rows"] = initial_rows
         df["initial_nulls"] = initial_nulls
-        df["quality_score"] = (
-            1 - (df.isnull().sum().sum() / (len(df) * len(df.columns)))
-        ) * 100  # Percentage of non-null values
+        # Integrity-focused quality score: penalize starting null density,
+        # imputation burden, and outlier clipping intensity.
+        base_cells = max(initial_rows * max(len(df.columns), 1), 1)
+        initial_null_ratio = max(0.0, min(1.0, initial_nulls / base_cells))
+        imputation_ratio = max(0.0, min(1.0, imputed_count / max(initial_rows, 1)))
+        outlier_ratio = max(0.0, min(1.0, outliers_clipped / max(initial_rows, 1)))
+        null_penalty = min(initial_null_ratio * 100.0, 40.0)
+        imputation_penalty = min(imputation_ratio * 100.0, 30.0)
+        outlier_penalty = min(outlier_ratio * 100.0, 20.0)
+        df["quality_score"] = max(
+            0.0,
+            100.0 - (null_penalty + imputation_penalty + outlier_penalty),
+        )
         return df
 
     def _save_to_silver(self, df: pd.DataFrame, filename: str, source: str) -> None:
@@ -323,8 +376,7 @@ class SilverLayer:
                 file_path, index=False, compression="zstd"
             )  # ZSTD for better compression
             self.logger.info(
-                f"Silver Asset Secured: {file_path} | Rows: {len(df)} |"
-                "Memory Optimized"
+                f"Silver Asset Secured: {file_path} | Rows: {len(df)} |Memory Optimized"
             )
         except Exception as e:
             raise FileSaveError(
@@ -345,21 +397,156 @@ class SilverLayer:
         except Exception as e:
             raise CatalogNotFoundError(f"Failed to load catalog: {e}") from e
 
+    def _hash_input_frame(self, df: pd.DataFrame) -> str:
+        """Create deterministic lineage hash for raw input frame."""
+        payload = df.to_json(orient="split", date_format="iso")
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _preflight_contract_checks(
+        self, df: pd.DataFrame, source: str, filename: str, info: Dict[str, Any]
+    ) -> None:
+        """Shift-left data contract validation and hard-stop guardrails."""
+        if df is None or df.empty:
+            raise ComplianceViolationError(
+                f"Silver hard stop: '{filename}' from {source} is empty."
+            )
+
+        min_rows = int(getattr(self.config, "silver_min_rows", 10))
+        if len(df) < min_rows:
+            raise ComplianceViolationError(
+                f"Silver hard stop: '{filename}' has only {len(df)} rows"
+                f" (< minimum {min_rows})."
+            )
+
+        expected_rows = int(info.get("rows", 0) or 0)
+        min_ratio = float(getattr(self.config, "silver_min_rows_ratio", 0.1))
+        if expected_rows > 0:
+            required_rows = max(1, int(expected_rows * min_ratio))
+            if len(df) < required_rows:
+                raise ComplianceViolationError(
+                    f"Silver hard stop: '{filename}' has {len(df)} rows;"
+                    f" expected at least {required_rows} from Bronze catalog baseline"
+                    f" ({expected_rows})."
+                )
+
+        normalized = {str(c).lower().replace(" ", "_") for c in df.columns}
+        contract = SOURCE_CONTRACTS.get(source)
+        expected_columns = contract.required_columns if contract else set()
+        if expected_columns and not expected_columns.issubset(normalized):
+            missing = sorted(expected_columns - normalized)
+            raise SchemaMismatchError(
+                f"Schema drift detected for '{filename}' ({source})."
+                f" Missing columns after normalization: {missing}."
+            )
+
+    def _append_dead_letter(
+        self, filename: str, info: Dict[str, Any], exc: Exception
+    ) -> None:
+        """Persist rejected entities for triage/replay workflows."""
+        self.dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "silver_run_id": self.silver_run_id,
+            "user_id": self.user_id,
+            "entity": filename,
+            "source": info.get("source"),
+            "input_path": str(info.get("path", "")),
+            "error_type": exc.__class__.__name__,
+            "error_message": str(exc),
+        }
+        with self.dead_letter_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+
+    def _resolve_dynamic_null_threshold(self, source: str) -> float:
+        """Compute adaptive null threshold from historical quality metrics."""
+        base = float(getattr(self.config, "silver_base_null_threshold", 30.0))
+        history_file = self.processed_path / "quality_history.jsonl"
+        if not history_file.exists():
+            return base
+
+        window = int(getattr(self.config, "silver_dynamic_threshold_window", 20))
+        samples: List[float] = []
+        try:
+            with history_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    if payload.get("source") != source:
+                        continue
+                    value = payload.get("max_col_null_pct")
+                    if isinstance(value, (int, float)):
+                        samples.append(float(value))
+        except (OSError, json.JSONDecodeError):
+            return base
+
+        if not samples:
+            return base
+        recent = samples[-window:]
+        # Dynamic rule: mean + 2*std capped in [base, 90]
+        mean = float(np.mean(recent))
+        std = float(np.std(recent))
+        adaptive = max(base, min(90.0, mean + (2.0 * std)))
+        return adaptive
+
+    def _append_quality_history(self) -> None:
+        """Persist run quality metrics for trend monitoring over time."""
+        history_file = self.processed_path / "quality_history.jsonl"
+        ts = datetime.now().isoformat()
+        with history_file.open("a", encoding="utf-8") as f:
+            for entity, metrics in self.quality_reports.items():
+                row = {
+                    "timestamp": ts,
+                    "silver_run_id": self.silver_run_id,
+                    "user_id": self.user_id,
+                    "entity": entity,
+                    "source": metrics.get("source"),
+                    "status": metrics.get("status"),
+                    "initial_rows": metrics.get("initial_rows"),
+                    "final_rows": metrics.get("final_rows"),
+                    "initial_nulls": metrics.get("initial_nulls"),
+                    "final_nulls": metrics.get("final_nulls"),
+                    "imputed_count": metrics.get("imputed_count", 0),
+                    "outliers_clipped": metrics.get("outliers_clipped", 0),
+                    "max_col_null_pct": float(metrics.get("max_col_null_pct", 0.0)),
+                }
+                f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+
     def _generate_quality_report(self) -> None:
         """Generates and saves a comprehensive quality report."""
-        report_path = self.processed_path / "quality_report.json"
+        quality_dir = self.processed_path / "quality"
+        quality_dir.mkdir(parents=True, exist_ok=True)
+        report_path = quality_dir / "quality_report.json"
+        legacy_report_path = self.processed_path / "quality_report.json"
+        expected_sources = EXPECTED_SOURCES
+        source_success: Dict[str, int] = {k: 0 for k in expected_sources}
+        source_failed: Dict[str, int] = {k: 0 for k in expected_sources}
+        for report in self.quality_reports.values():
+            source = report.get("source")
+            status = report.get("status")
+            if source in expected_sources:
+                if status == "success":
+                    source_success[source] += 1
+                elif status == "failed":
+                    source_failed[source] += 1
+        missing_sources = [s for s in expected_sources if source_success[s] == 0]
+        payload = {
+            "silver_run_id": self.silver_run_id,
+            "user_id": self.user_id,
+            "run_timestamp": datetime.now().isoformat(),
+            "files": self.quality_reports,
+            "summary": {
+                "source_success": source_success,
+                "source_failed": source_failed,
+                "missing_sources": missing_sources,
+            },
+        }
         with open(report_path, "w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "silver_run_id": self.silver_run_id,
-                    "run_timestamp": datetime.now().isoformat(),
-                    "files": self.quality_reports,
-                },
-                f,
-                indent=4,
-                ensure_ascii=False,
-                default=str,
-            )
+            json.dump(payload, f, indent=4, ensure_ascii=False, default=str)
+        # Backward compatibility for UIs/scripts that still read processed/quality_report.json
+        with open(legacy_report_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=4, ensure_ascii=False, default=str)
         self.logger.info(f"Quality Report generated at {report_path}")
 
         # Log summary
@@ -383,3 +570,4 @@ class SilverLayer:
             f" {failed} failed, {total_imputed} values imputed,"
             f" {total_outliers} outliers clipped."
         )
+        self._append_quality_history()

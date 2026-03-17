@@ -28,9 +28,7 @@ financials_schema = DataFrameSchema(
                 ),
             ],
         ),
-        "volume": Column(
-            float, Check.greater_than_or_equal_to(0), nullable=True
-        ),
+        "volume": Column(float, Check.greater_than_or_equal_to(0), nullable=True),
         "source_system": Column(str, Check.isin(["yfinance"])),
         "ingested_at": Column(str),
     },
@@ -54,11 +52,7 @@ macro_schema = DataFrameSchema(
         "date": Column(pa.DateTime, nullable=False),
         "value": Column(
             float,
-            [
-                Check.in_range(
-                    -20, 100, error="Value must be between -20 and 100"
-                )
-            ],
+            [Check.in_range(-20, 100, error="Value must be between -20 and 100")],
         ),
         "source_system": Column(str, Check.isin(["fred"])),
     },

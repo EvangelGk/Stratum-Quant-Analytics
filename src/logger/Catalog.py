@@ -484,9 +484,7 @@ class ApplicationCatalog:
             "processor": platform.processor(),
             "cwd": os.getcwd(),
             "environment_variables": {
-                k: os.environ.get(k)
-                for k in ["PYTHONPATH"]
-                if os.environ.get(k)
+                k: os.environ.get(k) for k in ["PYTHONPATH"] if os.environ.get(k)
             },
             "timestamp": datetime.now().isoformat(),
         }

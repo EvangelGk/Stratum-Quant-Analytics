@@ -5,9 +5,7 @@ import pandas as pd
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
 
-def elasticity(
-    df: pd.DataFrame, asset_return: str, macro_factor: str
-) -> float:
+def elasticity(df: pd.DataFrame, asset_return: str, macro_factor: str) -> float:
     """Compute the macro-factor elasticity of an asset's returns.
 
     Elasticity measures the sensitivity of an asset's return to a

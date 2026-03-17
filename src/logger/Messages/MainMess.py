@@ -4,8 +4,7 @@
 APPLICATION_TITLE = "=== Scenario Planner ==="
 
 QUICK_START = (
-    "Quick start: configure API keys, run the pipeline, then review output/ "
-    "and logs/."
+    "Quick start: configure API keys, run the pipeline, then review output/ and logs/."
 )
 
 MAIN_START = "Starting Scenario Planner application in {mode} mode."

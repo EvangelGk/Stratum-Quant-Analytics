@@ -9,7 +9,7 @@ from src.Medallion.gold.AnalysisSuite.forecasting import forecasting
 from src.Medallion.gold.AnalysisSuite.governance import governance_report
 from src.Medallion.gold.AnalysisSuite.lag import lag_analysis
 from src.Medallion.gold.AnalysisSuite.monte_carlo import monte_carlo
-from src.Medallion.gold.AnalysisSuite.sesnsitivity_reg import sensitivity_reg
+from src.Medallion.gold.AnalysisSuite.sensitivity_reg import sensitivity_reg
 from src.Medallion.gold.AnalysisSuite.stress_test import stress_test
 
 

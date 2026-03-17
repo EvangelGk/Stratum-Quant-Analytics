@@ -41,9 +41,7 @@ def test_catalog_logging_and_summary(tmp_path, monkeypatch):
     assert summary["session_info"]["correlation_id"] == "corr-1"
     assert "sla_metrics" in summary
     assert "error_metrics" in summary
-    assert any(
-        op["operation"] == "slo_window" for op in summary["operations_timeline"]
-    )
+    assert any(op["operation"] == "slo_window" for op in summary["operations_timeline"])
 
     metrics = catalog.get_metrics_summary()
     assert metrics["error_count"] >= 1

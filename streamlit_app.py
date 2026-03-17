@@ -15,71 +15,79 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-try:
-    from src.exceptions.StreamlitExceptions import (
-        StreamlitError,
-        PipelineExecutionError,
-        PipelineSubprocessError,
-        PipelineProgressTrackingError,
-        DataFileNotFoundError,
-        DataFileReadError,
-        JSONParseError,
-        SessionLoadError,
-        SessionSnapshotError,
-        HealthScoreCalculationError,
-        AlertGenerationError,
-        RunComparisonError,
-        ReportGenerationError,
-        LoggerModuleError,
-    )
-except ImportError:
-    try:
-        from exceptions.StreamlitExceptions import (
-            StreamlitError,
-            PipelineExecutionError,
-            PipelineSubprocessError,
-            PipelineProgressTrackingError,
-            DataFileNotFoundError,
-            DataFileReadError,
-            JSONParseError,
-            SessionLoadError,
-            SessionSnapshotError,
-            HealthScoreCalculationError,
-            AlertGenerationError,
-            RunComparisonError,
-            ReportGenerationError,
-            LoggerModuleError,
-        )
-    except ImportError:
-        # Fallback if exceptions not available
-        class StreamlitError(Exception):
-            pass
-        class PipelineExecutionError(StreamlitError):
-            pass
-        class PipelineSubprocessError(PipelineExecutionError):
-            pass
-        class PipelineProgressTrackingError(PipelineExecutionError):
-            pass
-        class DataFileNotFoundError(StreamlitError):
-            pass
-        class DataFileReadError(StreamlitError):
-            pass
-        class JSONParseError(StreamlitError):
-            pass
-        class SessionLoadError(StreamlitError):
-            pass
-        class SessionSnapshotError(StreamlitError):
-            pass
-        class HealthScoreCalculationError(StreamlitError):
-            pass
-        class AlertGenerationError(StreamlitError):
-            pass
-        class RunComparisonError(StreamlitError):
-            pass
-        class ReportGenerationError(StreamlitError):
-            pass
-        class LoggerModuleError(StreamlitError):
-            pass
+
+def _import_first(*module_names: str) -> Any:
+    for module_name in module_names:
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+    return None
+
+
+_streamlit_exc = _import_first(
+    "src.exceptions.StreamlitExceptions", "exceptions.StreamlitExceptions"
+)
+
+if _streamlit_exc is not None:
+    StreamlitError = _streamlit_exc.StreamlitError
+    PipelineExecutionError = _streamlit_exc.PipelineExecutionError
+    PipelineSubprocessError = _streamlit_exc.PipelineSubprocessError
+    PipelineProgressTrackingError = _streamlit_exc.PipelineProgressTrackingError
+    DataFileNotFoundError = _streamlit_exc.DataFileNotFoundError
+    DataFileReadError = _streamlit_exc.DataFileReadError
+    JSONParseError = _streamlit_exc.JSONParseError
+    SessionLoadError = _streamlit_exc.SessionLoadError
+    SessionSnapshotError = _streamlit_exc.SessionSnapshotError
+    HealthScoreCalculationError = _streamlit_exc.HealthScoreCalculationError
+    AlertGenerationError = _streamlit_exc.AlertGenerationError
+    RunComparisonError = _streamlit_exc.RunComparisonError
+    ReportGenerationError = _streamlit_exc.ReportGenerationError
+    LoggerModuleError = _streamlit_exc.LoggerModuleError
+else:
+    # Fallback if exceptions module is not available.
+    class StreamlitError(Exception):
+        pass
+
+    class PipelineExecutionError(StreamlitError):
+        pass
+
+    class PipelineSubprocessError(PipelineExecutionError):
+        pass
+
+    class PipelineProgressTrackingError(PipelineExecutionError):
+        pass
+
+    class DataFileNotFoundError(StreamlitError):
+        pass
+
+    class DataFileReadError(StreamlitError):
+        pass
+
+    class JSONParseError(StreamlitError):
+        pass
+
+    class SessionLoadError(StreamlitError):
+        pass
+
+    class SessionSnapshotError(StreamlitError):
+        pass
+
+    class HealthScoreCalculationError(StreamlitError):
+        pass
+
+    class AlertGenerationError(StreamlitError):
+        pass
+
+    class RunComparisonError(StreamlitError):
+        pass
+
+    class ReportGenerationError(StreamlitError):
+        pass
+
+    class LoggerModuleError(StreamlitError):
+        pass
+
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "output"
@@ -206,13 +214,34 @@ ANALYSIS_HELP: dict[str, dict[str, str]] = {
 }
 
 PIPELINE_STAGES = [
-    ("Prerequisites check",  "Verifies Python version, installed packages, and API key presence."),
-    ("Configuration load",   "Reads environment variables, API keys, and sets processing parameters."),
-    ("Data fetching",        "Downloads stock prices, economic indicators, and global data from APIs."),
-    ("Bronze layer",         "Organises raw files, applies initial cleaning, updates the data catalog."),
-    ("Silver layer",         "Validates schemas, imputes missing values, detects and clips outliers."),
-    ("Gold layer",           "Builds master table, runs all 9 analyses, applies governance decisions."),
-    ("Export results",       "Saves analysis files to output/, governance decisions to data/gold/governance/."),
+    (
+        "Prerequisites check",
+        "Verifies Python version, installed packages, and API key presence.",
+    ),
+    (
+        "Configuration load",
+        "Reads environment variables, API keys, and sets processing parameters.",
+    ),
+    (
+        "Data fetching",
+        "Downloads stock prices, economic indicators, and global data from APIs.",
+    ),
+    (
+        "Bronze layer",
+        "Organises raw files, applies initial cleaning, updates the data catalog.",
+    ),
+    (
+        "Silver layer",
+        "Validates schemas, imputes missing values, detects and clips outliers.",
+    ),
+    (
+        "Gold layer",
+        "Builds master table, runs all 9 analyses, applies governance decisions.",
+    ),
+    (
+        "Export results",
+        "Saves analysis files to output/, governance decisions to data/gold/governance/.",
+    ),
 ]
 
 
@@ -221,12 +250,10 @@ def _import_first(*module_names: str) -> Any:
     for module_name in module_names:
         try:
             return importlib.import_module(module_name)
-        except ModuleNotFoundError as e:
+        except ModuleNotFoundError:
             continue
         except Exception as e:
-            raise LoggerModuleError(
-                f"Failed to import {module_name}: {e}"
-            ) from e
+            raise LoggerModuleError(f"Failed to import {module_name}: {e}") from e
     return None
 
 
@@ -318,17 +345,15 @@ def read_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise JSONParseError(
-            f"Failed to parse JSON from {path.name}: {e}"
-        ) from e
+        raise JSONParseError(f"Failed to parse JSON from {path.name}: {e}") from e
     except OSError as e:
-        raise DataFileReadError(
-            f"Failed to read file {path}: {e}"
-        ) from e
+        raise DataFileReadError(f"Failed to read file {path}: {e}") from e
 
 
 def _list_session_files() -> list[Path]:
-    return sorted(LOGS_DIR.glob("session_summary_*.json"), key=lambda p: p.stat().st_mtime)
+    return sorted(
+        LOGS_DIR.glob("session_summary_*.json"), key=lambda p: p.stat().st_mtime
+    )
 
 
 def _load_session_history(limit: int = 30) -> list[dict[str, Any]]:
@@ -359,7 +384,7 @@ def _record_ui_snapshot() -> None:
         snapshots = read_json(UI_SNAPSHOT_PATH).get("runs", [])
     except (JSONParseError, DataFileReadError):
         snapshots = []
-    
+
     if not isinstance(snapshots, list):
         snapshots = []
 
@@ -383,9 +408,7 @@ def _record_ui_snapshot() -> None:
                 ],
                 "result_keys": summary.get("result_keys", []),
                 "governance_risk": (
-                    summary.get("results", {})
-                    .get("governance_report", {})
-                    or {}
+                    summary.get("results", {}).get("governance_report", {}) or {}
                 ).get("model_risk_score"),
                 "quality_failed_files": sum(
                     1
@@ -407,11 +430,10 @@ def _compute_data_health() -> dict[str, Any]:
     try:
         quality = read_json(PROCESSED_DIR / "quality_report.json")
     except (JSONParseError, DataFileReadError):
-        raise HealthScoreCalculationError(
-            "Failed to read quality_report.json"
-        )
-    
+        raise HealthScoreCalculationError("Failed to read quality_report.json")
+
     files = quality.get("files", {}) if isinstance(quality, dict) else {}
+    summary = quality.get("summary", {}) if isinstance(quality, dict) else {}
 
     if not files:
         return {
@@ -427,21 +449,22 @@ def _compute_data_health() -> dict[str, Any]:
 
     total_files = len(files)
     failed_files = sum(
-        1 for v in files.values()
-        if isinstance(v, dict) and v.get("status") == "failed"
+        1 for v in files.values() if isinstance(v, dict) and v.get("status") == "failed"
     )
 
     total_rows = 0
     total_nulls = 0
     outliers = 0
+    imputed = 0
     latest_processed_at = None
-    
+
     for v in files.values():
         if not isinstance(v, dict):
             continue
         total_rows += int(v.get("final_rows", 0) or 0)
         total_nulls += int(v.get("final_nulls", 0) or 0)
         outliers += int(v.get("outliers_clipped", 0) or 0)
+        imputed += int(v.get("imputed_count", 0) or 0)
         p_at = v.get("processed_at")
         if isinstance(p_at, str):
             try:
@@ -454,7 +477,12 @@ def _compute_data_health() -> dict[str, Any]:
 
     null_ratio = (total_nulls / total_rows) if total_rows > 0 else 0.0
     outlier_ratio = (outliers / total_rows) if total_rows > 0 else 0.0
+    imputed_ratio = (imputed / total_rows) if total_rows > 0 else 1.0
     failed_ratio = (failed_files / total_files) if total_files > 0 else 1.0
+    missing_sources = (
+        summary.get("missing_sources", []) if isinstance(summary, dict) else []
+    )
+    source_coverage_penalty = min(float(len(missing_sources)) * 15.0, 45.0)
 
     age_hours = 999.0
     if latest_processed_at is not None:
@@ -462,16 +490,23 @@ def _compute_data_health() -> dict[str, Any]:
 
     null_penalty = min(null_ratio * 100.0, 25.0)
     outlier_penalty = min(outlier_ratio * 120.0, 20.0)
+    imputation_penalty = min(imputed_ratio * 80.0, 20.0)
     schema_penalty = min(failed_ratio * 50.0, 50.0)
-    freshness_penalty = (
-        0.0 if age_hours <= 24
-        else min((age_hours - 24) * 0.8, 20.0)
-    )
+    zero_rows_penalty = 30.0 if total_rows == 0 else 0.0
+    freshness_penalty = 0.0 if age_hours <= 24 else min((age_hours - 24) * 0.8, 20.0)
 
     score = max(
         0.0,
         100.0
-        - (null_penalty + outlier_penalty + schema_penalty + freshness_penalty)
+        - (
+            null_penalty
+            + outlier_penalty
+            + imputation_penalty
+            + schema_penalty
+            + source_coverage_penalty
+            + zero_rows_penalty
+            + freshness_penalty
+        ),
     )
 
     status = "good"
@@ -484,12 +519,18 @@ def _compute_data_health() -> dict[str, Any]:
         "score": round(score, 2),
         "null_penalty": round(null_penalty, 2),
         "outlier_penalty": round(outlier_penalty, 2),
+        "imputation_penalty": round(imputation_penalty, 2),
         "schema_penalty": round(schema_penalty, 2),
+        "source_coverage_penalty": round(source_coverage_penalty, 2),
+        "zero_rows_penalty": round(zero_rows_penalty, 2),
         "freshness_penalty": round(freshness_penalty, 2),
+        "missing_sources": missing_sources,
         "failed_files": failed_files,
         "status": status,
         "details": (
             f"rows={total_rows}, final_nulls={total_nulls}, outliers_clipped={outliers}, "
+            f"imputed={imputed}, "
+            f"missing_sources={missing_sources}, "
             f"age_hours={age_hours:.1f}"
         ),
     }
@@ -498,16 +539,28 @@ def _compute_data_health() -> dict[str, Any]:
 def _build_smart_alerts() -> list[dict[str, str]]:
     """Generate smart alerts based on health, performance, risk metrics."""
     alerts: list[dict[str, str]] = []
-    
+
     try:
         health = _compute_data_health()
     except HealthScoreCalculationError:
-        return [{"severity": "error", "title": "Health Score Error", "message": "Failed to compute health score."}]
-    
+        return [
+            {
+                "severity": "error",
+                "title": "Health Score Error",
+                "message": "Failed to compute health score.",
+            }
+        ]
+
     try:
         history = _load_session_history(limit=2)
     except SessionLoadError:
-        return [{"severity": "error", "title": "Session Load Error", "message": "Failed to load session history."}]
+        return [
+            {
+                "severity": "error",
+                "title": "Session Load Error",
+                "message": "Failed to load session history.",
+            }
+        ]
 
     if health["score"] < 70:
         severity = "critical" if health["score"] < 50 else "warning"
@@ -522,8 +575,14 @@ def _build_smart_alerts() -> list[dict[str, str]]:
     if len(history) >= 2:
         prev = history[-2]
         curr = history[-1]
-        prev_dur = float((prev.get("session_info", {}) or {}).get("total_duration_seconds", 0.0) or 0.0)
-        curr_dur = float((curr.get("session_info", {}) or {}).get("total_duration_seconds", 0.0) or 0.0)
+        prev_dur = float(
+            (prev.get("session_info", {}) or {}).get("total_duration_seconds", 0.0)
+            or 0.0
+        )
+        curr_dur = float(
+            (curr.get("session_info", {}) or {}).get("total_duration_seconds", 0.0)
+            or 0.0
+        )
         if prev_dur > 0 and curr_dur > prev_dur * 1.4:
             alerts.append(
                 {
@@ -537,15 +596,21 @@ def _build_smart_alerts() -> list[dict[str, str]]:
         summary = read_json(OUTPUT_DIR / "analysis_results.json")
     except (JSONParseError, DataFileReadError):
         summary = {}
-    
-    curr_risk = (summary.get("results", {}).get("governance_report", {}) or {}).get("model_risk_score")
-    
+
+    curr_risk = (summary.get("results", {}).get("governance_report", {}) or {}).get(
+        "model_risk_score"
+    )
+
     try:
         snapshots = read_json(UI_SNAPSHOT_PATH).get("runs", [])
     except (JSONParseError, DataFileReadError):
         snapshots = []
-    
-    if isinstance(snapshots, list) and len(snapshots) >= 2 and isinstance(curr_risk, (float, int)):
+
+    if (
+        isinstance(snapshots, list)
+        and len(snapshots) >= 2
+        and isinstance(curr_risk, (float, int))
+    ):
         prev_risk = snapshots[-2].get("governance_risk")
         if isinstance(prev_risk, (float, int)):
             delta = float(curr_risk) - float(prev_risk)
@@ -568,7 +633,10 @@ def _build_smart_alerts() -> list[dict[str, str]]:
                 curr_strength = float(curr_df[numeric_cols].abs().mean().mean())
                 if isinstance(snapshots, list) and len(snapshots) >= 2:
                     prev_strength = snapshots[-2].get("corr_strength")
-                    if isinstance(prev_strength, (float, int)) and abs(curr_strength - float(prev_strength)) > 0.12:
+                    if (
+                        isinstance(prev_strength, (float, int))
+                        and abs(curr_strength - float(prev_strength)) > 0.12
+                    ):
                         alerts.append(
                             {
                                 "severity": "warning",
@@ -595,9 +663,12 @@ def _build_run_comparison() -> dict[str, Any]:
         history = _load_session_history(limit=2)
     except SessionLoadError as e:
         return {"status": "error", "message": f"Failed to load session history: {e}"}
-    
+
     if len(history) < 2:
-        return {"status": "insufficient", "message": "Need at least 2 runs for comparison."}
+        return {
+            "status": "insufficient",
+            "message": "Need at least 2 runs for comparison.",
+        }
 
     prev = history[-2]
     curr = history[-1]
@@ -614,24 +685,28 @@ def _build_run_comparison() -> dict[str, Any]:
         prev_snap = read_json(UI_SNAPSHOT_PATH).get("runs", [])
     except (JSONParseError, DataFileReadError):
         prev_snap = []
-    
+
     file_diff = {"added": [], "removed": [], "changed": []}
     if isinstance(prev_snap, list) and len(prev_snap) >= 2:
         old_files = {
-            f["name"]: f.get("size", 0)
-            for f in prev_snap[-2].get("output_files", [])
+            f["name"]: f.get("size", 0) for f in prev_snap[-2].get("output_files", [])
         }
         new_files = {
-            f["name"]: f.get("size", 0)
-            for f in prev_snap[-1].get("output_files", [])
+            f["name"]: f.get("size", 0) for f in prev_snap[-1].get("output_files", [])
         }
-        file_diff["added"] = sorted([name for name in new_files if name not in old_files])
-        file_diff["removed"] = sorted([name for name in old_files if name not in new_files])
-        file_diff["changed"] = sorted([
-            name
-            for name in new_files
-            if name in old_files and new_files[name] != old_files[name]
-        ])
+        file_diff["added"] = sorted(
+            [name for name in new_files if name not in old_files]
+        )
+        file_diff["removed"] = sorted(
+            [name for name in old_files if name not in new_files]
+        )
+        file_diff["changed"] = sorted(
+            [
+                name
+                for name in new_files
+                if name in old_files and new_files[name] != old_files[name]
+            ]
+        )
 
     try:
         gov_path = GOLD_DIR / "governance"
@@ -695,7 +770,9 @@ def _build_explainability_lines() -> list[str]:
         )
 
     if not lines:
-        lines.append("No explainability signals available yet. Run pipeline to populate this panel.")
+        lines.append(
+            "No explainability signals available yet. Run pipeline to populate this panel."
+        )
 
     return lines
 
@@ -706,27 +783,34 @@ def _build_executive_report_html() -> str:
         health = _compute_data_health()
     except HealthScoreCalculationError:
         health = {"score": 0.0, "status": "error"}
-    
+
     try:
         alerts = _build_smart_alerts()
     except AlertGenerationError:
-        alerts = [{"severity": "error", "title": "Alert Error", "message": "Failed to generate alerts."}]
-    
+        alerts = [
+            {
+                "severity": "error",
+                "title": "Alert Error",
+                "message": "Failed to generate alerts.",
+            }
+        ]
+
     try:
         diff = _build_run_comparison()
     except RunComparisonError:
         diff = {"status": "error", "message": "Failed to compare runs."}
-    
+
     explain = _build_explainability_lines()
-    
+
     try:
         summary = read_json(OUTPUT_DIR / "analysis_results.json")
     except (JSONParseError, DataFileReadError):
         summary = {"result_keys": []}
 
-    alerts_html = "".join(
-        [f"<li><b>{a['title']}</b>: {a['message']}</li>" for a in alerts]
-    ) or "<li>No active alerts.</li>"
+    alerts_html = (
+        "".join([f"<li><b>{a['title']}</b>: {a['message']}</li>" for a in alerts])
+        or "<li>No active alerts.</li>"
+    )
     explain_html = "".join([f"<li>{line}</li>" for line in explain])
 
     diff_html = ""
@@ -760,8 +844,8 @@ def _build_executive_report_html() -> str:
     <p>Generated at: {datetime.now().isoformat()}</p>
     <div class='card'>
       <h3>Summary</h3>
-      <p><b>Data Health Score:</b> {health['score']}/100 ({health['status']})</p>
-      <p><b>Available analysis keys:</b> {', '.join(summary.get('result_keys', []))}</p>
+      <p><b>Data Health Score:</b> {health["score"]}/100 ({health["status"]})</p>
+      <p><b>Available analysis keys:</b> {", ".join(summary.get("result_keys", []))}</p>
     </div>
     <div class='card'>
       <h3>Key Alerts</h3>
@@ -795,9 +879,9 @@ def run_pipeline(
     progress_bar: Any = None,
 ) -> tuple[bool, str]:
     """Run pipeline with specified mode.
-    
+
     mode: 'sample' (2-3 min, small dataset) or 'actual' (5-10 min, full dataset)
-    
+
     Raises:
         PipelineSubprocessError: If subprocess creation fails
         PipelineExecutionError: If pipeline execution fails
@@ -823,7 +907,7 @@ def run_pipeline(
 
     log_path = None
     proc = None
-    
+
     try:
         # Create temp log file
         try:
@@ -851,10 +935,12 @@ def run_pipeline(
                         env=env,
                     )
             except FileNotFoundError as e:
-                raise PipelineSubprocessError(f"Python executable not found: {e}") from e
+                raise PipelineSubprocessError(
+                    f"Python executable not found: {e}"
+                ) from e
             except OSError as e:
                 raise PipelineSubprocessError(f"Failed to start subprocess: {e}") from e
-            
+
             start = time.time()
             stage_i = 0
 
@@ -867,9 +953,7 @@ def run_pipeline(
                         stage_i += 1
                     label = stages[stage_i][1]
                     if progress_bar is not None:
-                        progress_bar.progress(
-                            pct, text=f"{int(pct * 100)}% — {label}"
-                        )
+                        progress_bar.progress(pct, text=f"{int(pct * 100)}% — {label}")
                     time.sleep(0.5)
                 except Exception as e:
                     raise PipelineProgressTrackingError(
@@ -880,14 +964,16 @@ def run_pipeline(
             try:
                 output = log_path.read_text(encoding="utf-8", errors="ignore")
             except OSError as e:
-                raise PipelineExecutionError(f"Failed to read pipeline output: {e}") from e
-            
+                raise PipelineExecutionError(
+                    f"Failed to read pipeline output: {e}"
+                ) from e
+
             ok = proc.returncode == 0
             if progress_bar is not None:
                 final_text = "100% — Completed!" if ok else "100% — Failed"
                 progress_bar.progress(1.0, text=final_text)
             return ok, output.strip()
-            
+
         finally:
             # Clean up log file
             if log_path is not None:
@@ -895,8 +981,12 @@ def run_pipeline(
                     log_path.unlink(missing_ok=True)
                 except OSError:
                     pass  # Silently continue if cleanup fails
-    
-    except (PipelineSubprocessError, PipelineExecutionError, PipelineProgressTrackingError):
+
+    except (
+        PipelineSubprocessError,
+        PipelineExecutionError,
+        PipelineProgressTrackingError,
+    ):
         raise
     except Exception as e:
         raise PipelineExecutionError(f"Unexpected pipeline error: {e}") from e
@@ -951,11 +1041,15 @@ def show_data_tab() -> None:
     layer_path = layer_paths[selected_layer]
     parquet_files = sorted(layer_path.glob("**/*.parquet"))
     if not parquet_files:
-        st.warning(f"No files found in the **{selected_layer}** layer yet. Run the pipeline first.")
+        st.warning(
+            f"No files found in the **{selected_layer}** layer yet. Run the pipeline first."
+        )
         return
 
     file_labels = {str(p.relative_to(ROOT)): p for p in parquet_files}
-    selected_label = st.selectbox("Choose file to preview:", options=list(file_labels.keys()))
+    selected_label = st.selectbox(
+        "Choose file to preview:", options=list(file_labels.keys())
+    )
     selected_file = file_labels[selected_label]
 
     with st.spinner("Loading data..."):
@@ -1045,7 +1139,9 @@ def show_analytics_tab() -> None:
                         st.markdown("&nbsp;")
                         if st.button("Preview", key=f"prev_{analysis_name}"):
                             st.json(read_json(full_path))
-                        with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                        with open(
+                            full_path, "r", encoding="utf-8", errors="ignore"
+                        ) as f:
                             st.download_button(
                                 "⬇️ Download",
                                 f.read(),
@@ -1069,9 +1165,11 @@ def show_governance_tab() -> None:
     # Explanation from logger messages
     st.info(
         "**What is Governance?** "
-        + (gov_help.get("what", "") or
-           "An automated audit trail that tracks approvals and risk scores "
-           "for every dataset entering the analytical layer.")
+        + (
+            gov_help.get("what", "")
+            or "An automated audit trail that tracks approvals and risk scores "
+            "for every dataset entering the analytical layer."
+        )
     )
     with st.expander("How to read a governance decision", expanded=False):
         st.markdown(
@@ -1108,10 +1206,13 @@ def show_logs_tab() -> None:
 
     with st.expander("Help: Runtime messages", expanded=False):
         if _main_mod is not None:
-            _render_logger_message("Main guide", getattr(_main_mod, "MAIN_USER_GUIDE", ""))
+            _render_logger_message(
+                "Main guide", getattr(_main_mod, "MAIN_USER_GUIDE", "")
+            )
         if _fetchers_mod is not None:
             _render_logger_message(
-                "Fetcher output", getattr(_fetchers_mod, "FETCHER_OUTPUT_EXPLANATION", "")
+                "Fetcher output",
+                getattr(_fetchers_mod, "FETCHER_OUTPUT_EXPLANATION", ""),
             )
         if _medallion_mod is not None:
             _render_logger_message(
@@ -1126,7 +1227,9 @@ def show_logs_tab() -> None:
     )
 
     # Pipeline stage reference card
-    with st.expander("Pipeline Stage Reference — what happens at each step", expanded=False):
+    with st.expander(
+        "Pipeline Stage Reference — what happens at each step", expanded=False
+    ):
         for stage, desc in PIPELINE_STAGES:
             st.markdown(f"**{stage}** — {desc}")
 
@@ -1141,7 +1244,9 @@ def show_logs_tab() -> None:
     st.metric("Total Sessions Recorded", len(summaries))
 
     latest = summaries[-1]
-    latest_time = pd.Timestamp(latest.stat().st_mtime, unit="s").strftime("%Y-%m-%d %H:%M:%S")
+    latest_time = pd.Timestamp(latest.stat().st_mtime, unit="s").strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     st.success(f"Latest run: **{latest.name}** — {latest_time}")
 
     with st.expander("What each field means", expanded=False):
@@ -1187,7 +1292,9 @@ def show_output_tab() -> None:
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Files", len(output_files))
     col2.metric("Folder", "output/")
-    col3.metric("Total Size", f"{sum(f.stat().st_size for f in output_files) / 1024:.1f} KB")
+    col3.metric(
+        "Total Size", f"{sum(f.stat().st_size for f in output_files) / 1024:.1f} KB"
+    )
 
     st.markdown("---")
     st.markdown("**File Directory:**")
@@ -1196,7 +1303,9 @@ def show_output_tab() -> None:
         col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
         with col1:
             st.markdown(f"**{file_path.name}**")
-            st.caption(f"Size: {file_path.stat().st_size / 1024:.1f} KB | Modified: {pd.Timestamp(file_path.stat().st_mtime, unit='s').strftime('%Y-%m-%d %H:%M')}")
+            st.caption(
+                f"Size: {file_path.stat().st_size / 1024:.1f} KB | Modified: {pd.Timestamp(file_path.stat().st_mtime, unit='s').strftime('%Y-%m-%d %H:%M')}"
+            )
         with col2:
             # File type badge
             if file_path.suffix == ".json":
@@ -1230,7 +1339,7 @@ def show_output_tab() -> None:
                         f.read(),
                         file_name=file_path.name,
                         key=f"download_{file_path.name}",
-                        help="Download file"
+                        help="Download file",
                     )
             except:
                 pass
@@ -1321,7 +1430,9 @@ def show_scenario_builder_tab() -> None:
     if isinstance(elasticity_val, (int, float)):
         baseline_move = float(elasticity_val) * (inflation_shock / 100.0)
 
-    total_shock = (inflation_shock * 0.5 + energy_shock * 0.3 + rate_shock * 0.2) / 100.0
+    total_shock = (
+        inflation_shock * 0.5 + energy_shock * 0.3 + rate_shock * 0.2
+    ) / 100.0
     estimated_return_shift = baseline_move + total_shock
 
     st.metric("Estimated return shift", f"{estimated_return_shift * 100:.2f}%")
@@ -1371,7 +1482,9 @@ def show_ops_tab(role: str) -> None:
             rows.append(
                 {
                     "session": h.get("__file", ""),
-                    "duration_s": round(float(info.get("total_duration_seconds", 0.0) or 0.0), 2),
+                    "duration_s": round(
+                        float(info.get("total_duration_seconds", 0.0) or 0.0), 2
+                    ),
                     "operations": int(info.get("total_operations", 0) or 0),
                     "status": "ok" if not h.get("error_metrics") else "has_errors",
                 }
@@ -1383,13 +1496,35 @@ def show_ops_tab(role: str) -> None:
     st.markdown("### Nightly Scheduling")
     schedule = read_json(UI_SCHEDULE_PATH) if UI_SCHEDULE_PATH.exists() else {}
     enabled_default = bool(schedule.get("enabled", False))
-    hour_default = int(schedule.get("hour", 2)) if isinstance(schedule.get("hour"), int) else 2
-    minute_default = int(schedule.get("minute", 0)) if isinstance(schedule.get("minute"), int) else 0
+    hour_default = (
+        int(schedule.get("hour", 2)) if isinstance(schedule.get("hour"), int) else 2
+    )
+    minute_default = (
+        int(schedule.get("minute", 0)) if isinstance(schedule.get("minute"), int) else 0
+    )
 
-    enabled = st.toggle("Enable nightly schedule", value=enabled_default, disabled=not ROLE_PERMISSIONS[role]["can_schedule"])
+    enabled = st.toggle(
+        "Enable nightly schedule",
+        value=enabled_default,
+        disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
+    )
     c1, c2 = st.columns(2)
-    hour = c1.number_input("Hour (24h)", min_value=0, max_value=23, value=hour_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"])
-    minute = c2.number_input("Minute", min_value=0, max_value=59, value=minute_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"])
+    hour = c1.number_input(
+        "Hour (24h)",
+        min_value=0,
+        max_value=23,
+        value=hour_default,
+        step=1,
+        disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
+    )
+    minute = c2.number_input(
+        "Minute",
+        min_value=0,
+        max_value=59,
+        value=minute_default,
+        step=1,
+        disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
+    )
 
     if st.button("Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1406,7 +1541,6 @@ def show_ops_tab(role: str) -> None:
     st.caption(
         "Tip: wire this schedule to Task Scheduler/cron using `poetry run python src/main.py` at saved time."
     )
-
 
 
 def main() -> None:
@@ -1441,7 +1575,8 @@ def main() -> None:
                     getattr(_directions_mod, "LIVE_STEP_0_WELCOME", ""),
                 )
                 _render_logger_message(
-                    "Quick start", getattr(_main_mod, "QUICK_START", "") if _main_mod else ""
+                    "Quick start",
+                    getattr(_main_mod, "QUICK_START", "") if _main_mod else "",
                 )
 
         with st.expander("What does the pipeline do?", expanded=False):
@@ -1500,7 +1635,19 @@ def main() -> None:
 
     show_kpis()
 
-    tab_health, tab_diff, tab_scenario, tab_explain, tab_reports, tab_ops, tab_data, tab_analytics, tab_output, tab_gov, tab_logs = st.tabs(
+    (
+        tab_health,
+        tab_diff,
+        tab_scenario,
+        tab_explain,
+        tab_reports,
+        tab_ops,
+        tab_data,
+        tab_analytics,
+        tab_output,
+        tab_gov,
+        tab_logs,
+    ) = st.tabs(
         [
             "Health & Alerts",
             "Run Comparison",

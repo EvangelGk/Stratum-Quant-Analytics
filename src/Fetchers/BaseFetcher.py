@@ -1,3 +1,4 @@
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Optional
@@ -13,9 +14,10 @@ Includes caching for performance.
 
 class BaseFetcher(ABC):
     def __init__(self) -> None:
-        self.cache = dc.Cache(
-            str(Path(__file__).parents[1] / "cache")
-        )  # Cache in src/cache
+        default_cache = Path(__file__).parents[2] / "data" / "cache"
+        cache_root = Path(os.getenv("SCENARIO_PLANNER_CACHE_DIR", str(default_cache)))
+        cache_root.mkdir(parents=True, exist_ok=True)
+        self.cache = dc.Cache(str(cache_root))
 
     @abstractmethod
     def fetch(self, *args: Any, **kwargs: Any) -> pd.DataFrame:

@@ -18,8 +18,7 @@ FETCHER_RATE_LIMIT = (
 )
 
 FETCHER_TIMEOUT = (
-    "Request timed out for {ticker}. This is normal for large date ranges."
-    "Retrying..."
+    "Request timed out for {ticker}. This is normal for large date ranges.Retrying..."
 )
 
 FETCHER_API_ERROR = (

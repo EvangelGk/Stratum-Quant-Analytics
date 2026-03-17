@@ -44,6 +44,24 @@ class ProjectConfig:
     governance_ticker_overrides: Dict[str, Dict[str, float]] = field(
         default_factory=dict
     )
+    data_user_id: str = "default"
+    silver_hard_fail: bool = True
+    silver_min_rows: int = 10
+    silver_min_rows_ratio: float = 0.1
+    silver_base_null_threshold: float = 30.0
+    silver_dynamic_threshold_window: int = 20
+    macro_series_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "CPIAUCSL": "inflation",
+            "PNRGINDEXM": "energy_index",
+        }
+    )
+    worldbank_indicator_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "NY.GDP.MKTP.KD.ZG": "gdp_growth",
+            "EG.USE.PCAP.KG.OE": "energy_usage",
+        }
+    )
 
     @staticmethod
     def _parse_positive_int(raw_value: str, field_name: str, default: int) -> int:
@@ -139,12 +157,8 @@ class ProjectConfig:
         enforce_reproducibility = cls._parse_bool(
             os.getenv("ENFORCE_REPRODUCIBILITY"), True
         )
-        governance_hard_fail = cls._parse_bool(
-            os.getenv("GOVERNANCE_HARD_FAIL"), True
-        )
-        governance_min_r2 = cls._parse_float(
-            os.getenv("GOVERNANCE_MIN_R2"), -0.25
-        )
+        governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), True)
+        governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), -0.25)
         governance_max_normalized_shift = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_NORMALIZED_SHIFT", "2.5"),
             "GOVERNANCE_MAX_NORMALIZED_SHIFT",
@@ -186,6 +200,28 @@ class ProjectConfig:
             "GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD",
             0.6,
         )
+        data_user_id = os.getenv("DATA_USER_ID", "default").strip() or "default"
+        silver_hard_fail = cls._parse_bool(os.getenv("SILVER_HARD_FAIL"), True)
+        silver_min_rows = cls._parse_positive_int(
+            os.getenv("SILVER_MIN_ROWS", "10"), "SILVER_MIN_ROWS", 10
+        )
+        silver_min_rows_ratio = cls._parse_non_negative_float(
+            os.getenv("SILVER_MIN_ROWS_RATIO", "0.1"),
+            "SILVER_MIN_ROWS_RATIO",
+            0.1,
+        )
+        silver_min_rows_ratio = min(max(silver_min_rows_ratio, 0.0), 1.0)
+        silver_base_null_threshold = cls._parse_non_negative_float(
+            os.getenv("SILVER_BASE_NULL_THRESHOLD", "30.0"),
+            "SILVER_BASE_NULL_THRESHOLD",
+            30.0,
+        )
+        silver_base_null_threshold = min(max(silver_base_null_threshold, 0.0), 100.0)
+        silver_dynamic_threshold_window = cls._parse_positive_int(
+            os.getenv("SILVER_DYNAMIC_THRESHOLD_WINDOW", "20"),
+            "SILVER_DYNAMIC_THRESHOLD_WINDOW",
+            20,
+        )
         if governance_model_risk_fail_threshold < governance_model_risk_warn_threshold:
             (
                 governance_model_risk_warn_threshold,
@@ -214,7 +250,35 @@ class ProjectConfig:
             except (ValueError, TypeError, KeyError):
                 pass
 
-        return cls(
+        macro_series_map = {
+            "CPIAUCSL": "inflation",
+            "PNRGINDEXM": "energy_index",
+        }
+        worldbank_indicator_map = {
+            "NY.GDP.MKTP.KD.ZG": "gdp_growth",
+            "EG.USE.PCAP.KG.OE": "energy_usage",
+        }
+        raw_macro_map = os.getenv("MACRO_SERIES_MAP", "").strip()
+        if raw_macro_map:
+            try:
+                parsed = json.loads(raw_macro_map)
+                if isinstance(parsed, dict):
+                    macro_series_map = {str(k): str(v) for k, v in parsed.items()}
+            except (ValueError, TypeError):
+                pass
+
+        raw_wb_map = os.getenv("WORLDBANK_INDICATOR_MAP", "").strip()
+        if raw_wb_map:
+            try:
+                parsed = json.loads(raw_wb_map)
+                if isinstance(parsed, dict):
+                    worldbank_indicator_map = {
+                        str(k): str(v) for k, v in parsed.items()
+                    }
+            except (ValueError, TypeError):
+                pass
+
+        cfg = cls(
             fred_api_key=key,
             mode=mode,
             start_date=start_date,
@@ -234,14 +298,52 @@ class ProjectConfig:
             governance_min_walk_forward_r2=governance_min_walk_forward_r2,
             governance_max_model_risk_score=governance_max_model_risk_score,
             governance_regime=governance_regime,
-            governance_model_risk_warn_threshold=(
-                governance_model_risk_warn_threshold
-            ),
-            governance_model_risk_fail_threshold=(
-                governance_model_risk_fail_threshold
-            ),
+            governance_model_risk_warn_threshold=(governance_model_risk_warn_threshold),
+            governance_model_risk_fail_threshold=(governance_model_risk_fail_threshold),
             governance_ticker_overrides=governance_ticker_overrides,
+            data_user_id=data_user_id,
+            silver_hard_fail=silver_hard_fail,
+            silver_min_rows=silver_min_rows,
+            silver_min_rows_ratio=silver_min_rows_ratio,
+            silver_base_null_threshold=silver_base_null_threshold,
+            silver_dynamic_threshold_window=silver_dynamic_threshold_window,
+            macro_series_map=macro_series_map,
+            worldbank_indicator_map=worldbank_indicator_map,
         )
+        cfg.validate_runtime_constraints()
+        return cfg
+
+    def validate_runtime_constraints(self) -> None:
+        if self.start_date > self.end_date:
+            raise ValueError("Invalid configuration: START_DATE must be <= END_DATE")
+        if self.max_workers < 1:
+            raise ValueError("Invalid configuration: MAX_WORKERS must be >= 1")
+        if self.max_retries < 1:
+            raise ValueError("Invalid configuration: MAX_RETRIES must be >= 1")
+        if self.retry_delay_min > self.retry_delay_max:
+            raise ValueError(
+                "Invalid configuration: RETRY_DELAY_MIN cannot exceed RETRY_DELAY_MAX"
+            )
+        if self.silver_min_rows < 1:
+            raise ValueError("Invalid configuration: SILVER_MIN_ROWS must be >= 1")
+        if not (0.0 <= self.silver_min_rows_ratio <= 1.0):
+            raise ValueError(
+                "Invalid configuration: SILVER_MIN_ROWS_RATIO must be in [0, 1]"
+            )
+        if not (0.0 <= self.silver_base_null_threshold <= 100.0):
+            raise ValueError(
+                "Invalid configuration: SILVER_BASE_NULL_THRESHOLD must be in [0, 100]"
+            )
+        if self.silver_dynamic_threshold_window < 1:
+            raise ValueError(
+                "Invalid configuration: SILVER_DYNAMIC_THRESHOLD_WINDOW must be >= 1"
+            )
+        if not self.macro_series_map:
+            raise ValueError("Invalid configuration: MACRO_SERIES_MAP cannot be empty")
+        if not self.worldbank_indicator_map:
+            raise ValueError(
+                "Invalid configuration: WORLDBANK_INDICATOR_MAP cannot be empty"
+            )
 
     def get_targets(self) -> List[str]:
         """Επιστρέφει τα tickers βάσει του mode."""
@@ -280,5 +382,13 @@ class ProjectConfig:
                 self.governance_model_risk_fail_threshold
             ),
             "governance_ticker_overrides": self.governance_ticker_overrides,
+            "data_user_id": self.data_user_id,
+            "silver_hard_fail": self.silver_hard_fail,
+            "silver_min_rows": self.silver_min_rows,
+            "silver_min_rows_ratio": self.silver_min_rows_ratio,
+            "silver_base_null_threshold": self.silver_base_null_threshold,
+            "silver_dynamic_threshold_window": self.silver_dynamic_threshold_window,
+            "macro_series_map": self.macro_series_map,
+            "worldbank_indicator_map": self.worldbank_indicator_map,
             "targets": self.get_targets(),
         }

@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import random
-import shutil
 import threading
 import time
 from datetime import datetime
@@ -42,6 +41,8 @@ class BronzeLayer:
         )
         self.success_count = 0
         self.fail_count = 0
+        self.source_success_count: Dict[str, int] = {}
+        self.source_fail_count: Dict[str, int] = {}
         self.provider_limits = {
             "yfinance": 60,
             "fred": 30,
@@ -57,7 +58,7 @@ class BronzeLayer:
         }
         self.circuit_breaker_threshold = 3
 
-    def run(self) -> None:
+    def run(self) -> Dict[str, Any]:
         """
         Runs the data ingestion process in parallel.
         Prepares tasks, executes them with retries, and logs summary.
@@ -65,9 +66,14 @@ class BronzeLayer:
         print(FETCHER_START.format(source="multiple sources"))
         self.logger.info(f"Starting ingestion in {self.config.mode.value} mode...")
         targets = self.config.get_targets()
+        self.success_count = 0
+        self.fail_count = 0
+        self.source_success_count = {k: 0 for k in self.provider_limits.keys()}
+        self.source_fail_count = {k: 0 for k in self.provider_limits.keys()}
 
         # Prepare tasks for parallel execution
         tasks: List[Tuple[Any, Tuple[str, ...], str, str]] = []
+        source_expected_counts: Dict[str, int] = {k: 0 for k in self.provider_limits}
 
         # 1. Financials (yFinance)
         y_fetcher = self.factory.get_fetcher("yfinance")
@@ -80,10 +86,11 @@ class BronzeLayer:
                     "yfinance",
                 )
             )
+            source_expected_counts["yfinance"] += 1
 
         # 2. Macro Data (FRED)
         fred_fetcher = self.factory.get_fetcher("fred")
-        macro_map = {"CPIAUCSL": "inflation", "PNRGINDEXM": "energy_index"}
+        macro_map = dict(getattr(self.config, "macro_series_map", {}))
         for series_id, filename in macro_map.items():
             tasks.append(
                 (
@@ -93,13 +100,11 @@ class BronzeLayer:
                     "fred",
                 )
             )
+            source_expected_counts["fred"] += 1
 
         # 3. World Bank
         wb_fetcher = self.factory.get_fetcher("worldbank")
-        wb_map = {
-            "NY.GDP.MKTP.KD.ZG": "gdp_growth",
-            "EG.USE.PCAP.KG.OE": "energy_usage",
-        }
+        wb_map = dict(getattr(self.config, "worldbank_indicator_map", {}))
         for indicator, filename in wb_map.items():
             tasks.append(
                 (
@@ -109,23 +114,35 @@ class BronzeLayer:
                     "worldbank",
                 )
             )
+            source_expected_counts["worldbank"] += 1
 
         # Execute tasks in parallel
         max_workers = min(self.config.max_workers, len(tasks))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self._fetch_and_save, fetcher, params, filename, source)
+            future_to_source = {
+                executor.submit(
+                    self._fetch_and_save, fetcher, params, filename, source
+                ): source
                 for fetcher, params, filename, source in tasks
-            ]
-            for future in concurrent.futures.as_completed(futures):
+            }
+            for future in concurrent.futures.as_completed(future_to_source):
+                source = future_to_source[future]
                 try:
                     future.result()  # Raise any exceptions
                 except (FetcherError, TimeoutError, RateLimitError) as e:
                     self.logger.error(f"Fetcher error in task: {e}")
-                    self.fail_count += 1
+                    with self.lock:
+                        self.fail_count += 1
+                        self.source_fail_count[source] = (
+                            self.source_fail_count.get(source, 0) + 1
+                        )
                 except Exception as e:
                     self.logger.error(f"Unexpected error in task: {e}")
-                    self.fail_count += 1
+                    with self.lock:
+                        self.fail_count += 1
+                        self.source_fail_count[source] = (
+                            self.source_fail_count.get(source, 0) + 1
+                        )
 
         # Log summary
         total_files = self.success_count + self.fail_count
@@ -142,6 +159,20 @@ class BronzeLayer:
             self.success_count,
             self.fail_count,
         )
+        missing_sources = [
+            source
+            for source, expected in source_expected_counts.items()
+            if expected > 0 and self.source_success_count.get(source, 0) == 0
+        ]
+        return {
+            "total_files": total_files,
+            "success_count": self.success_count,
+            "fail_count": self.fail_count,
+            "source_expected": source_expected_counts,
+            "source_success": self.source_success_count,
+            "source_fail": self.source_fail_count,
+            "missing_sources": missing_sources,
+        }
 
     def _fetch_and_save(
         self, fetcher: Any, params: Tuple[str, ...], filename: str, source: str
@@ -161,7 +192,11 @@ class BronzeLayer:
                 df = fetcher.fetch(*params)
                 self._process_and_save(df, filename, source)
                 self._record_provider_success(source)
-                self.success_count += 1
+                with self.lock:
+                    self.success_count += 1
+                    self.source_success_count[source] = (
+                        self.source_success_count.get(source, 0) + 1
+                    )
                 break  # Success, exit retry loop
             except FetcherError as e:
                 self._record_provider_failure(source)
@@ -289,7 +324,7 @@ class BronzeLayer:
             )
             self.logger.info(f"Successfully saved: {full_path}")
 
-            # Update the catalog with metadata
+            # Update the catalog with metadata and persist atomically under lock
             with self.lock:
                 self.catalog[filename] = {
                     "path": full_path,
@@ -297,8 +332,8 @@ class BronzeLayer:
                     "source": source,
                     "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
+                self._write_catalog()  # Serialized: called inside lock
             self.logger.info(f"Saved: {filename}")
-            self._write_catalog()  # Write catalog after each successful save
         except FetcherError as e:
             # Cleanup on failure
             if os.path.exists(full_path):
@@ -366,6 +401,15 @@ class BronzeLayer:
             renamed[col] = alias_map.get(key, str(col))
         work_df = work_df.rename(columns=renamed)
 
+        # Provider regressions may create duplicate canonical columns.
+        # Collapse by keeping the first non-null value row-wise.
+        if work_df.columns.duplicated().any():
+            dedup = pd.DataFrame(index=work_df.index)
+            for name in list(dict.fromkeys(work_df.columns)):
+                subset = work_df.loc[:, work_df.columns == name]
+                dedup[name] = subset.bfill(axis=1).iloc[:, 0]
+            work_df = dedup
+
         if source == "yfinance" and "Adj Close" not in work_df.columns:
             if "Close" in work_df.columns:
                 work_df["Adj Close"] = work_df["Close"]
@@ -387,12 +431,13 @@ class BronzeLayer:
 
     def _write_catalog(self) -> None:
         """
-        Creates the manifest file in the data/raw directory with backup.
+        Atomically persist the in-memory catalog to disk.
+        Writes to a tmp file first, then os.replace() so readers never see
+        a partially-written file.  Must be called with self.lock held.
         """
         catalog_path = os.path.join(self.base_path, "catalog.json")
-        backup_path = catalog_path + ".bak"
-        if os.path.exists(catalog_path):
-            shutil.copy(catalog_path, backup_path)
-        with open(catalog_path, "w", encoding="utf-8") as f:
+        tmp_path = catalog_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.catalog, f, indent=4, ensure_ascii=False, sort_keys=True)
+        os.replace(tmp_path, catalog_path)  # atomic on POSIX; best-effort on Windows
         self.logger.info(f"Data Catalog updated at {catalog_path}")

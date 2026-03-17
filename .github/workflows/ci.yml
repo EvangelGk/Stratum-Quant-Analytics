@@ -9,16 +9,21 @@ on:
 jobs:
   quality:
     name: Lint, Type Check & Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install Poetry
         uses: snok/install-poetry@v1
@@ -55,4 +60,16 @@ jobs:
       - name: Pytest — governance gate checks
         env:
           FRED_API_KEY: ci_dummy_key
-        run: poetry run pytest -m governance -q
+        run: poetry run pytest -m governance -q --tb=short -W error::UserWarning
+
+      - name: Upload diagnostics artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            .pytest_cache
+            logs
+            output
+            data/users/**/processed/quality
+          if-no-files-found: ignore
