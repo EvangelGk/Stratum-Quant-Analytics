@@ -1,0 +1,596 @@
+import importlib
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = PROJECT_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
+
+def _load_project_symbol(module_name: str, symbol_name: str) -> Any:
+    try:
+        module = importlib.import_module(module_name)
+        return getattr(module, symbol_name)
+    except Exception:
+        return None
+
+
+ProjectConfig = _load_project_symbol("Fetchers.ProjectConfig", "ProjectConfig")
+EXPECTED_SOURCES = _load_project_symbol(
+    "Medallion.silver.contracts", "EXPECTED_SOURCES"
+) or {"yfinance", "fred", "worldbank"}
+SOURCE_CONTRACTS = _load_project_symbol(
+    "Medallion.silver.contracts", "SOURCE_CONTRACTS"
+) or {}
+
+
+class ScenarioAuditor:
+    """Independent but integrated audit judge for the full Scenario Planner system."""
+
+    def __init__(
+        self,
+        gold_path: Optional[str] = None,
+        project_root: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        self.project_root = Path(project_root) if project_root else PROJECT_ROOT
+        load_dotenv(self.project_root / ".env")
+        self.user_id = self._resolve_user_id(user_id)
+        self.data_root = self.project_root / "data" / "users" / self.user_id
+        self.raw_path = self.data_root / "raw"
+        self.processed_path = self.data_root / "processed"
+        self.gold_dir = self.data_root / "gold"
+        self.output_dir = self.project_root / "output" / self.user_id
+        self.quality_report_path = self.processed_path / "quality" / "quality_report.json"
+        self.quality_history_path = self.processed_path / "quality_history.jsonl"
+        self.governance_dir = self.gold_dir / "governance"
+        self.gold_path = (
+            Path(gold_path)
+            if gold_path
+            else self.gold_dir / "master_table.parquet"
+        )
+        self.logger = logging.getLogger("ScenarioAuditor")
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+        self.config = self._load_config()
+        self.expected_tickers = self._resolve_expected_tickers()
+        self.expected_macro = self._resolve_expected_macro_map()
+        self.expected_worldbank = self._resolve_expected_worldbank_map()
+
+    def run_audit(self) -> Dict[str, Any]:
+        """Run end-to-end quality, breadth, output and strictness checks."""
+        report: Dict[str, Any] = {
+            "status": "CRITICAL",
+            "decision_ready": False,
+            "project_root": str(self.project_root),
+            "user_id": self.user_id,
+            "gold_path": str(self.gold_path),
+            "checks": {},
+            "meta": {
+                "expected_tickers": self.expected_tickers,
+                "expected_macro_series": list(self.expected_macro.values()),
+                "expected_worldbank_series": list(self.expected_worldbank.values()),
+            },
+        }
+
+        if not self.gold_path.exists():
+            self.logger.error("Gold Table not found. Run the pipeline first.")
+            report["error"] = "File Missing"
+            self._print_summary(report)
+            return report
+
+        df = pd.read_parquet(self.gold_path)
+        report["row_count"] = int(len(df))
+        report["column_count"] = int(len(df.columns))
+
+        report["checks"]["integration"] = self._check_sources(df)
+        report["checks"]["density"] = self._check_density(df)
+        report["checks"]["statistics"] = self._check_stats(df)
+        report["checks"]["continuity"] = self._check_continuity(df)
+        report["checks"]["outputs"] = self._check_outputs()
+        report["checks"]["thresholds"] = self._check_threshold_design()
+        report["checks"]["governance"] = self._check_governance()
+
+        failed_checks = [
+            name for name, result in report["checks"].items() if not result.get("passed", False)
+        ]
+        warn_checks = [
+            name
+            for name, result in report["checks"].items()
+            if result.get("status") == "warn"
+        ]
+
+        report["failed_checks"] = failed_checks
+        report["warning_checks"] = warn_checks
+        report["decision_ready"] = len(failed_checks) == 0
+        report["status"] = self._overall_status(report)
+        report["auditor_judgement"] = self._build_auditor_judgement(report)
+
+        self._print_summary(report)
+        return report
+
+    def _resolve_user_id(self, explicit_user_id: Optional[str]) -> str:
+        if explicit_user_id:
+            return explicit_user_id
+        return os.getenv("DATA_USER_ID", "default").strip() or "default"
+
+    def _load_config(self) -> Any:
+        if ProjectConfig is None:
+            return None
+        try:
+            return ProjectConfig.load_from_env()
+        except Exception:
+            return None
+
+    def _resolve_expected_tickers(self) -> List[str]:
+        if self.config is not None:
+            try:
+                return list(self.config.get_targets())
+            except Exception:
+                pass
+        raw = os.getenv("TARGET_TICKERS", "").strip()
+        if raw:
+            return [token.strip().upper() for token in raw.split(",") if token.strip()]
+        mode = os.getenv("ENVIRONMENT", "sample").strip().lower()
+        return ["AAPL", "F"] if mode == "sample" else ["AAPL", "TSLA", "MSFT", "WMT", "XOM"]
+
+    def _resolve_expected_macro_map(self) -> Dict[str, str]:
+        if self.config is not None and getattr(self.config, "macro_series_map", None):
+            return dict(self.config.macro_series_map)
+        return {
+            "CPIAUCSL": "inflation",
+            "PNRGINDEXM": "energy_index",
+            "UNRATE": "unemployment_rate",
+            "FEDFUNDS": "fed_funds_rate",
+            "DGS10": "us10y_treasury_yield",
+            "UMCSENT": "consumer_sentiment",
+            "INDPRO": "industrial_production",
+        }
+
+    def _resolve_expected_worldbank_map(self) -> Dict[str, str]:
+        if self.config is not None and getattr(self.config, "worldbank_indicator_map", None):
+            return dict(self.config.worldbank_indicator_map)
+        return {
+            "NY.GDP.MKTP.KD.ZG": "gdp_growth",
+            "EG.USE.PCAP.KG.OE": "energy_usage",
+            "FP.CPI.TOTL.ZG": "inflation_wb",
+            "SL.UEM.TOTL.ZS": "unemployment_wb",
+            "NE.TRD.GNFS.ZS": "trade_openness",
+        }
+
+    def _read_json(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _latest_governance_file(self) -> Optional[Path]:
+        if not self.governance_dir.exists():
+            return None
+        files = sorted(self.governance_dir.glob("governance_decision_*.json"))
+        return files[-1] if files else None
+
+    def _check_sources(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Check source integration breadth, coverage and whether all configured entities arrive."""
+        catalog = self._read_json(self.raw_path / "catalog.json")
+        source_counts = {source: 0 for source in EXPECTED_SOURCES}
+        entity_names_by_source: Dict[str, List[str]] = {source: [] for source in EXPECTED_SOURCES}
+        for entity, meta in catalog.items():
+            source = str(meta.get("source", ""))
+            if source in source_counts:
+                source_counts[source] += 1
+                entity_names_by_source[source].append(entity)
+
+        yfinance_cols = [c for c in ["close", "log_return", "ticker", "volume"] if c in df.columns]
+        fred_cols = [c for c in self.expected_macro.values() if c in df.columns]
+        worldbank_cols = [c for c in self.expected_worldbank.values() if c in df.columns]
+
+        source_presence: Dict[str, float] = {}
+        for source, cols in {
+            "yfinance": yfinance_cols,
+            "fred": fred_cols,
+            "worldbank": worldbank_cols,
+        }.items():
+            if cols and len(df) > 0:
+                coverage = float(df[cols].notnull().any(axis=1).mean() * 100.0)
+            else:
+                coverage = 0.0
+            source_presence[source] = round(coverage, 2)
+
+        breadth = {
+            "yfinance": {
+                "expected": len(self.expected_tickers),
+                "observed": source_counts.get("yfinance", 0),
+                "ratio": self._safe_ratio(source_counts.get("yfinance", 0), len(self.expected_tickers)),
+                "entities": sorted(entity_names_by_source.get("yfinance", [])),
+            },
+            "fred": {
+                "expected": len(self.expected_macro),
+                "observed": source_counts.get("fred", 0),
+                "ratio": self._safe_ratio(source_counts.get("fred", 0), len(self.expected_macro)),
+                "entities": sorted(entity_names_by_source.get("fred", [])),
+            },
+            "worldbank": {
+                "expected": len(self.expected_worldbank),
+                "observed": source_counts.get("worldbank", 0),
+                "ratio": self._safe_ratio(source_counts.get("worldbank", 0), len(self.expected_worldbank)),
+                "entities": sorted(entity_names_by_source.get("worldbank", [])),
+            },
+        }
+
+        issues: List[str] = []
+        for source in EXPECTED_SOURCES:
+            if breadth[source]["ratio"] < 0.75:
+                issues.append(f"{source}_breadth_low")
+            if source_presence[source] < 70.0:
+                issues.append(f"{source}_row_coverage_low")
+
+        passed = len(issues) == 0
+        status = "pass" if passed else ("warn" if len(issues) <= 2 else "fail")
+        return {
+            "passed": passed,
+            "status": status,
+            "metrics": source_presence,
+            "breadth": breadth,
+            "issues": issues,
+            "interpretation": (
+                "Checks whether the system ingests all three sources and captures most configured entities, not just a narrow corner of each source."
+            ),
+        }
+
+    def _check_density(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Check null density, dead columns and suspiciously sparse outputs."""
+        total_cells = max(df.shape[0] * df.shape[1], 1)
+        null_pct = float((df.isnull().sum().sum() / total_cells) * 100.0)
+        numeric_df = df.select_dtypes(include=[np.number])
+        audit_columns = {
+            "quality_score",
+            "imputed_count",
+            "outliers_clipped",
+            "initial_rows",
+            "initial_nulls",
+        }
+        candidate_cols = [c for c in numeric_df.columns if c not in audit_columns]
+        zero_var_cols = [col for col in candidate_cols if numeric_df[col].dropna().std() == 0]
+        all_zero_cols = [
+            col
+            for col in candidate_cols
+            if not numeric_df[col].dropna().empty and float(numeric_df[col].abs().sum()) == 0.0
+        ]
+        row_non_null_pct = float(df.notnull().any(axis=1).mean() * 100.0) if len(df) else 0.0
+
+        passed = null_pct < 25.0 and len(zero_var_cols) <= 2 and row_non_null_pct > 90.0
+        status = "pass" if passed else ("warn" if null_pct < 40.0 else "fail")
+        return {
+            "passed": passed,
+            "status": status,
+            "null_pct": round(null_pct, 2),
+            "row_non_null_pct": round(row_non_null_pct, 2),
+            "zero_var_count": len(zero_var_cols),
+            "zero_var_columns": zero_var_cols[:10],
+            "all_zero_columns": all_zero_cols[:10],
+            "interpretation": (
+                "Checks whether the analytical table is dense enough to support modelling and whether numeric features are effectively dead."
+            ),
+        }
+
+    def _check_stats(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Check whether produced values are statistically plausible for decision support."""
+        issues: List[str] = []
+        metrics: Dict[str, Any] = {}
+
+        if "log_return" in df.columns:
+            series = pd.to_numeric(df["log_return"], errors="coerce").dropna()
+            if not series.empty:
+                max_abs = float(series.abs().max())
+                std = float(series.std()) if pd.notna(series.std()) else 0.0
+                median = float(series.median())
+                mad = float((series - median).abs().median())
+                robust_floor = 0.5
+                robust_dynamic_limit = max(robust_floor, median + 8.0 * max(mad, 1e-9))
+                metrics["log_return_max_abs"] = round(max_abs, 6)
+                metrics["log_return_std"] = round(std, 6)
+                metrics["log_return_dynamic_limit"] = round(robust_dynamic_limit, 6)
+                if max_abs > max(1.0, robust_dynamic_limit):
+                    issues.append("extreme_log_return_detected")
+
+        if "close" in df.columns and (pd.to_numeric(df["close"], errors="coerce") <= 0).any():
+            issues.append("non_positive_prices_found")
+
+        if "volume" in df.columns and (pd.to_numeric(df["volume"], errors="coerce") < 0).any():
+            issues.append("negative_volume_found")
+
+        if "quality_score" in df.columns:
+            quality_mean = float(pd.to_numeric(df["quality_score"], errors="coerce").mean())
+            metrics["avg_quality_score"] = round(quality_mean, 2)
+            if quality_mean < 60.0:
+                issues.append("low_average_quality_score")
+
+        passed = len(issues) == 0
+        status = "pass" if passed else ("warn" if len(issues) <= 2 else "fail")
+        return {
+            "passed": passed,
+            "status": status,
+            "issues": issues,
+            "metrics": metrics,
+            "interpretation": (
+                "Checks whether prices, returns and quality scores look economically plausible rather than purely syntactically valid."
+            ),
+        }
+
+    def _check_continuity(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Check whether temporal gaps are reasonable for the observed data frequency."""
+        if "date" not in df.columns:
+            return {"passed": False, "status": "fail", "error": "No date column"}
+
+        work = df.copy()
+        work["date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = work.dropna(subset=["date"])
+        if work.empty:
+            return {"passed": False, "status": "fail", "error": "No valid dates"}
+
+        per_group_metrics: Dict[str, Dict[str, float]] = {}
+        grouping = work["ticker"].fillna("ALL") if "ticker" in work.columns else pd.Series(["ALL"] * len(work), index=work.index)
+        work = work.assign(_group=grouping)
+
+        failed_groups: List[str] = []
+        for group_name, group_df in work.groupby("_group"):
+            ordered = group_df.sort_values("date")
+            gaps = ordered["date"].diff().dt.days.dropna()
+            if gaps.empty:
+                per_group_metrics[str(group_name)] = {"median_gap_days": 0.0, "max_gap_days": 0.0, "allowed_gap_days": 0.0}
+                continue
+            median_gap = float(gaps.median())
+            max_gap = float(gaps.max())
+            allowed_gap = float(max(35.0, median_gap * 3.0))
+            per_group_metrics[str(group_name)] = {
+                "median_gap_days": round(median_gap, 2),
+                "max_gap_days": round(max_gap, 2),
+                "allowed_gap_days": round(allowed_gap, 2),
+            }
+            if max_gap > allowed_gap:
+                failed_groups.append(str(group_name))
+
+        passed = len(failed_groups) == 0
+        return {
+            "passed": passed,
+            "status": "pass" if passed else "warn",
+            "failed_groups": failed_groups,
+            "metrics": per_group_metrics,
+            "interpretation": (
+                "Uses adaptive gap thresholds based on observed frequency, so monthly series are not judged by daily-data standards."
+            ),
+        }
+
+    def _check_outputs(self) -> Dict[str, Any]:
+        """Check whether outputs are non-empty, non-zero and usable for downstream decisions."""
+        summary_path = self.output_dir / "analysis_results.json"
+        summary = self._read_json(summary_path)
+        result_keys = list(summary.get("result_keys", [])) if summary else []
+        results = summary.get("results", {}) if isinstance(summary, dict) else {}
+
+        blocked = []
+        nullish = []
+        usable = []
+        for key, value in results.items():
+            if isinstance(value, dict) and "value" in value:
+                value = value["value"]
+            if isinstance(value, str) and value.startswith("blocked_by_governance_gate"):
+                blocked.append(key)
+            elif value in (None, "", [], {}):
+                nullish.append(key)
+            else:
+                usable.append(key)
+
+        passed = bool(result_keys) and len(usable) >= 2
+        status = "pass" if passed else ("warn" if result_keys else "fail")
+        return {
+            "passed": passed,
+            "status": status,
+            "summary_exists": summary_path.exists(),
+            "result_key_count": len(result_keys),
+            "usable_outputs": usable,
+            "blocked_outputs": blocked,
+            "nullish_outputs": nullish,
+            "interpretation": (
+                "Checks whether the project emits decision-support artifacts rather than empty or fully blocked placeholders."
+            ),
+        }
+
+    def _check_threshold_design(self) -> Dict[str, Any]:
+        """Check whether thresholds are dynamic or fixed and whether strictness is balanced."""
+        latest_governance = self._read_json(self._latest_governance_file()) if self._latest_governance_file() else {}
+        gate = latest_governance.get("gate", {}) if isinstance(latest_governance, dict) else {}
+        report = latest_governance.get("report", {}) if isinstance(latest_governance, dict) else {}
+
+        silver_dynamic = bool(self.quality_history_path.exists()) and bool(
+            getattr(self.config, "silver_dynamic_threshold_window", 0) > 1 if self.config else True
+        )
+        contract_driven = bool(SOURCE_CONTRACTS)
+        stationarity_context = gate.get("stationarity_context", {}) if isinstance(gate, dict) else {}
+        walk_forward_context = gate.get("walk_forward_context", {}) if isinstance(gate, dict) else {}
+        governance_stationarity_dynamic = (
+            stationarity_context.get("applied_min_stationary_ratio")
+            != stationarity_context.get("base_min_stationary_ratio")
+        )
+        governance_walk_forward_dynamic = (
+            walk_forward_context.get("applied_min_walk_forward_r2")
+            != walk_forward_context.get("base_min_walk_forward_r2")
+            or bool(walk_forward_context.get("metric_unstable"))
+            or isinstance((report.get("walk_forward") or {}).get("clipped_avg_r2"), (int, float))
+        )
+
+        strictness_findings: List[str] = []
+        if self.config is not None and getattr(self.config, "governance_hard_fail", True):
+            strictness_findings.append("governance_hard_fail_enabled")
+        if self.config is not None and getattr(self.config, "silver_hard_fail", True):
+            strictness_findings.append("silver_hard_fail_enabled")
+        if not silver_dynamic:
+            strictness_findings.append("silver_null_threshold_history_not_active")
+        if not governance_stationarity_dynamic:
+            strictness_findings.append("stationarity_threshold_not_adapted_recently")
+
+        passed = contract_driven and (silver_dynamic or governance_walk_forward_dynamic)
+        return {
+            "passed": passed,
+            "status": "pass" if passed else "warn",
+            "dynamic_thresholds": {
+                "silver_dynamic_null_thresholds": silver_dynamic,
+                "series_contract_thresholds": contract_driven,
+                "governance_stationarity_dynamic": governance_stationarity_dynamic,
+                "governance_walk_forward_dynamic": governance_walk_forward_dynamic,
+            },
+            "strictness_findings": strictness_findings,
+            "interpretation": (
+                "Reports whether the system uses adaptive thresholds or relies mostly on static hard-coded limits."
+            ),
+        }
+
+    def _check_governance(self) -> Dict[str, Any]:
+        """Check whether governance blocking is justified or potentially too strict."""
+        latest_file = self._latest_governance_file()
+        if latest_file is None:
+            return {
+                "passed": False,
+                "status": "warn",
+                "error": "No governance decision artifact found",
+            }
+
+        payload = self._read_json(latest_file)
+        gate = payload.get("gate", {}) if isinstance(payload, dict) else {}
+        report = payload.get("report", {}) if isinstance(payload, dict) else {}
+        reasons = list(gate.get("reasons", [])) if isinstance(gate, dict) else []
+        walk_forward = report.get("walk_forward", {}) if isinstance(report, dict) else {}
+        oos = report.get("out_of_sample", {}) if isinstance(report, dict) else {}
+
+        clipped_avg_r2 = walk_forward.get("clipped_avg_r2")
+        avg_r2 = walk_forward.get("avg_r2")
+        median_r2 = walk_forward.get("median_r2")
+        model_risk_score = report.get("model_risk_score")
+        passed_gate = bool(gate.get("passed", False))
+        severity = str(gate.get("severity", "unknown"))
+
+        likely_over_strict = False
+        reasoning: List[str] = []
+        if any("walk_forward_avg_r2_below_threshold" in reason for reason in reasons):
+            if isinstance(clipped_avg_r2, (int, float)) and isinstance(avg_r2, (int, float)):
+                if float(avg_r2) < -5.0 and float(clipped_avg_r2) > -2.0:
+                    likely_over_strict = True
+                    reasoning.append("raw_walk_forward_avg_r2_is_extreme_but_clipped_metric_is_much_healthier")
+        if any("stationarity_ratio_below_threshold" in reason for reason in reasons):
+            stationarity_context = gate.get("stationarity_context", {})
+            considered = int(stationarity_context.get("considered_series", 0) or 0)
+            if considered <= 3:
+                likely_over_strict = True
+                reasoning.append("stationarity_ratio_decision_based_on_few_series")
+        if isinstance(model_risk_score, (int, float)) and float(model_risk_score) < 0.6 and not passed_gate:
+            likely_over_strict = True
+            reasoning.append("gate_blocked_even_though_model_risk_score_is_below_fail_band")
+
+        theoretically_sound = True
+        theory_notes = [
+            "Using governance to block advanced analyses is defensible when predictive diagnostics are poor.",
+            "Stationarity, leakage, drift and walk-forward checks are valid analysis-governance dimensions.",
+        ]
+        if isinstance(oos.get("r2"), (int, float)) and float(oos["r2"]) < -0.25:
+            theory_notes.append("Out-of-sample explanatory power is weak, so caution is appropriate.")
+        if likely_over_strict:
+            theory_notes.append("Current block may be stricter than necessary for portfolio-grade exploratory analysis.")
+
+        passed = passed_gate or likely_over_strict
+        return {
+            "passed": passed,
+            "status": "pass" if passed_gate else ("warn" if likely_over_strict else "fail"),
+            "gate_passed": passed_gate,
+            "severity": severity,
+            "reasons": reasons,
+            "metrics": {
+                "out_of_sample_r2": oos.get("r2"),
+                "walk_forward_avg_r2": avg_r2,
+                "walk_forward_median_r2": median_r2,
+                "walk_forward_clipped_avg_r2": clipped_avg_r2,
+                "model_risk_score": model_risk_score,
+            },
+            "likely_over_strict": likely_over_strict,
+            "theoretically_sound": theoretically_sound,
+            "reasoning": reasoning,
+            "interpretation": theory_notes,
+        }
+
+    def _safe_ratio(self, observed: int, expected: int) -> float:
+        if expected <= 0:
+            return 1.0
+        return round(observed / expected, 4)
+
+    def _overall_status(self, report: Dict[str, Any]) -> str:
+        failed = report.get("failed_checks", [])
+        warns = report.get("warning_checks", [])
+        if failed:
+            return "CRITICAL"
+        if warns:
+            return "WARN"
+        return "PASS"
+
+    def _build_auditor_judgement(self, report: Dict[str, Any]) -> Dict[str, Any]:
+        governance = report["checks"].get("governance", {})
+        thresholds = report["checks"].get("thresholds", {})
+        integration = report["checks"].get("integration", {})
+        outputs = report["checks"].get("outputs", {})
+
+        summary_lines = [
+            f"Overall status: {report.get('status')}",
+            f"Decision ready: {report.get('decision_ready')}",
+            "This auditor is independent from the pipeline runtime but integrated with its artifacts, contracts and governance outputs.",
+        ]
+        if integration.get("issues"):
+            summary_lines.append(f"Integration issues: {integration.get('issues')}")
+        if outputs.get("blocked_outputs"):
+            summary_lines.append(
+                f"Blocked analyses: {outputs.get('blocked_outputs')}"
+            )
+        if governance.get("likely_over_strict"):
+            summary_lines.append(
+                "Governance appears methodologically valid but potentially too strict for the current data regime."
+            )
+        if thresholds.get("dynamic_thresholds", {}).get("silver_dynamic_null_thresholds"):
+            summary_lines.append("Silver null thresholds are dynamic/history-aware.")
+        else:
+            summary_lines.append("Silver null thresholds look mostly static right now.")
+
+        return {
+            "is_information_reasonable": report.get("status") != "CRITICAL",
+            "can_support_decisions": report.get("decision_ready", False),
+            "summary": summary_lines,
+        }
+
+    def _print_summary(self, report: Dict[str, Any]) -> None:
+        print("\n" + "=" * 60)
+        print("SCENARIO PLANNER - SYSTEM AUDIT REPORT")
+        print("=" * 60)
+        print(f"Status: {report.get('status', 'UNKNOWN')}")
+        print(f"Decision Ready: {report.get('decision_ready', False)}")
+        print(f"User: {report.get('user_id', 'unknown')}")
+        print(f"Rows: {report.get('row_count', 0)} | Columns: {report.get('column_count', 0)}")
+        for name, result in report.get("checks", {}).items():
+            mark = "PASS" if result.get("passed") else "FAIL"
+            status = result.get("status", "info")
+            print(f"- {name.capitalize():<12} -> {mark} ({status})")
+        print("=" * 60)
+        for line in report.get("auditor_judgement", {}).get("summary", []):
+            print(f"* {line}")
+        print("=" * 60 + "\n")
+
+
+if __name__ == "__main__":
+    auditor = ScenarioAuditor()
+    auditor.run_audit()

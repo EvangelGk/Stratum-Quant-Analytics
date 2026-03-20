@@ -1,17 +1,25 @@
 # Fetchers Messages
 # Messages for user guidance on data fetching operations
 
-FETCHER_START = "Starting data fetching process for {source}."
-"This may take a few minutes depending on the data volume."
+FETCHER_START = (
+    "Starting data fetching process for {source}. "
+    "This may take a few minutes depending on the data volume."
+)
 
-FETCHER_SUCCESS = "Successfully fetched data from {source}."
-"Retrieved {records} records. Data saved to raw directory."
+FETCHER_SUCCESS = (
+    "Successfully fetched data from {source}. "
+    "Retrieved {records} records. Data saved to raw directory."
+)
 
-FETCHER_CACHE_HIT = "Using cached data for {ticker} from {start_date} to {end_date}."
-"No new API call needed."
+FETCHER_CACHE_HIT = (
+    "Using cached data for {ticker} from {start_date} to {end_date}. "
+    "No new API call needed."
+)
 
-FETCHER_RETRY = "Retrying fetch for {ticker} due to temporary error."
-"Attempt {attempt}/{max_attempts}."
+FETCHER_RETRY = (
+    "Retrying fetch for {ticker} due to temporary error. "
+    "Attempt {attempt}/{max_attempts}."
+)
 
 FETCHER_RATE_LIMIT = (
     "Rate limit reached for {source}. Waiting {wait_time} seconds before retry."
@@ -30,8 +38,10 @@ FETCHER_DATA_VALIDATION = (
     "{total_records}."
 )
 
-FETCHER_COMPLETION = "Data fetching completed. Total files processed: {total_files}."
-"Success rate: {success_rate}%."
+FETCHER_COMPLETION = (
+    "Data fetching completed. Total files processed: {total_files}. "
+    "Success rate: {success_rate}%."
+)
 
 # User guidance messages
 FETCHER_USER_GUIDE = """

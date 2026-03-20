@@ -16,15 +16,16 @@ The Scenario Planner is a comprehensive financial data pipeline that implements 
    cd scenario-planner
 
    # Install dependencies
-   pip install -r requirements.txt
+   poetry install
 
-   # Create .env file with your API key
-   echo "FRED_API_KEY=your_api_key_here" > .env
+   # Create .env file with your API key and user namespace
+   cp .env.example .env
+   # then set FRED_API_KEY and DATA_USER_ID
    ```
 
 3. **Run**
    ```bash
-   python src/main.py
+   poetry run python src/main.py
    ```
 
 ## What Happens Automatically
@@ -64,10 +65,10 @@ The application will:
 - **Error Messages**: Specific guidance when issues occur
 
 ### Generated Files
-- `data/raw/`: Raw downloaded data files
-- `data/processed/`: Cleaned and transformed data
-- `data/gold/master_table.parquet`: Combined analytical dataset
-- `output/`: Analysis results and reports
+- `data/users/<user_id>/raw/`: Raw downloaded data files
+- `data/users/<user_id>/processed/`: Cleaned and transformed data
+- `data/users/<user_id>/gold/master_table.parquet`: Combined analytical dataset
+- `output/<user_id>/`: Analysis results and reports
 - `logs/`: Detailed operation logs and metrics
 
 ## Analysis Explanations
@@ -204,7 +205,7 @@ Edit `src/Fetchers/ProjectConfig.py` for:
 
 ### Governance Decision Artifacts
 - Each pipeline run exports a versioned governance decision artifact under
-   `data/gold/governance/`.
+   `data/users/<user_id>/gold/governance/`.
 - Artifacts include run context (`run_id`, `correlation_id`), gate decision,
    severity band, and full governance report payload.
 

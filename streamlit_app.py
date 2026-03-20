@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from dotenv import load_dotenv
 
 
 def _import_first(*module_names: str) -> Any:
@@ -90,13 +91,26 @@ else:
 
 
 ROOT = Path(__file__).resolve().parent
-OUTPUT_DIR = ROOT / "output"
-RAW_DIR = ROOT / "data" / "raw"
-PROCESSED_DIR = ROOT / "data" / "processed"
-GOLD_DIR = ROOT / "data" / "gold"
+load_dotenv(ROOT / ".env")
+
+# Ensure src/ is on sys.path so logger.Messages.* imports work when
+# Streamlit is launched from the project root (sys.path does not include src/).
+_src_path = str(ROOT / "src")
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
+_UI_USER_ID = os.getenv("DATA_USER_ID", "default").strip() or "default"
+_SAFE_UI_USER = "".join(
+    ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in _UI_USER_ID
+) or "default"
+OUTPUT_DIR = ROOT / "output" / _SAFE_UI_USER
+USER_DATA_DIR = ROOT / "data" / "users" / _SAFE_UI_USER
+RAW_DIR = USER_DATA_DIR / "raw"
+PROCESSED_DIR = USER_DATA_DIR / "processed"
+GOLD_DIR = USER_DATA_DIR / "gold"
 LOGS_DIR = ROOT / "logs"
 UI_SNAPSHOT_PATH = LOGS_DIR / "ui_run_snapshots.json"
 UI_SCHEDULE_PATH = LOGS_DIR / "ui_schedule.json"
+AUDIT_REPORT_PATH = OUTPUT_DIR / "audit_report.json"
 
 ROLE_PERMISSIONS = {
     "Viewer": {
@@ -139,7 +153,7 @@ LAYER_HELP = {
             "Missing values filled / estimated",
             "Outliers detected and handled (Winsorisation)",
             "Schema validated — consistent column types",
-            "Quality report saved to data/processed/quality_report.json",
+            "Quality report saved to data/users/<user_id>/processed/quality/quality_report.json",
         ],
         "note": "Use this layer when you need clean, trustworthy data.",
     },
@@ -240,32 +254,26 @@ PIPELINE_STAGES = [
     ),
     (
         "Export results",
-        "Saves analysis files to output/, governance decisions to data/gold/governance/.",
+        "Saves analysis files to output/<user_id>/ and governance decisions to data/users/<user_id>/gold/governance/.",
     ),
 ]
 
 
-def _import_first(*module_names: str) -> Any:
-    """Try importing multiple module names, return first successful import."""
-    for module_name in module_names:
-        try:
-            return importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            continue
-        except Exception as e:
-            raise LoggerModuleError(f"Failed to import {module_name}: {e}") from e
-    return None
-
-
 _directions_mod = _import_first(
-    "src.logger.Messages.DirectionsMess", "logger.Messages.DirectionsMess"
+    "logger.Messages.DirectionsMess",
+    "src.logger.Messages.DirectionsMess",
 )
-_main_mod = _import_first("src.logger.Messages.MainMess", "logger.Messages.MainMess")
+_main_mod = _import_first(
+    "logger.Messages.MainMess",
+    "src.logger.Messages.MainMess",
+)
 _medallion_mod = _import_first(
-    "src.logger.Messages.MedallionMess", "logger.Messages.MedallionMess"
+    "logger.Messages.MedallionMess",
+    "src.logger.Messages.MedallionMess",
 )
 _fetchers_mod = _import_first(
-    "src.logger.Messages.FetchersMess", "logger.Messages.FetchersMess"
+    "logger.Messages.FetchersMess",
+    "src.logger.Messages.FetchersMess",
 )
 
 
@@ -874,6 +882,90 @@ def _build_executive_report_html() -> str:
         raise ReportGenerationError(f"Failed to generate HTML report: {e}") from e
 
 
+def _show_pipeline_failure(raw_output: str) -> None:
+    """Render a human-readable failure breakdown after a pipeline error."""
+    st.error("Pipeline did not complete. Here is what happened:")
+
+    # Try to read quality report for per-entity breakdown
+    q_report: dict[str, Any] = {}
+    try:
+        q_report = read_json(PROCESSED_DIR / "quality" / "quality_report.json")
+    except (JSONParseError, DataFileReadError):
+        q_report = {}
+
+    files_info = q_report.get("files", {}) if isinstance(q_report, dict) else {}
+    summary_info = q_report.get("summary", {}) if isinstance(q_report, dict) else {}
+    failed_entities = [
+        (name, meta)
+        for name, meta in files_info.items()
+        if isinstance(meta, dict) and meta.get("status") == "failed"
+    ]
+    missing_src = (
+        summary_info.get("missing_sources", [])
+        if isinstance(summary_info, dict)
+        else []
+    )
+
+    if missing_src:
+        st.warning(
+            f"**No usable data from:** {', '.join(missing_src)}.  \n"
+            "All datasets from these sources were rejected by the quality checks."
+        )
+
+    if failed_entities:
+        st.markdown(f"**{len(failed_entities)} dataset(s) failed quality checks:**")
+        for name, meta in failed_entities:
+            err = meta.get("error", "unknown error")
+            src = meta.get("source", "?")
+            # Translate technical error into plain language
+            if "Schema validation failed" in err:
+                plain = "Values outside the expected range for this data type."
+            elif "numpy string" in err or "string dtypes" in err:
+                plain = "Internal data format issue (string type incompatibility)."
+            elif "hard stop" in err or "empty" in err.lower():
+                plain = "Dataset was empty or too small to process."
+            elif "Missing columns" in err or "Schema drift" in err:
+                plain = "Dataset is missing required columns (source API changed?)."
+            elif "null" in err.lower() or "missing" in err.lower():
+                plain = "Too many missing values in the dataset."
+            else:
+                plain = err[:120]
+            st.markdown(f"- **{name}** ({src}): {plain}")
+    elif not files_info:
+        # No quality report — pipeline likely crashed before Silver ran
+        st.info(
+            "Quality report not found. The pipeline may have failed during "
+            "data fetching (Bronze layer). Check your API keys and internet connection."
+        )
+
+    # Dead-letter quick peek
+    dl_path = PROCESSED_DIR / "quality" / "dead_letter.jsonl"
+    if dl_path.exists():
+        try:
+            lines = dl_path.read_text(encoding="utf-8").strip().splitlines()
+            if lines:
+                last = json.loads(lines[-1])
+                st.caption(
+                    f"Last dead-letter entry: **{last.get('entity')}** — "
+                    f"{last.get('error_type')}: {str(last.get('error_message',''))[:100]}"
+                )
+        except Exception:
+            pass
+
+    # Suggestions
+    st.markdown("**What to try:**")
+    st.markdown(
+        "1. Check that `FRED_API_KEY` is set correctly in your `.env` file.\n"
+        "2. Confirm you have internet access (Yahoo Finance, World Bank APIs).\n"
+        "3. Open the **Data** tab → *processed* layer → `quality/quality_report.json` "
+        "for the full per-dataset breakdown.\n"
+        "4. Check the **Logs** tab for the session summary."
+    )
+
+    with st.expander("Raw pipeline output (technical details)", expanded=False):
+        st.text(raw_output[-4000:] if len(raw_output) > 4000 else raw_output)
+
+
 def run_pipeline(
     mode: str = "sample",
     progress_bar: Any = None,
@@ -1062,7 +1154,7 @@ def show_data_tab() -> None:
 
     st.metric("Data Shape", f"{len(df)} rows × {len(df.columns)} columns")
     st.markdown("**Preview (first 200 rows):**")
-    st.dataframe(df.head(200), use_container_width=True)
+    st.dataframe(df.head(200), width="stretch")
 
 
 def show_analytics_tab() -> None:
@@ -1102,7 +1194,7 @@ def show_analytics_tab() -> None:
             fig.update_layout(height=640)
             prog.progress(100, text="Done!")
             prog.empty()
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     else:
         st.warning("Correlation matrix not found. Run the pipeline first.")
 
@@ -1138,7 +1230,8 @@ def show_analytics_tab() -> None:
                     with col_act:
                         st.markdown("&nbsp;")
                         if st.button("Preview", key=f"prev_{analysis_name}"):
-                            st.json(read_json(full_path))
+                            st.session_state["selected_preview_file"] = str(full_path)
+                            st.session_state["selected_preview_name"] = analysis_name
                         with open(
                             full_path, "r", encoding="utf-8", errors="ignore"
                         ) as f:
@@ -1148,6 +1241,12 @@ def show_analytics_tab() -> None:
                                 file_name=full_path.name,
                                 key=f"dl_{analysis_name}",
                             )
+                    if (
+                        st.session_state.get("selected_preview_file")
+                        == str(full_path)
+                    ):
+                        st.markdown("#### Preview")
+                        st.json(read_json(full_path))
                 else:
                     st.warning("File not found — run pipeline first.")
 
@@ -1327,7 +1426,7 @@ def show_output_tab() -> None:
                     else:
                         try:
                             df = pd.read_csv(file_path)
-                            st.dataframe(df.head(100), use_container_width=True)
+                            st.dataframe(df.head(100), width="stretch")
                         except:
                             st.info("Could not parse CSV")
         with col4:
@@ -1450,6 +1549,254 @@ def show_explainability_tab() -> None:
         st.markdown(f"- {line}")
 
 
+# ---------------------------------------------------------------------------
+# Auditor helpers
+# ---------------------------------------------------------------------------
+
+def _load_audit_class() -> Any:
+    """Dynamically load ScenarioAuditor from Auditor.py at project root."""
+    try:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("Auditor", ROOT / "Auditor.py")
+        if spec is None or spec.loader is None:
+            return None
+        _mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_mod)
+        return getattr(_mod, "ScenarioAuditor", None)
+    except Exception:
+        return None
+
+
+def _run_and_cache_audit() -> dict[str, Any]:
+    """Run ScenarioAuditor, cache in session_state, persist to disk."""
+    AuditorClass = _load_audit_class()
+    if AuditorClass is None:
+        result: dict[str, Any] = {"status": "ERROR", "error": "Auditor module could not be loaded."}
+    else:
+        try:
+            auditor = AuditorClass(user_id=_UI_USER_ID)
+            result = auditor.run_audit()
+        except Exception as exc:
+            result = {"status": "ERROR", "error": str(exc)}
+    st.session_state["audit_report"] = result
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        AUDIT_REPORT_PATH.write_text(
+            json.dumps(result, indent=2, default=str), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return result
+
+
+def _get_audit_report() -> dict[str, Any]:
+    """Return cached audit report: session_state -> disk -> empty dict."""
+    if "audit_report" in st.session_state:
+        return st.session_state["audit_report"]
+    try:
+        report = read_json(AUDIT_REPORT_PATH)
+        if report:
+            st.session_state["audit_report"] = report
+            return report
+    except (JSONParseError, DataFileReadError):
+        pass
+    return {}
+
+
+def show_auditor_tab() -> None:
+    st.subheader("System Auditor")
+    st.caption(
+        "Independent audit judge: checks source coverage, data density, statistics, "
+        "temporal continuity, output quality, threshold design and governance validity. "
+        "Runs automatically after every pipeline — or press Re-run Audit at any time."
+    )
+
+    col_btn_area, col_status_area = st.columns([1, 4])
+    with col_btn_area:
+        if st.button("Re-run Audit", key="manual_audit_run"):
+            with st.spinner("Running audit..."):
+                _run_and_cache_audit()
+            st.rerun()
+
+    report = _get_audit_report()
+
+    if not report:
+        with col_status_area:
+            st.info(
+                "No audit report found yet. Run the pipeline first — the audit runs "
+                "automatically after each run, or press **Re-run Audit** above."
+            )
+        return
+
+    status = report.get("status", "UNKNOWN")
+    with col_status_area:
+        if status == "PASS":
+            st.success(f"**Audit Status: {status}** — All checks passed.")
+        elif status == "WARN":
+            st.warning(f"**Audit Status: {status}** — Some items need attention.")
+        elif status == "CRITICAL":
+            st.error(f"**Audit Status: {status}** — Critical issues found.")
+        elif status == "ERROR":
+            st.error(f"**Audit Error:** {report.get('error', 'unknown')}")
+        else:
+            st.info(f"**Audit Status: {status}**")
+
+    row_count = report.get("row_count", 0)
+    col_count = report.get("column_count", 0)
+    decision_ready = report.get("decision_ready", False)
+    num_failed = len(report.get("failed_checks", []))
+    num_warn = len(report.get("warning_checks", []))
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Gold Rows", row_count)
+    k2.metric("Gold Columns", col_count)
+    k3.metric("Decision Ready", "Yes" if decision_ready else "No")
+    k4.metric("Failed Checks", num_failed)
+    k5.metric("Warning Checks", num_warn)
+
+    judgement = report.get("auditor_judgement", {})
+    if judgement:
+        st.markdown("---")
+        with st.expander("Auditor Judgement", expanded=True):
+            jc1, jc2 = st.columns(2)
+            jc1.metric(
+                "Information Reasonable",
+                "Yes" if judgement.get("is_information_reasonable") else "No",
+            )
+            jc2.metric(
+                "Can Support Decisions",
+                "Yes" if judgement.get("can_support_decisions") else "No",
+            )
+            for line in judgement.get("summary", []):
+                st.markdown(f"- {line}")
+
+    st.markdown("---")
+    st.markdown("### Check Results")
+
+    _CHECK_ICONS: dict[str, str] = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
+    _CHECK_LABELS: dict[str, str] = {
+        "integration": "Source Integration",
+        "density": "Data Density",
+        "statistics": "Statistical Plausibility",
+        "continuity": "Temporal Continuity",
+        "outputs": "Output Quality",
+        "thresholds": "Threshold Design",
+        "governance": "Governance Validity",
+    }
+
+    for check_name, check_result in report.get("checks", {}).items():
+        label = _CHECK_LABELS.get(check_name, check_name.capitalize())
+        status_code = check_result.get("status", "fail")
+        icon = _CHECK_ICONS.get(status_code, "ℹ️")
+        passed = check_result.get("passed", False)
+
+        with st.expander(f"{icon} {label}", expanded=not passed):
+            interp = check_result.get("interpretation")
+            if isinstance(interp, str) and interp:
+                st.caption(interp)
+
+            issues = check_result.get("issues", [])
+            if issues:
+                st.markdown("**Issues:**")
+                for issue in issues:
+                    st.markdown(f"- `{issue}`")
+
+            if check_name == "integration":
+                source_metrics = check_result.get("metrics", {})
+                breadth = check_result.get("breadth", {})
+                if breadth:
+                    _b_rows = [
+                        {
+                            "Source": src,
+                            "Expected": v.get("expected", 0),
+                            "Observed": v.get("observed", 0),
+                            "Ratio": f"{v.get('ratio', 0.0):.0%}",
+                            "Row Coverage": f"{source_metrics.get(src, 0.0):.1f}%",
+                        }
+                        for src, v in breadth.items()
+                    ]
+                    st.dataframe(pd.DataFrame(_b_rows), width="stretch")
+
+            elif check_name == "density":
+                dc1, dc2, dc3 = st.columns(3)
+                dc1.metric("Null %", f"{check_result.get('null_pct', 0.0):.1f}%")
+                dc2.metric("Row non-null %", f"{check_result.get('row_non_null_pct', 0.0):.1f}%")
+                dc3.metric("Zero-variance cols", check_result.get("zero_var_count", 0))
+                _zv = check_result.get("zero_var_columns", [])
+                if _zv:
+                    st.caption(f"Zero-variance: {', '.join(_zv)}")
+
+            elif check_name == "statistics":
+                _sm = check_result.get("metrics", {})
+                if _sm:
+                    _sm_cols = st.columns(min(len(_sm), 3))
+                    for _si, (_sk, _sv) in enumerate(list(_sm.items())[:6]):
+                        _sm_cols[_si % len(_sm_cols)].metric(
+                            _sk, f"{_sv:.4f}" if isinstance(_sv, float) else str(_sv)
+                        )
+
+            elif check_name == "continuity":
+                _failed_groups = check_result.get("failed_groups", [])
+                if _failed_groups:
+                    st.warning(f"Groups with large temporal gaps: {', '.join(_failed_groups)}")
+                _group_m = check_result.get("metrics", {})
+                if _group_m:
+                    _cont_rows = [
+                        {
+                            "Ticker/Group": g,
+                            "Median gap (d)": v.get("median_gap_days", 0),
+                            "Max gap (d)": v.get("max_gap_days", 0),
+                            "Allowed gap (d)": v.get("allowed_gap_days", 0),
+                        }
+                        for g, v in list(_group_m.items())[:20]
+                    ]
+                    st.dataframe(pd.DataFrame(_cont_rows), width="stretch")
+
+            elif check_name == "outputs":
+                oc1, oc2, oc3 = st.columns(3)
+                oc1.metric("Usable", len(check_result.get("usable_outputs", [])))
+                oc2.metric("Blocked", len(check_result.get("blocked_outputs", [])))
+                oc3.metric("Empty", len(check_result.get("nullish_outputs", [])))
+                _usable = check_result.get("usable_outputs", [])
+                _blocked = check_result.get("blocked_outputs", [])
+                if _usable:
+                    st.markdown(f"**Usable:** {', '.join(_usable)}")
+                if _blocked:
+                    st.markdown(f"**Blocked:** {', '.join(_blocked)}")
+
+            elif check_name == "thresholds":
+                _dyn = check_result.get("dynamic_thresholds", {})
+                if _dyn:
+                    for _dk, _dv in _dyn.items():
+                        _t_icon = "✅" if _dv else "⬜"
+                        st.markdown(f"- {_t_icon} `{_dk}`")
+                _strictness = check_result.get("strictness_findings", [])
+                if _strictness:
+                    st.markdown("**Strictness findings:**")
+                    for _sf in _strictness:
+                        st.markdown(f"- `{_sf}`")
+
+            elif check_name == "governance":
+                _gm = check_result.get("metrics", {})
+                if _gm:
+                    _gm_cols = st.columns(min(len(_gm), 3))
+                    for _gi, (_gk, _gv) in enumerate(list(_gm.items())[:6]):
+                        _gdisp = f"{_gv:.4f}" if isinstance(_gv, float) else str(_gv)
+                        _gm_cols[_gi % len(_gm_cols)].metric(_gk, _gdisp)
+                if check_result.get("likely_over_strict"):
+                    st.warning("Governance may be over-strict for the current data regime.")
+                _reasons = check_result.get("reasons", [])
+                if _reasons:
+                    st.markdown(f"**Block reasons:** {', '.join(_reasons)}")
+                _interp_notes = check_result.get("interpretation", [])
+                if isinstance(_interp_notes, list) and _interp_notes:
+                    for _note in _interp_notes:
+                        st.markdown(f"- {_note}")
+
+            with st.expander("Raw check data", expanded=False):
+                st.json(check_result)
+
+
 def show_reports_tab(role: str) -> None:
     st.subheader("Executive Reports (One-click Export)")
     html_report = _build_executive_report_html()
@@ -1489,7 +1836,7 @@ def show_ops_tab(role: str) -> None:
                     "status": "ok" if not h.get("error_metrics") else "has_errors",
                 }
             )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
     else:
         st.info("No run history yet.")
 
@@ -1587,7 +1934,7 @@ def main() -> None:
         with col1:
             if st.button(
                 "Quick Demo\n(2-3 min)",
-                use_container_width=True,
+                width="stretch",
                 type="secondary",
                 disabled=not perms["can_run"],
             ):
@@ -1598,16 +1945,16 @@ def main() -> None:
                 if ok:
                     _record_ui_snapshot()
                     st.success("✓ Demo completed successfully!")
-                    st.info("📁 Check the **Output** tab to view generated files")
+                    with st.spinner("Running system audit..."):
+                        _run_and_cache_audit()
+                    st.info("📁 Check **Output** and **Auditor** tabs for results.")
                 else:
-                    st.error("✗ Demo failed!")
-                    with st.expander("View Error Details"):
-                        st.text(output)
+                    _show_pipeline_failure(output)
 
         with col2:
             if st.button(
                 "Full Analysis\n(5-10 min)",
-                use_container_width=True,
+                width="stretch",
                 type="primary",
                 disabled=not perms["can_run"],
             ):
@@ -1618,11 +1965,11 @@ def main() -> None:
                 if ok:
                     _record_ui_snapshot()
                     st.success("✓ Analysis completed successfully!")
-                    st.info("📁 Check the **Output** tab to view generated files")
+                    with st.spinner("Running system audit..."):
+                        _run_and_cache_audit()
+                    st.info("📁 Check **Output** and **Auditor** tabs for results.")
                 else:
-                    st.error("✗ Analysis failed!")
-                    with st.expander("View Error Details"):
-                        st.text(output)
+                    _show_pipeline_failure(output)
 
         st.markdown("---")
         st.info(
@@ -1635,54 +1982,49 @@ def main() -> None:
 
     show_kpis()
 
-    (
-        tab_health,
-        tab_diff,
-        tab_scenario,
-        tab_explain,
-        tab_reports,
-        tab_ops,
-        tab_data,
-        tab_analytics,
-        tab_output,
-        tab_gov,
-        tab_logs,
-    ) = st.tabs(
-        [
-            "Health & Alerts",
-            "Run Comparison",
-            "Scenario Builder",
-            "Explainability",
-            "Reports",
-            "Ops",
-            "Data",
-            "Analytics",
-            "Output",
-            "Governance",
-            "Logs",
-        ]
+    pages = [
+        "Health & Alerts",
+        "Auditor",
+        "Run Comparison",
+        "Scenario Builder",
+        "Explainability",
+        "Reports",
+        "Ops",
+        "Data",
+        "Analytics",
+        "Output",
+        "Governance",
+        "Logs",
+    ]
+    selected_page = st.segmented_control(
+        "View",
+        options=pages,
+        default="Health & Alerts",
     )
-    with tab_health:
+
+    if selected_page == "Health & Alerts":
         show_health_alerts_tab()
-    with tab_diff:
+    elif selected_page == "Auditor":
+        show_auditor_tab()
+    elif selected_page == "Run Comparison":
         show_run_comparison_tab()
-    with tab_scenario:
+    elif selected_page == "Scenario Builder":
         show_scenario_builder_tab()
-    with tab_explain:
+    elif selected_page == "Explainability":
         show_explainability_tab()
-    with tab_reports:
+    elif selected_page == "Reports":
         show_reports_tab(role)
-    with tab_ops:
+    elif selected_page == "Ops":
         show_ops_tab(role)
-    with tab_data:
+    elif selected_page == "Data":
         show_data_tab()
-    with tab_analytics:
+    elif selected_page == "Analytics":
         show_analytics_tab()
-    with tab_output:
+    elif selected_page == "Output":
         show_output_tab()
-    with tab_gov:
+    elif selected_page == "Governance":
         show_governance_tab()
-    with tab_logs:
+    elif selected_page == "Logs":
         show_logs_tab()
 
 

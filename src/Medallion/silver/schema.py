@@ -52,7 +52,10 @@ macro_schema = DataFrameSchema(
         "date": Column(pa.DateTime, nullable=False),
         "value": Column(
             float,
-            [Check.in_range(-20, 100, error="Value must be between -20 and 100")],
+            # No hard numeric range — FRED series span percentages (-10% to 30%),
+            # CPI / energy price indices (100–350+), and employment rates (0–100).
+            # A fixed range would incorrectly reject valid absolute-index series.
+            nullable=True,
         ),
         "source_system": Column(str, Check.isin(["fred"])),
     },

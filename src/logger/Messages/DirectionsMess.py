@@ -11,8 +11,7 @@ A comprehensive financial data pipeline for scenario planning and risk analysis.
 # Live Guidance Messages - Appear in real-time during execution
 
 LIVE_STEP_0_WELCOME = """
->>> WELCOME TO SCENARIO PLANNER!
-===============================
+WELCOME TO SCENARIO PLANNER!
 This application will automatically:
 * Fetch financial data from multiple sources
 * Process and clean the data
@@ -74,7 +73,7 @@ Total data retrieved:
 * {total_records} total records
 * From {sources_count} different sources
 
-All data saved to data/raw/ directory.
+All data saved to data/users/<user_id>/raw/ directory.
 """
 
 LIVE_STEP_4_BRONZE_PROCESSING = """
@@ -154,9 +153,9 @@ EXECUTION SUMMARY:
 [OUTPUT LOCATIONS]
 ===================
 * Raw data: data/raw/
-* Processed data: data/processed/
-* Analytical results: data/gold/
-* Reports: output/
+* Processed data: data/users/<user_id>/processed/
+* Analytical results: data/users/<user_id>/gold/
+* Reports: output/<user_id>/
 * Logs: logs/
 
 [WHAT TO DO NEXT]
@@ -212,7 +211,7 @@ LIVE_ERROR_DATA_QUALITY = """
 Issues found in downloaded data.
 
 ACTIONS:
-* Check data/raw/ for corrupted files
+* Check data/users/<user_id>/raw/ for corrupted files
 * Verify API keys are correct
 * Some data sources may be temporarily unavailable
 * Review logs/ for specific error details
@@ -241,10 +240,10 @@ LIVE_USER_PROMPT_CONFIG = """
 Would you like to modify configuration? (y/n):
 
 OUTPUT DIRECTORIES:
-- data/raw/: Raw downloaded data
-- data/processed/: Cleaned and transformed data
-- data/gold/: Analytical master table
-- output/: Analysis results and reports
+- data/users/<user_id>/raw/: Raw downloaded data
+- data/users/<user_id>/processed/: Cleaned and transformed data
+- data/users/<user_id>/gold/: Analytical master table
+- output/<user_id>/: Analysis results and reports
 
 STEP 4: INTERPRETING RESULTS
 -----------------------------

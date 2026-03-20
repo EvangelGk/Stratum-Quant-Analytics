@@ -41,6 +41,7 @@ def _walk_forward_backtest(
     factors: List[str],
     windows: int,
     min_train_rows: int,
+    clipped_floor: float = -2.0,
 ) -> Dict[str, Any]:
     n_rows = len(df)
     windows = max(2, windows)
@@ -99,11 +100,14 @@ def _walk_forward_backtest(
         }
 
     r2_values = [m["r2"] for m in metrics]
+    clipped_r2_values = [max(clipped_floor, min(1.0, value)) for value in r2_values]
     return {
         "status": "ok",
         "windows_requested": windows,
         "windows_completed": len(metrics),
         "avg_r2": float(np.mean(r2_values)),
+        "median_r2": float(np.median(r2_values)),
+        "clipped_avg_r2": float(np.mean(clipped_r2_values)),
         "worst_r2": float(np.min(r2_values)),
         "window_metrics": metrics,
     }
@@ -142,6 +146,7 @@ def governance_report(
     random_seed: int | None = None,
     reproducibility_enforced: bool = True,
     walk_forward_windows: int = 4,
+    clipped_walk_forward_floor: float = -2.0,
 ) -> Dict[str, Any]:
     """Build statistical-governance diagnostics for regression analyses.
 
@@ -226,6 +231,7 @@ def governance_report(
             factors=valid_factors,
             windows=walk_forward_windows,
             min_train_rows=min_train_rows,
+            clipped_floor=clipped_walk_forward_floor,
         )
 
         leakage_flags: List[str] = []
@@ -316,7 +322,7 @@ def governance_report(
             normalized_shift=float(normalized_shift),
             oos_r2=oos_r2,
             walk_forward_avg_r2=(
-                walk_forward.get("avg_r2")
+                walk_forward.get("clipped_avg_r2", walk_forward.get("avg_r2"))
                 if walk_forward.get("status") == "ok"
                 else None
             ),

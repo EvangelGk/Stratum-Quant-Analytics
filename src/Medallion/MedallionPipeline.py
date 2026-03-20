@@ -60,6 +60,11 @@ class MedallionPipeline:
         self.bronze.base_path = str(self.raw_path)
         self.silver.raw_path = self.raw_path
         self.silver.processed_path = self.processed_path
+        # dead_letter_path is computed in SilverLayer.__init__ before the above
+        # override runs, so it would point to the non-user-scoped path. Fix it here.
+        self.silver.dead_letter_path = (
+            self.processed_path / "quality" / "dead_letter.jsonl"
+        )
 
     def _get_gold_layer(self) -> GoldLayer:
         if self.gold is None:

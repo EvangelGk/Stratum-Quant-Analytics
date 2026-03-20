@@ -50,16 +50,30 @@ class ProjectConfig:
     silver_min_rows_ratio: float = 0.1
     silver_base_null_threshold: float = 30.0
     silver_dynamic_threshold_window: int = 20
+    silver_warn_to_fail_buffer: float = 15.0
+    silver_outlier_warning_ratio: float = 0.1
+    governance_unstable_walk_forward_floor: float = -5.0
+    governance_clipped_walk_forward_floor: float = -2.0
+    auto_ml_enabled: bool = True
+    target_tickers: List[str] = field(default_factory=list)
     macro_series_map: Dict[str, str] = field(
         default_factory=lambda: {
             "CPIAUCSL": "inflation",
             "PNRGINDEXM": "energy_index",
+            "UNRATE": "unemployment_rate",
+            "FEDFUNDS": "fed_funds_rate",
+            "DGS10": "us10y_treasury_yield",
+            "UMCSENT": "consumer_sentiment",
+            "INDPRO": "industrial_production",
         }
     )
     worldbank_indicator_map: Dict[str, str] = field(
         default_factory=lambda: {
             "NY.GDP.MKTP.KD.ZG": "gdp_growth",
             "EG.USE.PCAP.KG.OE": "energy_usage",
+            "FP.CPI.TOTL.ZG": "inflation_wb",
+            "SL.UEM.TOTL.ZS": "unemployment_wb",
+            "NE.TRD.GNFS.ZS": "trade_openness",
         }
     )
 
@@ -119,6 +133,26 @@ class ProjectConfig:
         if normalized in {"0", "false", "no", "off"}:
             return False
         return default
+
+    @staticmethod
+    def _parse_ticker_list(raw_value: Optional[str]) -> List[str]:
+        if raw_value is None:
+            return []
+        value = raw_value.strip()
+        if not value:
+            return []
+        parsed: List[str] = []
+        try:
+            maybe_json = json.loads(value)
+            if isinstance(maybe_json, list):
+                parsed = [str(item).strip().upper() for item in maybe_json if str(item).strip()]
+        except (ValueError, TypeError):
+            parsed = [token.strip().upper() for token in value.split(",") if token.strip()]
+        deduped: List[str] = []
+        for ticker in parsed:
+            if ticker not in deduped:
+                deduped.append(ticker)
+        return deduped
 
     @classmethod
     def load_from_env(cls) -> "ProjectConfig":
@@ -222,6 +256,24 @@ class ProjectConfig:
             "SILVER_DYNAMIC_THRESHOLD_WINDOW",
             20,
         )
+        silver_warn_to_fail_buffer = cls._parse_non_negative_float(
+            os.getenv("SILVER_WARN_TO_FAIL_BUFFER", "15.0"),
+            "SILVER_WARN_TO_FAIL_BUFFER",
+            15.0,
+        )
+        silver_outlier_warning_ratio = cls._parse_non_negative_float(
+            os.getenv("SILVER_OUTLIER_WARNING_RATIO", "0.1"),
+            "SILVER_OUTLIER_WARNING_RATIO",
+            0.1,
+        )
+        silver_outlier_warning_ratio = min(max(silver_outlier_warning_ratio, 0.0), 1.0)
+        governance_unstable_walk_forward_floor = cls._parse_float(
+            os.getenv("GOVERNANCE_UNSTABLE_WALK_FORWARD_FLOOR"), -5.0
+        )
+        governance_clipped_walk_forward_floor = cls._parse_float(
+            os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0
+        )
+        auto_ml_enabled = cls._parse_bool(os.getenv("AUTO_ML_ENABLED"), False)
         if governance_model_risk_fail_threshold < governance_model_risk_warn_threshold:
             (
                 governance_model_risk_warn_threshold,
@@ -250,13 +302,23 @@ class ProjectConfig:
             except (ValueError, TypeError, KeyError):
                 pass
 
+        target_tickers = cls._parse_ticker_list(os.getenv("TARGET_TICKERS"))
+
         macro_series_map = {
             "CPIAUCSL": "inflation",
             "PNRGINDEXM": "energy_index",
+            "UNRATE": "unemployment_rate",
+            "FEDFUNDS": "fed_funds_rate",
+            "DGS10": "us10y_treasury_yield",
+            "UMCSENT": "consumer_sentiment",
+            "INDPRO": "industrial_production",
         }
         worldbank_indicator_map = {
             "NY.GDP.MKTP.KD.ZG": "gdp_growth",
             "EG.USE.PCAP.KG.OE": "energy_usage",
+            "FP.CPI.TOTL.ZG": "inflation_wb",
+            "SL.UEM.TOTL.ZS": "unemployment_wb",
+            "NE.TRD.GNFS.ZS": "trade_openness",
         }
         raw_macro_map = os.getenv("MACRO_SERIES_MAP", "").strip()
         if raw_macro_map:
@@ -307,6 +369,12 @@ class ProjectConfig:
             silver_min_rows_ratio=silver_min_rows_ratio,
             silver_base_null_threshold=silver_base_null_threshold,
             silver_dynamic_threshold_window=silver_dynamic_threshold_window,
+            silver_warn_to_fail_buffer=silver_warn_to_fail_buffer,
+            silver_outlier_warning_ratio=silver_outlier_warning_ratio,
+            governance_unstable_walk_forward_floor=governance_unstable_walk_forward_floor,
+            governance_clipped_walk_forward_floor=governance_clipped_walk_forward_floor,
+            auto_ml_enabled=auto_ml_enabled,
+            target_tickers=target_tickers,
             macro_series_map=macro_series_map,
             worldbank_indicator_map=worldbank_indicator_map,
         )
@@ -338,15 +406,33 @@ class ProjectConfig:
             raise ValueError(
                 "Invalid configuration: SILVER_DYNAMIC_THRESHOLD_WINDOW must be >= 1"
             )
+        if self.silver_warn_to_fail_buffer < 0.0:
+            raise ValueError(
+                "Invalid configuration: SILVER_WARN_TO_FAIL_BUFFER must be >= 0"
+            )
+        if not (0.0 <= self.silver_outlier_warning_ratio <= 1.0):
+            raise ValueError(
+                "Invalid configuration: SILVER_OUTLIER_WARNING_RATIO must be in [0, 1]"
+            )
         if not self.macro_series_map:
             raise ValueError("Invalid configuration: MACRO_SERIES_MAP cannot be empty")
         if not self.worldbank_indicator_map:
             raise ValueError(
                 "Invalid configuration: WORLDBANK_INDICATOR_MAP cannot be empty"
             )
+        if self.target_tickers is not None and len(self.target_tickers) == 0:
+            # Empty list is valid only when omitted; if explicitly provided as empty,
+            # we would silently disable yfinance ingestion.
+            raw_targets = os.getenv("TARGET_TICKERS", "").strip()
+            if raw_targets:
+                raise ValueError(
+                    "Invalid configuration: TARGET_TICKERS provided but no valid symbols parsed"
+                )
 
     def get_targets(self) -> List[str]:
         """Επιστρέφει τα tickers βάσει του mode."""
+        if self.target_tickers:
+            return self.target_tickers
         if self.mode == RunMode.SAMPLE:
             return ["AAPL", "F"]
         return ["AAPL", "TSLA", "MSFT", "WMT", "XOM"]
@@ -388,6 +474,11 @@ class ProjectConfig:
             "silver_min_rows_ratio": self.silver_min_rows_ratio,
             "silver_base_null_threshold": self.silver_base_null_threshold,
             "silver_dynamic_threshold_window": self.silver_dynamic_threshold_window,
+            "silver_warn_to_fail_buffer": self.silver_warn_to_fail_buffer,
+            "silver_outlier_warning_ratio": self.silver_outlier_warning_ratio,
+            "governance_unstable_walk_forward_floor": self.governance_unstable_walk_forward_floor,
+            "governance_clipped_walk_forward_floor": self.governance_clipped_walk_forward_floor,
+            "target_tickers": self.target_tickers,
             "macro_series_map": self.macro_series_map,
             "worldbank_indicator_map": self.worldbank_indicator_map,
             "targets": self.get_targets(),

@@ -39,7 +39,7 @@ Where `μ` is the drift (mean log-return), `σ` is historical volatility, and `d
                │                       │               │
                ▼                       ▼               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  🥉 BRONZE LAYER  (data/raw/)                                   │
+│  🥉 BRONZE LAYER  (data/users/<user_id>/raw/)                   │
 │  • Parallel fetch via ThreadPoolExecutor                        │
 │  • Retry logic (exponential back-off, max 4 retries)            │
 │  • Raw Parquet storage with full metadata catalog               │
@@ -48,7 +48,7 @@ Where `μ` is the drift (mean log-return), `σ` is historical volatility, and `d
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  🥈 SILVER LAYER  (data/processed/)                             │
+│  🥈 SILVER LAYER  (data/users/<user_id>/processed/)             │
 │  • Pandera schema validation (type, range, null enforcement)    │
 │  • Winsorization at 1st/99th percentile (outlier dampening)     │
 │  • Z-score standardization (μ=0, σ=1)                          │
@@ -58,7 +58,7 @@ Where `μ` is the drift (mean log-return), `σ` is historical volatility, and `d
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  🥇 GOLD LAYER  (data/gold/)                                    │
+│  🥇 GOLD LAYER  (data/users/<user_id>/gold/)                    │
 │  • Master Feature Table: time-aligned join across all sources   │
 │  • Log-return engineering per ticker                            │
 │  • Parallel AnalysisSuite execution                             │
@@ -98,7 +98,7 @@ scenario-planner/
 │   │       └── AnalysisSuite/
 │   │           ├── monte_carlo.py
 │   │           ├── forecasting.py
-│   │           ├── sesnsitivity_reg.py
+│   │           ├── sensitivity_reg.py
 │   │           ├── elasticity.py
 │   │           ├── correl_mtrx.py
 │   │           ├── lag.py
@@ -190,6 +190,14 @@ All configuration is driven by environment variables (see `.env.example`):
 | `MAX_RETRIES` | `4` | Retry attempts per failed request |
 | `RANDOM_SEED` | `42` | Deterministic seed for stochastic analyses |
 | `ENFORCE_REPRODUCIBILITY` | `true` | Enforce deterministic policy where supported |
+| `DATA_USER_ID` | `default` | Storage namespace for per-user run isolation |
+| `SILVER_HARD_FAIL` | `true` | Stop pipeline when Silver guardrails fail |
+| `SILVER_MIN_ROWS` | `10` | Minimum rows required per entity in Silver preflight |
+| `SILVER_MIN_ROWS_RATIO` | `0.1` | Minimum observed/expected row ratio before hard-stop |
+| `SILVER_BASE_NULL_THRESHOLD` | `30.0` | Base null threshold (%) for dynamic data quality gating |
+| `SILVER_DYNAMIC_THRESHOLD_WINDOW` | `20` | Rolling history window for adaptive null thresholds |
+| `MACRO_SERIES_MAP` | *(built-in)* | Optional JSON override for FRED series registry |
+| `WORLDBANK_INDICATOR_MAP` | *(built-in)* | Optional JSON override for World Bank indicator registry |
 | `GOVERNANCE_HARD_FAIL` | `true` | Block advanced analyses if governance gate fails |
 | `GOVERNANCE_MIN_R2` | `-0.25` | Minimum out-of-sample R2 threshold |
 | `GOVERNANCE_MAX_NORMALIZED_SHIFT` | `2.5` | Maximum train/test normalized drift |

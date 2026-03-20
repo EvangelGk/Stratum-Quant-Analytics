@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import pandera.errors
 
-from Fetchers.ProjectConfig import ProjectConfig
 from exceptions.MedallionExceptions import (
     CatalogNotFoundError,
     ComplianceViolationError,
@@ -23,9 +22,10 @@ from exceptions.MedallionExceptions import (
     SchemaMismatchError,
     StandardizationError,
 )
+from Fetchers.ProjectConfig import ProjectConfig
 
 # Import Schemas
-from .contracts import EXPECTED_SOURCES, SOURCE_CONTRACTS
+from .contracts import EXPECTED_SOURCES, SOURCE_CONTRACTS, get_series_contract
 from .schema import financials_schema, macro_schema, worldbank_schema
 
 
@@ -148,8 +148,8 @@ class SilverLayer:
             )
 
             # 3. Strategic Imputation with Winsorization
-            df, imputed_count, outliers_clipped, max_col_null_pct = self._impute(
-                df, info["source"]
+            df, imputed_count, outliers_clipped, max_col_null_pct, warnings = self._impute(
+                df, info["source"], filename
             )
 
             # 4. Pandera Validation (The Ultimate Quality Gate)
@@ -189,6 +189,7 @@ class SilverLayer:
                     "input_path": str(info.get("path", "")),
                     "unit_normalized": unit_normalized,
                     "temporal_aligned": temporal_aligned,
+                    "warnings": warnings,
                     "processed_at": datetime.now().isoformat(),
                     "status": "success",
                 }
@@ -202,6 +203,12 @@ class SilverLayer:
             ComplianceViolationError,
             SchemaMismatchError,
         ) as e:
+            error_type = type(e).__name__
+            short_msg = str(e)[:200]
+            print(
+                f"[Silver] ENTITY FAILED: {filename} ({info['source']}) "
+                f"— {error_type}: {short_msg}"
+            )
             with self.lock:
                 self.quality_reports[filename] = {
                     "source": info["source"],
@@ -211,6 +218,12 @@ class SilverLayer:
                 }
             self._append_dead_letter(filename, info, e)
         except Exception as e:
+            error_type = type(e).__name__
+            short_msg = str(e)[:200]
+            print(
+                f"[Silver] UNEXPECTED FAILURE: {filename} ({info['source']}) "
+                f"— {error_type}: {short_msg}"
+            )
             with self.lock:
                 self.quality_reports[filename] = {
                     "source": info["source"],
@@ -242,10 +255,12 @@ class SilverLayer:
             # absolute/index indicators (e.g., CPI indexes, energy usage levels).
             contract = SOURCE_CONTRACTS.get(source)
             percentage_entities = contract.percentage_entities if contract else set()
+            series_contract = get_series_contract(source, entity_name)
             if (
                 source in ["fred", "worldbank"]
                 and "value" in df.columns
                 and entity_name in percentage_entities
+                and series_contract.unit_kind == "percentage"
             ):
                 if df["value"].max() > 1.0:
                     df["value"] = df["value"] / 100.0
@@ -258,15 +273,17 @@ class SilverLayer:
             ) from e
 
     def _impute(
-        self, df: pd.DataFrame, source: str
-    ) -> Tuple[pd.DataFrame, int, int, float]:
+        self, df: pd.DataFrame, source: str, entity_name: str
+    ) -> Tuple[pd.DataFrame, int, int, float, List[str]]:
         """Handle missing values with Quantile Winsorization
         and Z-Score outlier detection."""
         try:
             if df.empty:
-                return df, 0, 0, 0.0
+                return df, 0, 0, 0.0, []
 
             initial_nulls = df.isnull().sum().sum()
+            warnings: List[str] = []
+            series_contract = get_series_contract(source, entity_name)
 
             # Compliance Check: Reject if ANY numeric column exceeds 30% nulls.
             # Checking per-column prevents dense columns from masking sparse ones.
@@ -279,15 +296,27 @@ class SilverLayer:
             max_col_null_pct = (
                 float(numeric_null_pct.max()) if worst_col is not None else 0.0
             )
-            dynamic_threshold = self._resolve_dynamic_null_threshold(source)
+            dynamic_threshold = self._resolve_dynamic_null_threshold(
+                source, entity_name, base_override=series_contract.null_tolerance_pct
+            )
+            severe_threshold = min(
+                100.0,
+                dynamic_threshold
+                + float(getattr(self.config, "silver_warn_to_fail_buffer", 15.0)),
+            )
             # Small samples are common in unit tests and pilot runs; enforce
             # the strict null-threshold only when we have enough observations.
-            if len(df) >= 10 and max_col_null_pct > dynamic_threshold:
+            if len(df) >= 10 and max_col_null_pct > severe_threshold:
                 raise ComplianceViolationError(
                     "Data quality violation: "
                     f"column '{worst_col}' has {max_col_null_pct:.2f}%"
-                    f" nulls, exceeding dynamic threshold {dynamic_threshold:.2f}%"
-                    f" for {source}"
+                    f" nulls, exceeding severe threshold {severe_threshold:.2f}%"
+                    f" for {entity_name} ({source})"
+                )
+            if len(df) >= 10 and dynamic_threshold < max_col_null_pct <= severe_threshold:
+                warnings.append(
+                    "elevated_missingness:"
+                    f"{worst_col}:{max_col_null_pct:.2f}%>{dynamic_threshold:.2f}%"
                 )
 
             # Outlier Detection with Z-Score and Winsorization
@@ -302,23 +331,32 @@ class SilverLayer:
                         if std == 0 or pd.isna(std):
                             continue
                         z_scores = np.abs((series - series.mean()) / std)
-                        outliers = z_scores > 3.5
+                        outliers = z_scores > series_contract.outlier_z_threshold
                         outliers_clipped += int(outliers.sum())
 
                         # Quantile Winsorization at P1 and P99
-                        lower_bound = series.quantile(0.01)
-                        upper_bound = series.quantile(0.99)
-                        df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+                        if series_contract.enable_winsorization:
+                            lower_bound = series.quantile(0.01)
+                            upper_bound = series.quantile(0.99)
+                            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
 
             # Vectorized Imputation: Forward Fill for time series
             df = df.sort_values("date").reset_index(drop=True)
-            df = df.ffill().bfill()
+            if series_contract.imputation_strategy == "ffill_bfill":
+                df = df.ffill().bfill()
 
             final_nulls = df.isnull().sum().sum()
             imputed_count = initial_nulls - final_nulls
+            outlier_ratio = outliers_clipped / max(len(df), 1)
+            warn_ratio = float(getattr(self.config, "silver_outlier_warning_ratio", 0.1))
+            if outlier_ratio > warn_ratio:
+                warnings.append(
+                    "high_outlier_intensity:"
+                    f"{outlier_ratio:.3f}>{warn_ratio:.3f}"
+                )
 
             # Update quality report with outlier info
-            return df, imputed_count, outliers_clipped, max_col_null_pct
+            return df, imputed_count, outliers_clipped, max_col_null_pct, warnings
         except ComplianceViolationError:
             raise
         except Exception as e:
@@ -367,8 +405,13 @@ class SilverLayer:
             output_dir = self.processed_path / source
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Memory Optimization: Convert string columns to category
-            for col in df.select_dtypes(include=["object", "str"]):
+            # pandas 2.x may return StringDtype columns from parquet reads.
+            # pyarrow rejects numpy StringDtype on write → cast to object first.
+            for col in df.columns:
+                if isinstance(df[col].dtype, pd.StringDtype):
+                    df[col] = df[col].astype(object)
+            # Memory Optimization: Convert plain object columns to category
+            for col in df.select_dtypes(include=["object"]).columns:
                 df[col] = df[col].astype("category")
 
             file_path = output_dir / f"{filename}_silver.parquet"
@@ -457,9 +500,15 @@ class SilverLayer:
         with self.dead_letter_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
-    def _resolve_dynamic_null_threshold(self, source: str) -> float:
+    def _resolve_dynamic_null_threshold(
+        self, source: str, entity_name: str, base_override: float | None = None
+    ) -> float:
         """Compute adaptive null threshold from historical quality metrics."""
-        base = float(getattr(self.config, "silver_base_null_threshold", 30.0))
+        base = (
+            float(base_override)
+            if base_override is not None
+            else float(getattr(self.config, "silver_base_null_threshold", 30.0))
+        )
         history_file = self.processed_path / "quality_history.jsonl"
         if not history_file.exists():
             return base
@@ -474,6 +523,8 @@ class SilverLayer:
                         continue
                     payload = json.loads(line)
                     if payload.get("source") != source:
+                        continue
+                    if payload.get("entity") not in {entity_name, None, ""}:
                         continue
                     value = payload.get("max_col_null_pct")
                     if isinstance(value, (int, float)):

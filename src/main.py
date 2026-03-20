@@ -36,7 +36,6 @@ from logger.Messages.MainMess import (
 )
 from Medallion import MedallionPipeline
 
-
 # Setup logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
