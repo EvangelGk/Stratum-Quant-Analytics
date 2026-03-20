@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 import streamlit as st
 
@@ -195,6 +195,199 @@ def get_audit_report() -> dict[str, Any]:
     return report
 
 
+def _to_serializable(value: Any) -> Any:
+    try:
+        import numpy as np
+        import pandas as pd
+
+        if isinstance(value, pd.DataFrame):
+            return {
+                "type": "dataframe",
+                "shape": [int(value.shape[0]), int(value.shape[1])],
+                "columns": [str(c) for c in value.columns],
+                "data": value.to_dict(orient="records"),
+            }
+        if isinstance(value, pd.Series):
+            return {
+                "type": "series",
+                "name": str(value.name) if value.name is not None else None,
+                "data": value.tolist(),
+            }
+        if isinstance(value, np.ndarray):
+            return {
+                "type": "ndarray",
+                "shape": [int(x) for x in value.shape],
+                "data": value.tolist(),
+            }
+        if isinstance(value, np.generic):
+            return value.item()
+    except Exception:
+        pass
+
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_serializable(v) for v in value]
+    return value
+
+
+def rerun_stress_test_only(
+    scenario_name: str = "geopolitical_conflict",
+    shock_map: Optional[Dict[str, float]] = None,
+    ticker: Optional[str] = None,
+    target: str = "log_return",
+) -> Dict[str, Any]:
+    """Run stress test directly from existing Gold data without rerunning pipeline."""
+    from Fetchers.ProjectConfig import ProjectConfig
+    from Medallion.gold.AnalysisSuite.mixed_frequency import filter_to_ticker
+    from Medallion.gold.AnalysisSuite.stress_test import stress_test
+    from Medallion.gold.GoldLayer import GoldLayer
+
+    config = ProjectConfig.load_from_env()
+    gold = GoldLayer(config)
+
+    # Mirror MedallionPipeline user-scoped paths so UI uses the same dataset.
+    gold.processed_path = USER_DATA_DIR / "processed"
+    gold.gold_path = USER_DATA_DIR / "gold"
+    gold.governance_path = gold.gold_path / "governance"
+    gold.governance_path.mkdir(parents=True, exist_ok=True)
+    gold.initialize_data()
+
+    analysis_df = filter_to_ticker(gold.df, ticker=ticker)
+    result = stress_test(
+        analysis_df,
+        shock_map or {},
+        target=target,
+        ticker=ticker,
+        macro_lag_days=0,
+        scenario_name=scenario_name or "geopolitical_conflict",
+    )
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    stress_file = OUTPUT_DIR / "stress_test.json"
+    serializable_result = _to_serializable(result)
+    stress_file.write_text(
+        json.dumps({"value": serializable_result}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    summary_file = OUTPUT_DIR / "analysis_results.json"
+    if summary_file.exists():
+        try:
+            summary_payload: Dict[str, Any] = json.loads(
+                summary_file.read_text(encoding="utf-8")
+            )
+        except Exception:
+            summary_payload = {}
+    else:
+        summary_payload = {}
+
+    results_payload = summary_payload.get("results", {})
+    if not isinstance(results_payload, dict):
+        results_payload = {}
+    artifacts_payload = summary_payload.get("artifacts", {})
+    if not isinstance(artifacts_payload, dict):
+        artifacts_payload = {}
+
+    results_payload["stress_test"] = serializable_result
+    artifacts_payload["stress_test"] = str(stress_file)
+
+    summary_payload["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    summary_payload["results"] = results_payload
+    summary_payload["result_keys"] = sorted(results_payload.keys())
+    summary_payload["artifacts"] = artifacts_payload
+
+    summary_file.write_text(
+        json.dumps(summary_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return result
+
+
+def run_optimizer_background(
+    target_score: float = 94.0,
+    max_iterations: int = 10,
+    progress_bar: Any = None,
+) -> tuple[bool, str]:
+    """Run the automated optimization loop as a subprocess.
+
+    This function is intentionally NOT exported to the regular UI nav and is
+    only called from the owner-gated sidebar section in app.py.
+    The subprocess runs optimizer.py which internally uses ApprovalGateway for
+    every code mutation; approvals must be granted via terminal or the queue
+    file at output/.optimizer/approval_queue.json.
+    """
+    env = os.environ.copy()
+    env["OPTIMIZER_TARGET_SCORE"] = str(target_score)
+    env["OPTIMIZER_MAX_ITERATIONS"] = str(max_iterations)
+    cmd = [
+        sys.executable,
+        "src/optimizer.py",
+        "--target-score",
+        str(target_score),
+        "--max-iterations",
+        str(max_iterations),
+    ]
+    estimated_seconds = 60 * max_iterations  # rough upper bound
+    stages = [
+        (0.00, "Initialising optimizer..."),
+        (0.10, "Running pipeline iteration 1..."),
+        (0.30, "Diagnosing iteration results..."),
+        (0.60, "Applying approved adjustments..."),
+        (0.85, "Running final pipeline pass..."),
+        (0.95, "Writing optimizer report..."),
+    ]
+
+    log_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            errors="ignore",
+            delete=False,
+            suffix="_optimizer.log",
+        ) as tmp:
+            log_path = Path(tmp.name)
+
+        with log_path.open("w", encoding="utf-8", errors="ignore") as log_file:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=ROOT,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+
+        start = time.time()
+        stage_i = 0
+        while proc.poll() is None:
+            elapsed = time.time() - start
+            pct = min(elapsed / estimated_seconds, 0.97)
+            while stage_i < len(stages) - 1 and pct >= stages[stage_i + 1][0]:
+                stage_i += 1
+            if progress_bar is not None:
+                progress_bar.progress(pct, text=f"{int(pct * 100)}% — {stages[stage_i][1]}")
+            time.sleep(1.0)
+
+        output = log_path.read_text(encoding="utf-8", errors="ignore")
+        ok = proc.returncode == 0
+        if progress_bar is not None:
+            progress_bar.progress(1.0, text="100% — Done!" if ok else "100% — Failed")
+        return ok, output.strip()
+    except Exception as exc:
+        return False, f"Optimizer subprocess error: {exc}"
+    finally:
+        if log_path is not None:
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def clear_all_run_history() -> dict[str, Any]:
     deleted_files = 0
     deleted_dirs = 0
@@ -254,5 +447,7 @@ __all__ = [
     "show_pipeline_failure",
     "run_and_cache_audit",
     "get_audit_report",
+    "rerun_stress_test_only",
+    "run_optimizer_background",
     "clear_all_run_history",
 ]

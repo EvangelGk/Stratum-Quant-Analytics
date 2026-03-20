@@ -10,9 +10,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from UI.constants import PIPELINE_STAGES, ROLE_PERMISSIONS
+from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS
 from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_message, show_kpis
 from UI.runtime import clear_all_run_history, run_and_cache_audit, run_pipeline, show_pipeline_failure
+from UI.runtime import run_optimizer_background
 from UI.tabs import (
     show_analytics_tab,
     show_auditor_tab,
@@ -118,6 +119,60 @@ def _render_sidebar() -> str:
             st.caption(
                 f"Deleted files: {result['deleted_files']} | Deleted directories: {result['deleted_dirs']}"
             )
+
+        # ----------------------------------------------------------------
+        # Owner-only: Automated Optimizer
+        # Only visible when OPTIMIZER_OWNER_MODE=1 is set in the environment.
+        # Never surfaced to regular users or shown in public deployments.
+        # ----------------------------------------------------------------
+        import os as _os
+        if _os.getenv("OPTIMIZER_OWNER_MODE", "").strip() == "1":
+            st.markdown("---")
+            st.markdown("### 🔬 Automated Optimizer")
+            st.caption(
+                "Owner-only: runs the self-correcting 10-iteration optimization loop. "
+                "Each code mutation requires your approval via terminal prompt or "
+                "approval queue file."
+            )
+            opt_target = st.slider(
+                "Target score", min_value=80, max_value=99, value=94, step=1,
+                key="opt_target_score",
+            )
+            opt_iters = st.number_input(
+                "Max iterations", min_value=1, max_value=20, value=10, step=1,
+                key="opt_max_iters",
+            )
+
+            # Show last optimizer report if available
+            _opt_report = OUTPUT_DIR / "optimizer_report.json"
+            if _opt_report.exists():
+                with st.expander("Last optimizer report", expanded=False):
+                    try:
+                        import json as _json
+                        _rpt = _json.loads(_opt_report.read_text(encoding="utf-8"))
+                        st.json(_rpt.get("final_quant_evaluation", _rpt))
+                    except Exception:
+                        st.caption("Could not parse optimizer report.")
+
+            if st.button(
+                "📈 Run Optimizer",
+                key="run_optimizer_btn",
+                type="secondary",
+                width="stretch",
+            ):
+                opt_prog = st.progress(0, text="Starting optimizer...")
+                ok, opt_out = run_optimizer_background(
+                    target_score=float(opt_target),
+                    max_iterations=int(opt_iters),
+                    progress_bar=opt_prog,
+                )
+                opt_prog.empty()
+                if ok:
+                    st.success("Optimizer completed. Check Output tab for optimizer_report.json.")
+                else:
+                    st.error("Optimizer failed.")
+                    with st.expander("Optimizer output", expanded=False):
+                        st.text(opt_out[-3000:] if len(opt_out) > 3000 else opt_out)
             st.rerun()
 
     return role

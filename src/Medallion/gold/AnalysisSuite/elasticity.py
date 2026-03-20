@@ -72,14 +72,36 @@ def elasticity(
             )
 
         beta = cov / var_macro
+
+        # Classical price elasticity: ε = β · (μ_macro / μ_asset)
+        # This answers "if macro rises 1%, returns change by ε%".
+        # Guard: when mean asset return is near zero (common for daily log-
+        # returns) the scaling is undefined — fall back to reporting beta and
+        # flag the result so consumers can choose how to interpret it.
+        mean_asset = float(panel[asset_return].mean())
+        mean_macro = float(panel[macro_factor].mean())
+        if abs(mean_asset) > 1e-10:
+            static_elasticity = beta * (mean_macro / mean_asset)
+            elasticity_computable = True
+        else:
+            static_elasticity = beta
+            elasticity_computable = False
         rolling_cov = panel[asset_return].rolling(effective_window).cov(panel[macro_factor])
         rolling_var = panel[macro_factor].rolling(effective_window).var()
         rolling_beta = (rolling_cov / rolling_var).replace([np.inf, -np.inf], np.nan)
+        rolling_mean_asset = panel[asset_return].rolling(effective_window).mean()
+        rolling_mean_macro = panel[macro_factor].rolling(effective_window).mean()
+        rolling_scale = (rolling_mean_macro / rolling_mean_asset).where(
+            rolling_mean_asset.abs() > 1e-10
+        )
+        rolling_elasticity = (rolling_beta * rolling_scale).replace(
+            [np.inf, -np.inf], np.nan
+        )
         rolling_history = (
             pd.DataFrame(
                 {
                     "date": panel["date"],
-                    "elasticity": rolling_beta,
+                    "elasticity": rolling_elasticity,
                 }
             )
             .dropna()
@@ -90,7 +112,10 @@ def elasticity(
             "ticker": ticker,
             "asset_return": asset_return,
             "macro_factor": macro_factor,
-            "static_elasticity": float(beta),
+            "static_elasticity": float(static_elasticity),
+            "elasticity_computable": bool(elasticity_computable),
+            "mean_asset_return": round(mean_asset, 8),
+            "mean_macro_value": round(mean_macro, 8),
             "rolling_window_days": int(effective_window),
             "rolling_elasticity": rolling_history,
             "data_points": int(len(panel)),

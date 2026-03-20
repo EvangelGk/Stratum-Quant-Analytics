@@ -11,6 +11,7 @@ from .BaseFetcher import BaseFetcher
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
     CACHE_SCHEMA_VERSION = "v4"  # bumped: AUTO_ADJUST changed False→True
+    CACHE_TTL_SECONDS: int = 86400  # Daily market data; 24-hour TTL
     FETCH_INTERVAL = "1d"
     # True: yfinance adjusts Close (and all OHLCV) for splits and dividends.
     # This means `close` in the Silver/Gold layers is already corporate-action
@@ -41,11 +42,12 @@ class YFinanceFetcher(BaseFetcher):
         try:
             cached = self._get_cached(key)
             if cached is not None:
-                try:
-                    return self._normalize_downloaded_frame(cached)
-                except APIError:
-                    # Cached payload may come from an older schema version.
-                    self.cache.delete(key)
+                required = ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+                if all(col in cached.columns for col in required):
+                    # Cached payload is already normalized — return directly.
+                    return cached
+                # Stale cache entry (schema version mismatch or corrupt) — evict.
+                self.cache.delete(key)
         except Exception as e:
             raise CacheError(f"Cache read error: {e}") from e
 
@@ -64,7 +66,7 @@ class YFinanceFetcher(BaseFetcher):
             raise APIError(f"YFinance API error: {e}") from e
 
         try:
-            self._set_cached(key, df)
+            self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)
         except Exception as e:
             raise CacheError(f"Cache write error: {e}") from e
 

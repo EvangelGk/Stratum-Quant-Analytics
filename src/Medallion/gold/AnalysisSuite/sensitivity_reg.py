@@ -93,6 +93,12 @@ def sensitivity_reg(
                 "model": "OLS",
                 "ticker": ticker,
                 "target": target,
+                # Coefficients express impact over the forward horizon used by
+                # prepare_supervised_frame.  Check target_horizon_days before
+                # interpreting a coefficient as an immediate point-in-time effect.
+                "target_horizon_days": int(
+                    metadata.get(target, {}).get("target_horizon_days", 1)
+                ),
                 "coefficients": coefficients,
                 "intercept": float(fitted_model.params.get("const", 0.0)),
                 "p_values": {
@@ -121,6 +127,9 @@ def sensitivity_reg(
                 "model": "Ridge",
                 "ticker": ticker,
                 "target": target,
+                "target_horizon_days": int(
+                    metadata.get(target, {}).get("target_horizon_days", 1)
+                ),
                 "coefficients": coefficients,
                 "intercept": float(ridge.intercept_),
                 "r2": float(ridge.score(X, Y)),

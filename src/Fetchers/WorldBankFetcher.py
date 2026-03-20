@@ -10,6 +10,9 @@ from .BaseFetcher import BaseFetcher
 
 class WorldBankFetcher(BaseFetcher):
     CACHE_SCHEMA_VERSION = "v2"
+    # World Bank indicators are revised annually; 30-day TTL prevents
+    # unnecessary API calls while staying reasonably current.
+    CACHE_TTL_SECONDS: int = 86400 * 30
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,7 +45,11 @@ class WorldBankFetcher(BaseFetcher):
             indicator, country, time=range(start_year, end_year + 1)
         )
         df = self._normalize_worldbank_frame(data, indicator)
-        self._set_cached(key, df)
+        if df.empty:
+            # Do not cache empty payloads; missing/late series should be retried
+            # on the next run instead of being suppressed for the full TTL.
+            return df
+        self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)
         return df
 
     def _normalize_worldbank_frame(
@@ -85,12 +92,13 @@ class WorldBankFetcher(BaseFetcher):
         if "economy" not in df.columns:
             warnings.warn(
                 "World Bank response is missing the 'economy' column — defaulting "
-                "to 'UNKNOWN'. Verify the country scope for this "
+                "to 'WLD'. Verify the country scope for this "
                 "indicator to avoid silent mis-labelling of regional data.",
                 UserWarning,
                 stacklevel=3,
             )
-            df["economy"] = "UNKNOWN"
+            # Use a schema-compatible ISO-3 fallback.
+            df["economy"] = "WLD"
 
         if "Date" in df.columns:
             df["Date"] = df["Date"].astype(str).str.replace("YR", "", regex=False)

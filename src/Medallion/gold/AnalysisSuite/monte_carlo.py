@@ -79,6 +79,12 @@ def monte_carlo(
         )
         base_mu = float(returns.mean())
         base_sigma = float(returns.std())
+        if not np.isfinite(current_daily_vol) or current_daily_vol <= 0:
+            current_daily_vol = base_sigma
+        if not np.isfinite(current_daily_vol) or current_daily_vol <= 0:
+            raise DataValidationError(
+                "Cannot estimate daily volatility for Monte Carlo simulation."
+            )
         scenario_label = str(macro_scenario or "auto_detected").lower()
 
         scenario_mu = base_mu
@@ -107,26 +113,36 @@ def monte_carlo(
         else:
             scenario_name = "baseline"
 
+        if not np.isfinite(scenario_sigma) or scenario_sigma <= 0:
+            scenario_sigma = current_daily_vol
+
         adjusted_mu = scenario_mu
         adjusted_sigma = max(current_daily_vol, scenario_sigma)
 
         bias = scenario_bias or {}
         adjusted_mu += float(bias.get("drift_shift", 0.0))
         adjusted_sigma *= max(0.1, float(bias.get("vol_multiplier", 1.0)))
-        last_price = data.iloc[-1]
+        last_price = float(data.iloc[-1])
+        if not np.isfinite(last_price) or last_price <= 0:
+            raise DataValidationError("Invalid latest close price for Monte Carlo.")
+        jump_shock = float(bias.get("jump_shock", 0.0))
 
         rng = np.random.default_rng(random_state)
         shocks = np.exp(
             (adjusted_mu - 0.5 * adjusted_sigma**2)
             + adjusted_sigma * rng.normal(0, 1, (days, iterations))
         )
-        price_paths = last_price * shocks.cumprod(axis=0)
-
-        jump_shock = float(bias.get("jump_shock", 0.0))
         if jump_shock != 0.0:
-            price_paths[0, :] = price_paths[0, :] * (1.0 + jump_shock)
+            # Apply the jump to the first-day shock factor BEFORE cumprod so
+            # the step-down propagates coherently through all subsequent paths.
+            # Patching price_paths[0] after cumprod would leave day 2+ unaffected.
+            shocks[0, :] *= (1.0 + jump_shock)
 
-        terminal_returns = price_paths[-1] / float(last_price) - 1.0
+        price_paths = last_price * shocks.cumprod(axis=0)
+        if not np.isfinite(price_paths).all():
+            raise AnalysisError("Monte Carlo produced non-finite price paths.")
+
+        terminal_returns = price_paths[-1] / last_price - 1.0
         var_95_cut = float(np.percentile(terminal_returns, 5))
         var_99_cut = float(np.percentile(terminal_returns, 1))
         cvar_95 = float(terminal_returns[terminal_returns <= var_95_cut].mean())

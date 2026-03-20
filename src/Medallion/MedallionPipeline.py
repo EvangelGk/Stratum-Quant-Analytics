@@ -146,12 +146,21 @@ class MedallionPipeline:
             missing_sources = (
                 summary.get("missing_sources", []) if isinstance(summary, dict) else []
             )
-            if failed > 0 or missing_sources:
+            # Only hard-fail when an entire source category produced zero data.
+            # Individual task failures (one bad ticker, one stale series) are
+            # logged as warnings so the pipeline continues with available data.
+            if missing_sources:
                 error_message = (
-                    f"bronze_integrity_violation: fail_count={failed}, "
-                    f"missing_sources={missing_sources}"
+                    f"bronze_integrity_violation: entire source(s) failed to "
+                    f"produce any data: {missing_sources}"
                 )
                 raise ComplianceViolationError(error_message)
+            if failed > 0:
+                self.logger.warning(
+                    "Bronze partial failures: %s task(s) failed but pipeline "
+                    "continues with available data.",
+                    failed,
+                )
             success = True
         except Exception as e:
             error_message = str(e)

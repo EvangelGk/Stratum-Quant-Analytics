@@ -1,4 +1,5 @@
 import concurrent.futures
+import hashlib
 import json
 import logging
 import time
@@ -73,11 +74,63 @@ class GoldLayer:
         Load master table if exists, else create it.
         """
         master_file = self.gold_path / "master_table.parquet"
-        if master_file.exists():
+        contract_file = self.gold_path / "master_table_contract.json"
+        if master_file.exists() and not self._master_table_stale(master_file, contract_file):
             self.logger.info("Loading existing master table...")
             return pd.read_parquet(master_file)
+
+        self.logger.info("Master table is missing or stale. Rebuilding...")
+        return self.create_master_table()
+
+    def _current_config_fingerprint(self) -> str:
+        if hasattr(self.config, "to_serializable_dict"):
+            payload = self.config.to_serializable_dict()
         else:
-            return self.create_master_table()
+            payload = {
+                "mode": str(getattr(self.config, "mode", "")),
+                "start_date": str(getattr(self.config, "start_date", "")),
+                "end_date": str(getattr(self.config, "end_date", "")),
+                "target_tickers": list(getattr(self.config, "target_tickers", [])),
+                "macro_series_map": dict(getattr(self.config, "macro_series_map", {})),
+                "worldbank_indicator_map": dict(
+                    getattr(self.config, "worldbank_indicator_map", {})
+                ),
+                "worldbank_economies": list(
+                    getattr(self.config, "worldbank_economies", ["WLD"])
+                ),
+                "fred_enabled": bool(getattr(self.config, "fred_api_key", None)),
+            }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    def _latest_processed_mtime(self) -> float:
+        latest = 0.0
+        for source in ("yfinance", "fred", "worldbank"):
+            source_dir = self.processed_path / source
+            if not source_dir.exists():
+                continue
+            for file_path in source_dir.glob("*.parquet"):
+                latest = max(latest, file_path.stat().st_mtime)
+        return latest
+
+    def _master_table_stale(self, master_file: Path, contract_file: Path) -> bool:
+        if not master_file.exists():
+            return True
+        if not contract_file.exists():
+            return True
+
+        try:
+            contract = json.loads(contract_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return True
+
+        stored_fingerprint = str(contract.get("config_fingerprint", ""))
+        current_fingerprint = self._current_config_fingerprint()
+        if stored_fingerprint != current_fingerprint:
+            return True
+
+        return master_file.stat().st_mtime < self._latest_processed_mtime()
 
     def _aggregate_strategy(self, series: pd.Series, strategy: str) -> float:
         clean = series.dropna()
@@ -138,11 +191,18 @@ class GoldLayer:
             lambda x: np.log(x / x.shift(1))
         )
 
-        expected_fred_columns = list(
-            dict(getattr(self.config, "macro_series_map", {})).values()
+        fred_enabled = bool(getattr(self.config, "fred_api_key", None))
+        worldbank_enabled = bool(getattr(self.config, "worldbank_indicator_map", {}))
+
+        expected_fred_columns = (
+            list(dict(getattr(self.config, "macro_series_map", {})).values())
+            if fred_enabled
+            else []
         )
-        expected_worldbank_columns = list(
-            dict(getattr(self.config, "worldbank_indicator_map", {})).values()
+        expected_worldbank_columns = (
+            list(dict(getattr(self.config, "worldbank_indicator_map", {})).values())
+            if worldbank_enabled
+            else []
         )
         fred_staleness_days = max(
             1, int(getattr(self.config, "gold_fred_max_staleness_days", 120))
@@ -185,7 +245,7 @@ class GoldLayer:
         missing_fred_columns = [
             c for c in expected_fred_columns if c not in set(macro_columns)
         ]
-        if missing_fred_columns:
+        if fred_enabled and missing_fred_columns:
             raise AnalysisError(
                 "Gold mapping mismatch: expected FRED columns missing from Silver artifacts: "
                 + ", ".join(sorted(missing_fred_columns))
@@ -257,7 +317,7 @@ class GoldLayer:
         missing_worldbank_columns = [
             c for c in expected_worldbank_columns if c not in set(wb_frames_by_series.keys())
         ]
-        if missing_worldbank_columns:
+        if worldbank_enabled and missing_worldbank_columns:
             raise AnalysisError(
                 "Gold mapping mismatch: expected WorldBank columns missing from Silver artifacts: "
                 + ", ".join(sorted(missing_worldbank_columns))
@@ -291,10 +351,13 @@ class GoldLayer:
             }
 
         self.logger.info(f"Gold source usage after joins: {source_usage}")
+        expected_sources = []
+        if fred_enabled:
+            expected_sources.append("fred")
+        if worldbank_enabled:
+            expected_sources.append("worldbank")
         broken_sources = [
-            source
-            for source in ("fred", "worldbank")
-            if source_usage[source] == 0.0
+            source for source in expected_sources if source_usage.get(source, 0.0) == 0.0
         ]
         if broken_sources:
             raise AnalysisError(
@@ -306,6 +369,7 @@ class GoldLayer:
         contract_payload = {
             "schema_version": "gold-contract.v1",
             "generated_at": datetime.now().isoformat(),
+            "config_fingerprint": self._current_config_fingerprint(),
             "expected": {
                 "yfinance": ["date", "ticker", "close", "log_return", "volume"],
                 "fred": sorted(expected_fred_columns),
@@ -816,6 +880,7 @@ class GoldLayer:
         scenario_name: Optional[str] = None,
         target: str = "log_return",
         factors: Optional[List[str]] = None,
+        regression_model: str = "OLS",
     ) -> Dict[str, Any]:
         """
         Run all analyses and return results in a dictionary.
@@ -825,11 +890,13 @@ class GoldLayer:
         random_seed = self._resolve_random_seed()
         resolved_factors = factors or ["inflation", "energy_index"]
         analysis_df = self._analysis_df(selected_ticker)
+        effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
-            scenario_name=scenario_name,
+            scenario_name=effective_scenario,
             shock_map=shock_map,
         )
-        stress_active = bool(shock_map) or bool(scenario_name)
+        # Stress testing is always enabled as part of the default pipeline run.
+        stress_active = True
         try:
             start_time = time.time()
             results["correlation_matrix"] = correl_mtrx(
@@ -881,6 +948,7 @@ class GoldLayer:
                 walk_forward_windows=int(
                     getattr(self.config, "governance_walk_forward_windows", 4)
                 ),
+                model_type=regression_model,
             )
             gate = self._evaluate_governance_gate(
                 results["governance_report"], ticker=selected_ticker
@@ -1032,24 +1100,27 @@ class GoldLayer:
             results["monte_carlo"] = None
 
         try:
-            if stress_active:
-                results["stress_test"] = stress_test(
-                    analysis_df,
-                    shock_map or {},
-                    target=target,
-                    ticker=selected_ticker,
-                    macro_lag_days=0,
-                    scenario_name=scenario_name,
-                )
-                if results["stress_test"] is not None:
-                    print(
-                        ANALYSIS_STRESS_TEST.format(
-                            shock_details=str(shock_map),
-                            max_drawdown="N/A",  # Could calculate if needed
-                        )
+            results["stress_test"] = stress_test(
+                analysis_df,
+                shock_map or {},
+                target=target,
+                ticker=selected_ticker,
+                macro_lag_days=0,
+                scenario_name=effective_scenario,
+            )
+            if results["stress_test"] is not None:
+                print(
+                    ANALYSIS_STRESS_TEST.format(
+                        shock_details=str(
+                            (results["stress_test"].get("scenario", {}) or {}).get(
+                                "factor_shocks", shock_map or {}
+                            )
+                            if isinstance(results["stress_test"], dict)
+                            else (shock_map or {})
+                        ),
+                        max_drawdown="N/A",  # Could calculate if needed
                     )
-            else:
-                results["stress_test"] = "Shock map not provided"
+                )
         except AnalysisError as e:
             self.logger.error(f"Analysis error in stress test: {e}")
             results["stress_test"] = None
@@ -1062,7 +1133,7 @@ class GoldLayer:
                 analysis_df,
                 target,
                 resolved_factors,
-                "OLS",
+                regression_model,
                 ticker=selected_ticker,
                 macro_lag_days=0,
             )
@@ -1184,11 +1255,13 @@ class GoldLayer:
         selected_ticker = self._resolve_ticker(ticker)
         random_seed = self._resolve_random_seed()
         analysis_df = self._analysis_df(selected_ticker)
+        effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
-            scenario_name=scenario_name,
+            scenario_name=effective_scenario,
             shock_map=shock_map,
         )
-        stress_active = bool(shock_map) or bool(scenario_name)
+        # Stress testing is always enabled as part of the default pipeline run.
+        stress_active = True
         auto_ml_enabled = (
             bool(getattr(self.config, "auto_ml_enabled", False))
             if include_auto_ml is None
@@ -1207,6 +1280,7 @@ class GoldLayer:
                 random_seed,
                 bool(getattr(self.config, "enforce_reproducibility", True)),
                 int(getattr(self.config, "governance_walk_forward_windows", 4)),
+                model_type=regression_model,
             )
             gate = self._evaluate_governance_gate(
                 results["governance_report"], ticker=selected_ticker
@@ -1343,21 +1417,17 @@ class GoldLayer:
         else:
             results["monte_carlo"] = "Ticker not specified"
 
-        if stress_active:
-            tasks["stress_test"] = partial(
-                stress_test,
-                analysis_df,
-                shock_map or {},
-                target,
-                selected_ticker,
-                None,
-                None,
-                0,
-                scenario_name,
-            )
-        else:
-            results["stress_test"] = "Shock map not provided"
-
+        tasks["stress_test"] = partial(
+            stress_test,
+            analysis_df,
+            shock_map or {},
+            target,
+            selected_ticker,
+            None,
+            None,
+            0,
+            effective_scenario,
+        )
         # Run parallel tasks
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=worker_count

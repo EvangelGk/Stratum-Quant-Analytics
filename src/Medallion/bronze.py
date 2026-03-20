@@ -190,16 +190,13 @@ class BronzeLayer:
     ) -> None:
         """
         Fetches data with retry logic and saves it.
-        Includes random delays to avoid rate limits.
+        The inter-attempt delay is applied AFTER a failure, not before the
+        first attempt, to avoid unnecessary latency on successful requests.
         """
         for attempt in range(self.config.max_retries):
             try:
                 self._wait_for_circuit(source)
                 self._acquire_rate_slot(source)
-                delay = random.uniform(
-                    self.config.retry_delay_min, self.config.retry_delay_max
-                )
-                time.sleep(delay)  # Random delay to avoid rate limits
                 df = fetcher.fetch(*params)
                 self._process_and_save(df, filename, source)
                 self._record_provider_success(source)
@@ -212,9 +209,14 @@ class BronzeLayer:
             except FetcherError as e:
                 self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
-                    self.logger.warning(
-                        f"Attempt {attempt + 1} failed for {filename}: {e}. Retrying..."
+                    delay = random.uniform(
+                        self.config.retry_delay_min, self.config.retry_delay_max
                     )
+                    self.logger.warning(
+                        f"Attempt {attempt + 1} failed for {filename}: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
                 else:
                     self.logger.error(
                         (
@@ -226,10 +228,14 @@ class BronzeLayer:
             except TimeoutError as e:
                 self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
+                    delay = random.uniform(
+                        self.config.retry_delay_min, self.config.retry_delay_max
+                    )
                     self.logger.warning(
                         f"Timeout on attempt {attempt + 1} for {filename}: {e}."
-                        " Retrying..."
+                        f" Retrying in {delay:.1f}s..."
                     )
+                    time.sleep(delay)
                 else:
                     raise
             except RateLimitError as e:
@@ -258,12 +264,13 @@ class BronzeLayer:
             now = time.time()
             elapsed = now - state["last_request_ts"]
             wait_for = max(0.0, min_interval - elapsed)
+            # Reserve the slot by stamping the FUTURE timestamp before releasing
+            # the lock.  This prevents concurrent threads from observing the same
+            # elapsed value and all deciding to proceed simultaneously.
+            state["last_request_ts"] = now + wait_for
 
         if wait_for > 0:
             time.sleep(wait_for)
-
-        with self.lock:
-            self.provider_state[source]["last_request_ts"] = time.time()
 
     def _wait_for_circuit(self, source: str) -> None:
         with self.lock:

@@ -1,10 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import statsmodels.api as sm
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
-from .mixed_frequency import prepare_supervised_frame
+from .mixed_frequency import prepare_supervised_frame, resolve_target_horizon
 
 
 PRESET_SCENARIOS: Dict[str, Dict[str, Any]] = {
@@ -236,23 +236,25 @@ def stress_test(
             if not scope_matches:
                 direct_target_shock = 0.0
 
-        results = {}
-        for factor, shock in resolved_shocks.items():
+        model_factors: List[str] = list(resolved_shocks.keys())
+        for factor in model_factors:
             if factor not in work_df.columns:
                 raise DataValidationError(f"Factor {factor} not found in DataFrame.")
 
-            panel, _ = prepare_supervised_frame(
-                df=work_df,
-                target=target,
-                features=[factor],
-                ticker=ticker,
-                macro_lag_days=macro_lag_days,
+        panel, metadata = prepare_supervised_frame(
+            df=work_df,
+            target=target,
+            features=model_factors,
+            ticker=ticker,
+            macro_lag_days=macro_lag_days,
+        )
+        if len(panel) < 30:
+            raise DataValidationError(
+                "Insufficient transformed rows for stress test."
             )
-            if len(panel) < 30:
-                raise DataValidationError(
-                    f"Insufficient transformed rows for stress factor {factor}."
-                )
 
+        results = {}
+        for factor, shock in resolved_shocks.items():
             model = sm.OLS(panel[target], sm.add_constant(panel[factor])).fit()
             impact = model.params[factor] * shock
             results[factor] = {
@@ -264,6 +266,15 @@ def stress_test(
             "scenario": scenario_payload,
             "anchor_event": anchor_event or "full_sample",
             "target": target,
+            # All beta estimates are computed against a forward cumulative return
+            # window equal to target_horizon_days.  A predicted_impact of -0.03
+            # means the model expects a -3% move over that horizon, not instantly.
+            "target_horizon_days": int(
+                metadata.get(target, {}).get(
+                    "target_horizon_days",
+                    resolve_target_horizon(model_factors),
+                )
+            ),
             "sector_scope_applied": sector_hint if sector_hint else None,
             "sector_scope_match": sector_scope_match,
             "direct_target_shock": direct_target_shock,

@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.stattools import adfuller, kpss
 
@@ -58,6 +58,7 @@ def _walk_forward_backtest(
     min_train_rows: int,
     clipped_floor: float = -2.0,
     min_test_size: int = 20,
+    model_type: str = "OLS",
 ) -> Dict[str, Any]:
     n_rows = len(df)
     windows = max(2, windows)
@@ -90,9 +91,9 @@ def _walk_forward_backtest(
         x_test = test_df[factors]
         y_test = test_df[target]
 
-        model = LinearRegression()
-        model.fit(x_train, y_train)
-        y_pred = model.predict(x_test)
+        estimator = Ridge(alpha=0.5) if model_type == "Ridge" else LinearRegression()
+        estimator.fit(x_train, y_train)
+        y_pred = estimator.predict(x_test)
 
         metrics.append(
             {
@@ -307,6 +308,7 @@ def governance_report(
     reproducibility_enforced: bool = True,
     walk_forward_windows: int = 4,
     clipped_walk_forward_floor: float = -2.0,
+    model_type: str = "OLS",
 ) -> Dict[str, Any]:
     """Build statistical-governance diagnostics for regression analyses.
 
@@ -346,13 +348,28 @@ def governance_report(
         # 300 rows per window is a reasonable floor for daily financial series.
         adaptive_walk_windows = max(2, min(walk_forward_windows, len(work_df) // 300))
 
+        # --- Stationarity tests on RAW data (before any transformation) ---
+        # Running ADF/KPSS on series that have already been differenced/log-diffed
+        # by prepare_supervised_frame produces circular results (the transform
+        # was designed to make them stationary).  Test the original df columns
+        # to correctly characterise whether each raw series needs differencing.
         stationarity: Dict[str, Dict[str, Any]] = {}
         for col in [target] + valid_factors:
-            series = work_df[col].dropna()
+            if col not in df.columns:
+                stationarity[col] = {
+                    "status": "column_not_found",
+                    "adf_p_value": None,
+                    "kpss_p_value": None,
+                    "is_stationary": None,
+                }
+                continue
+            series = pd.to_numeric(df[col], errors="coerce").dropna()
             if len(series) < 20:
                 stationarity[col] = {
                     "status": "insufficient_data",
+                    "adf_stat": None,
                     "adf_p_value": None,
+                    "kpss_stat": None,
                     "kpss_p_value": None,
                     "is_stationary": None,
                 }
@@ -378,6 +395,7 @@ def governance_report(
                 "kpss_p_value": float(kpss_p_value) if pd.notna(kpss_p_value) else None,
                 "is_stationary": is_stationary,
             }
+        # -----------------------------------------------------------------
 
         split_idx = int(len(work_df) * (1 - test_ratio))
         split_idx = max(min_train_rows, min(split_idx, len(work_df) - 5))
@@ -390,7 +408,7 @@ def governance_report(
         x_test = test_df[valid_factors]
         y_test = test_df[target]
 
-        model = LinearRegression()
+        model = Ridge(alpha=0.5) if model_type == "Ridge" else LinearRegression()
         model.fit(x_train, y_train)
         predictions = model.predict(x_test)
         adaptive_min_test_size = max(12, min(60, len(work_df) // max(10, walk_forward_windows * 3)))
@@ -402,6 +420,7 @@ def governance_report(
             min_train_rows=min_train_rows,
             clipped_floor=clipped_walk_forward_floor,
             min_test_size=adaptive_min_test_size,
+            model_type=model_type,
         )
 
         leakage_flags: List[str] = []
@@ -533,6 +552,7 @@ def governance_report(
 
         return {
             "status": "ok",
+            "model_type": model_type,
             "split": {
                 "train_rows": int(len(train_df)),
                 "test_rows": int(len(test_df)),

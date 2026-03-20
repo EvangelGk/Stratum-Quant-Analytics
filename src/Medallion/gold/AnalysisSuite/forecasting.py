@@ -60,39 +60,53 @@ def forecasting(
         work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
         work_df = work_df.dropna(subset=["date"]).sort_values("date")
 
+        raw_series = pd.to_numeric(work_df[column], errors="coerce")
+
+        # Determine the stationary transformation for the requested column,
+        # then forecast that series directly — not a derived volatility measure.
         if column == "log_return":
-            returns = pd.to_numeric(work_df[column], errors="coerce")
+            # log-returns are already stationary
+            transformed = raw_series
+            target_label = column
         elif column == "close":
-            prices = pd.to_numeric(work_df[column], errors="coerce")
-            returns = np.log(prices / prices.shift(1))
+            # convert price level to log-returns for stationarity
+            transformed = np.log(raw_series / raw_series.shift(1))
+            target_label = "log_return_from_close"
         else:
-            raw_series = pd.to_numeric(work_df[column], errors="coerce")
-            returns = raw_series.diff()
+            # first-difference general macro/economic series
+            transformed = raw_series.diff()
+            target_label = f"differenced_{column}"
 
-        realized_vol = returns.rolling(volatility_window).std() * np.sqrt(252)
-        conditional_vol = returns.ewm(span=volatility_window, min_periods=volatility_window).std() * np.sqrt(252)
-        ts_data = (
-            0.5 * realized_vol + 0.5 * conditional_vol
-        ).dropna()
+        transformed = transformed.replace([np.inf, -np.inf], np.nan)
+        valid_idx = transformed.dropna().index
+        ts_data = transformed.loc[valid_idx].copy()
         if ts_data.empty:
-            raise DataValidationError("No volatility series available for forecasting.")
+            raise DataValidationError(
+                f"No data available for column '{column}' after stationarity transformation."
+            )
 
-        ts_data.index = pd.to_datetime(work_df.loc[ts_data.index, "date"].values)
+        # Align a DateTimeIndex so ARIMA can produce interpretable forecast dates
+        ts_data.index = pd.to_datetime(work_df.loc[valid_idx, "date"].values)
 
-        model = ARIMA(ts_data, order=order)
+        # Series above are explicitly transformed to stationarity, so we keep
+        # ARIMA integration order at d=0 to avoid over-differencing.
+        effective_order = (int(order[0]), 0, int(order[2]))
+        model = ARIMA(ts_data, order=effective_order)
         model_fit = model.fit()
         forecast_res = model_fit.get_forecast(steps=steps)
         forecast = forecast_res.predicted_mean
         conf_int = forecast_res.conf_int(alpha=0.10)
         return {
-            "target": "annualized_volatility",
+            "target": target_label,
+            "column": column,
             "ticker": ticker,
-            "current_volatility": float(ts_data.iloc[-1]),
+            "current_value": float(ts_data.iloc[-1]),
             "forecast": [float(x) for x in forecast.tolist()],
             "lower_90": [float(x) for x in conf_int.iloc[:, 0].tolist()],
             "upper_90": [float(x) for x in conf_int.iloc[:, 1].tolist()],
             "volatility_window": int(volatility_window),
-            "method": "rolling_std_plus_ewm_garch_like",
+            "order": list(effective_order),
+            "method": "arima",
         }
     except DataValidationError:
         raise

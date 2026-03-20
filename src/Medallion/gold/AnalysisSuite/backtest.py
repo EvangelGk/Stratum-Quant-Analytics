@@ -65,8 +65,10 @@ def backtest_pre2020_holdout(
         actual = pd.to_numeric(test_df[target], errors="coerce").fillna(0.0)
 
         te = _tracking_error(actual, predictions)
-        strategy_returns = np.asarray(predictions, dtype=float)
-        mdd = _max_drawdown_from_returns(strategy_returns)
+        # MDD is a risk metric for the strategy holding the actual position,
+        # not for the model's fitted values.  Use actual returns.
+        actual_returns = np.asarray(actual, dtype=float)
+        mdd = _max_drawdown_from_returns(actual_returns)
 
         return {
             "window": {

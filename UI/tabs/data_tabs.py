@@ -12,6 +12,7 @@ from UI.constants import GOLD_DIR, LOGS_DIR, OUTPUT_DIR, PROJECT_ROOT, RAW_DIR, 
 from UI.content import ANALYSIS_HELP, LAYER_HELP
 from UI.helpers import load_session_history
 from UI.rendering import FETCHERS_MOD, MAIN_MOD, MEDALLION_MOD, render_logger_message
+from UI.runtime import rerun_stress_test_only
 from UI.traffic_light import (
     badge_html,
     score_governance_gate,
@@ -352,13 +353,13 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
         _render_key_values(value, header="Sensitivity Summary")
         return
 
-    st.markdown("### 🧭 Τι επηρεάζει περισσότερο τις αποδόσεις")
+    st.markdown("### 🧭 What Drives Returns the Most")
     r2 = value.get("r2")
     n_obs = value.get("n_obs")
     c1, c2, c3 = st.columns(3)
     c1.metric("Model", str(value.get("model", "N/A")))
     c2.metric("R²", _fmt_scalar(r2))
-    c3.metric("Παρατηρήσεις", _fmt_scalar(n_obs))
+    c3.metric("Observations", _fmt_scalar(n_obs))
 
     cdf = pd.DataFrame(
         [{"factor": str(k), "coefficient": float(v)} for k, v in coeffs.items()]
@@ -371,15 +372,15 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
         y="coefficient",
         color="coefficient",
         color_continuous_scale="RdYlGn",
-        title="Επίδραση κάθε macro factor στις αποδόσεις",
+        title="Impact of each macro factor on returns",
     )
     fig.update_layout(height=360, coloraxis_colorbar_title="Coef")
     st.plotly_chart(fig, width="stretch")
 
     top = cdf.iloc[0]
-    direction = "αυξάνει" if float(top["coefficient"]) > 0 else "μειώνει"
+    direction = "increases" if float(top["coefficient"]) > 0 else "decreases"
     st.success(
-        f"Κυρίαρχος παράγοντας: **{top['factor']}**. Όταν ανεβαίνει, τείνει να **{direction}** την απόδοση."
+        f"Dominant factor: **{top['factor']}**. When it rises, returns tend to **{direction}**."
     )
 
 
@@ -388,7 +389,7 @@ def _render_backtest_payload(value: dict) -> None:
         _render_key_values(value, header="Backtest Summary")
         return
 
-    st.markdown("### 🧪 Πώς πήγε το μοντέλο στην κρίση 2020-2022")
+    st.markdown("### 🧪 Model Performance During the 2020-2022 Crisis")
     te = value.get("tracking_error")
     mdd = value.get("maximum_drawdown")
     train_rows = value.get("train_rows")
@@ -418,7 +419,7 @@ def _render_backtest_payload(value: dict) -> None:
                 x=bdf["step"],
                 y=bdf["actual_curve"],
                 mode="lines",
-                name="Πραγματική πορεία",
+                name="Actual path",
                 line=dict(color="#b91c1c", width=3),
             )
         )
@@ -427,23 +428,23 @@ def _render_backtest_payload(value: dict) -> None:
                 x=bdf["step"],
                 y=bdf["predicted_curve"],
                 mode="lines",
-                name="Πρόβλεψη μοντέλου",
+                name="Model prediction",
                 line=dict(color="#0f766e", width=3),
             )
         )
         fig.update_layout(
-            title="Σύγκριση πρόβλεψης vs πραγματικότητας (2020-2022)",
-            xaxis_title="Χρονικό βήμα",
-            yaxis_title="Σωρευτική πορεία κεφαλαίου",
+            title="Prediction vs Reality (2020-2022)",
+            xaxis_title="Time step",
+            yaxis_title="Cumulative equity curve",
             height=380,
         )
         st.plotly_chart(fig, width="stretch")
 
         avg_abs_err = float((bdf["predicted_return"] - bdf["actual_return"]).abs().mean())
         st.info(
-            "Απλή ανάγνωση: αν οι 2 καμπύλες είναι κοντά, το μοντέλο "
-            "κρατάει καλά στη κρίση. Όσο απομακρύνονται, τόσο αυξάνει το σφάλμα. "
-            f"Μέσο απόλυτο σφάλμα ανά περίοδο: {avg_abs_err:.4f}."
+            "Plain reading: when the 2 curves stay close, the model holds up well under crisis conditions. "
+            "The further they diverge, the higher the error. "
+            f"Mean absolute error per period: {avg_abs_err:.4f}."
         )
 
 
@@ -459,9 +460,9 @@ def _render_elasticity_payload(value: dict) -> None:
     f2.metric("Data Points", _fmt_scalar(points))
     f3.metric("Macro Factor", str(value.get("macro_factor", "N/A")))
 
-    direction = "ανεβαίνει" if isinstance(static_el, (int, float)) and static_el >= 0 else "πέφτει"
+    direction = "rises" if isinstance(static_el, (int, float)) and static_el >= 0 else "falls"
     st.success(
-        f"Απλό insight: όταν ο macro factor αυξάνεται, η απόδοση τείνει να **{direction}**."
+        f"Simple insight: when the macro factor increases, returns tend to **{direction}**."
     )
 
     rolling = value.get("rolling_elasticity", [])
@@ -475,7 +476,7 @@ def _render_elasticity_payload(value: dict) -> None:
                     rdf,
                     x="date",
                     y="elasticity",
-                    title="Πώς αλλάζει η ευαισθησία στον χρόνο",
+                    title="How sensitivity changes over time",
                 )
                 fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
                 fig.update_layout(height=340)
@@ -508,7 +509,7 @@ def _render_lag_payload(value: dict) -> None:
                     x="lag_days",
                     y="correlation",
                     markers=True,
-                    title="Καθυστέρηση επίδρασης macro factor",
+                    title="Macro factor transmission delay (lag profile)",
                 )
                 fig.add_hline(y=0, line_dash="dot", line_color="#777")
                 fig.update_layout(height=340)
@@ -543,7 +544,7 @@ def _render_forecasting_payload(value: dict) -> None:
                     fill="tonexty",
                     fillcolor="rgba(2,132,199,0.2)",
                     line=dict(width=0),
-                    name="90% Διάστημα",
+                    name="90% CI",
                 )
             )
         fig.add_trace(
@@ -551,11 +552,11 @@ def _render_forecasting_payload(value: dict) -> None:
                 x=fdf["step"],
                 y=fdf["forecast"],
                 mode="lines+markers",
-                name="Πρόβλεψη",
+                name="Forecast",
                 line=dict(color="#0284c7", width=3),
             )
         )
-        fig.update_layout(height=340, title="Πρόβλεψη μεταβλητότητας")
+        fig.update_layout(height=340, title="Volatility Forecast")
         st.plotly_chart(fig, width="stretch")
 
 
@@ -587,7 +588,7 @@ def _render_monte_carlo_payload(value: dict) -> None:
             rows.append({"metric": _human_label(k), "value": float(v)})
     if rows:
         rdf = pd.DataFrame(rows)
-        fig = px.bar(rdf, x="metric", y="value", title="Κρίσιμες απώλειες (VaR / ES)")
+        fig = px.bar(rdf, x="metric", y="value", title="Tail Risk Summary (VaR / ES)")
         fig.update_layout(height=350)
         st.plotly_chart(fig, width="stretch")
 
@@ -600,13 +601,13 @@ def _render_auto_ml_payload(value: dict) -> None:
     best_model = value.get("best_model", "N/A")
     c1 = st.columns(1)[0]
     c1.metric("Best Model", str(best_model))
-    st.success("Το AutoML διάλεξε το μοντέλο που απέδωσε καλύτερα για τα δεδομένα αυτού του run.")
+    st.success("AutoML selected the best-performing model for this run's dataset.")
 
     preds = value.get("predictions")
     if isinstance(preds, list) and preds:
         pdf = pd.DataFrame(preds)
         if {"prediction"}.issubset(pdf.columns):
-            fig = px.histogram(pdf, x="prediction", nbins=30, title="Κατανομή προβλέψεων")
+            fig = px.histogram(pdf, x="prediction", nbins=30, title="Prediction Distribution")
             fig.update_layout(height=320)
             st.plotly_chart(fig, width="stretch")
 
@@ -635,7 +636,7 @@ def _render_feature_decay_payload(value: dict) -> None:
     if not ddf.empty and "half_life_lag_days" in ddf.columns:
         ddf = ddf.dropna(subset=["half_life_lag_days"])
         if not ddf.empty:
-            fig = px.bar(ddf, x="feature", y="half_life_lag_days", title="Πόσο γρήγορα παλιώνει η πληροφορία")
+            fig = px.bar(ddf, x="feature", y="half_life_lag_days", title="Feature Decay: How Quickly Signal Goes Stale")
             fig.update_layout(height=330)
             st.plotly_chart(fig, width="stretch")
 
@@ -651,7 +652,7 @@ def _render_governance_report_payload(value: dict) -> None:
     c1.metric("OOS R²", _fmt_scalar(oos))
     c2.metric("Walk-forward R²", _fmt_scalar(wf))
     c3.metric("Model Risk", _fmt_scalar(risk))
-    st.caption("Το Report είναι διάγνωση ποιότητας μοντέλου, όχι τελική άδεια παραγωγής.")
+    st.caption("The Report is a model quality/risk diagnostic, not a production approval.")
 
 
 def _render_governance_gate_payload(value: dict) -> None:
@@ -667,7 +668,7 @@ def _render_governance_gate_payload(value: dict) -> None:
     c2.metric("Severity", str(value.get("severity", "N/A")).upper())
     reasons = value.get("reasons", [])
     if isinstance(reasons, list) and reasons:
-        st.markdown("**Γιατί βγήκε αυτή η απόφαση**")
+        st.markdown("**Why this gate decision was reached**")
         for reason in reasons:
             st.markdown(f"- {reason}")
 
@@ -712,13 +713,70 @@ def _render_analysis_view(analysis_name: str, payload: object) -> None:
     _render_analysis_payload(analysis_name, payload)
 
 
+def _render_stress_rerun_controls() -> None:
+    st.markdown("### 🔁 Re-run Stress Test")
+    scenario_options = [
+        "geopolitical_conflict",
+        "monetary_tightening",
+        "tech_correction",
+        "stagflation",
+        "liquidity_freeze",
+        "commodity_super_spike",
+        "supply_chain_dislocation",
+        "sovereign_debt_stress",
+        "custom",
+    ]
+    c1, c2 = st.columns(2)
+    scenario_choice = c1.selectbox(
+        "Scenario",
+        options=scenario_options,
+        index=0,
+        key="stress_rerun_scenario",
+    )
+    ticker_choice = c2.text_input(
+        "Ticker (optional)",
+        value="",
+        key="stress_rerun_ticker",
+        help="Leave blank to use the full analysis universe.",
+    ).strip().upper()
+
+    custom_shocks_raw = st.text_area(
+        "Custom shocks JSON (optional)",
+        value="{}",
+        key="stress_rerun_shocks",
+        help='Example: {"inflation": 0.03, "energy_index": 0.20}',
+    )
+
+    if st.button("Run Stress Test Now", type="primary", key="stress_rerun_btn"):
+        try:
+            parsed = json.loads(custom_shocks_raw) if custom_shocks_raw.strip() else {}
+            if not isinstance(parsed, dict):
+                raise ValueError("Custom shocks must be a JSON object.")
+            shock_map = {str(k): float(v) for k, v in parsed.items()}
+        except Exception as exc:
+            st.error(f"Invalid custom shocks JSON: {exc}")
+            return
+
+        try:
+            rerun_stress_test_only(
+                scenario_name=scenario_choice,
+                shock_map=shock_map,
+                ticker=ticker_choice or None,
+                target="log_return",
+            )
+            st.success("Stress test re-ran successfully. Output refreshed.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Stress rerun failed: {exc}")
+
+
 def _render_stress_payload(value: object) -> bool:
     """Return True when stress payload was rendered with a specific UI path."""
     if isinstance(value, str) and "Shock map not provided" in value:
-        st.error("Δεν εφαρμόστηκε stress scenario σε αυτό το run.")
+        st.error("No stress scenario was applied in this run.")
         st.caption(
-            "Το stress_test έμεινε κενό γιατί δεν δόθηκε shock map/scenario. "
-            "Άρα τα stress αποτελέσματα δεν είναι διαθέσιμα για ερμηνεία."
+            "stress_test was skipped because no shock map/scenario was provided to the pipeline. "
+            "Stress results are therefore unavailable for interpretation."
         )
         return True
 
@@ -751,7 +809,7 @@ def _render_stress_payload(value: object) -> bool:
                 x="Impact",
                 y="Factor",
                 orientation="h",
-                title="Impact ανά παράγοντα stress",
+                title="Estimated impact per stressed factor",
                 color="Impact",
                 color_continuous_scale="RdYlGn",
             )
@@ -766,10 +824,10 @@ def _render_governance_consistency_panel(results: dict) -> None:
     if not isinstance(report, dict) and not isinstance(gate, dict):
         return
 
-    st.markdown("### 🛡️ Governance: Τι είναι τι")
+    st.markdown("### 🛡️ Governance: Report vs Gate")
     st.caption(
-        "Governance Report = διαγνωστικό quality/risk report. Governance Gate = τελική απόφαση αν επιτρέπεται η έξοδος. "
-        "Δεν είναι διπλότυπα, έχουν διαφορετικό ρόλο."
+        "Governance Report = model quality/risk diagnostic. Governance Gate = final production approval decision. "
+        "They are not duplicates — they serve different roles."
     )
 
     report_status = str(report.get("status", "unknown")).upper() if isinstance(report, dict) else "N/A"
@@ -783,12 +841,12 @@ def _render_governance_consistency_panel(results: dict) -> None:
     if isinstance(report, dict) and isinstance(gate, dict):
         if report_status in {"FAIL", "ERROR", "CRITICAL"} and gate_passed:
             st.warning(
-                "Το Report δείχνει αδύναμο quality/risk προφίλ, αλλά το Gate το επέτρεψε με warning policy. "
-                "Αυτό είναι επιτρεπτό μόνο όταν το policy είναι advisory και όχι hard-block."
+                "The Report shows a weak quality/risk profile, but the Gate allowed the run under a warning policy. "
+                "This is only acceptable when the policy is advisory, not a hard-block."
             )
         elif report_status == "OK" and gate_passed is False:
             st.warning(
-                "Το Report είναι OK αλλά το Gate έκοψε το run λόγω policy-level κανόνων/thresholds."
+                "The Report is OK but the Gate blocked this run due to policy-level rules or thresholds."
             )
 
 
@@ -914,30 +972,36 @@ def show_analytics_tab() -> None:
     st.markdown("---")
     st.markdown("### 🧩 Analysis Explorer")
     st.caption(
-        "Διάλεξε μια ανάλυση για καθαρό insight-first view με γραφήματα και απλή ερμηνεία."
+        "Select an analysis for a clean insight-first view with charts and plain-language interpretation."
     )
 
-    analysis_names = sorted(artifacts.keys())
+    analysis_names = sorted(set(artifacts.keys()) | {"stress_test"})
     selected_analysis = st.selectbox(
-        "Επίλεξε ανάλυση",
+        "Select analysis",
         options=analysis_names,
         format_func=lambda name: ANALYSIS_HELP.get(name, {}).get("title", _human_label(name)),
     )
 
+    if selected_analysis == "stress_test":
+        _render_stress_rerun_controls()
+        st.markdown("---")
+
     selected_file = artifacts.get(selected_analysis)
+    if not selected_file and selected_analysis == "stress_test":
+        selected_file = str(OUTPUT_DIR / "stress_test.json")
     full_path = OUTPUT_DIR / selected_file if selected_file and not Path(selected_file).is_absolute() else Path(selected_file)
     help_entry = ANALYSIS_HELP.get(selected_analysis, {})
     if help_entry:
         h1, h2, h3 = st.columns(3)
-        h1.info(f"Τι κάνει: {help_entry['what']}")
-        h2.info(f"Πώς διαβάζεται: {help_entry['read']}")
-        h3.info(f"Πώς βοηθά απόφαση: {help_entry['use']}")
+        h1.info(f"What it does: {help_entry['what']}")
+        h2.info(f"How to read it: {help_entry['read']}")
+        h3.info(f"Decision value: {help_entry['use']}")
 
     if not full_path.exists():
-        st.warning("Το αρχείο της ανάλυσης δεν βρέθηκε. Τρέξε pipeline ξανά.")
+        st.warning("Analysis file not found. Run the pipeline first.")
         return
 
-    st.caption(f"Πηγή: {selected_file}")
+    st.caption(f"Source: {selected_file}")
     if full_path.suffix == ".json":
         payload = _read_json_fast(full_path)
         _render_analysis_view(selected_analysis, payload)

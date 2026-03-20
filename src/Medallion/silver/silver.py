@@ -113,7 +113,16 @@ class SilverLayer:
         failed_entities: List[str] = [
             k for k, v in self.quality_reports.items() if v.get("status") == "failed"
         ]
-        source_success: Dict[str, int] = {"yfinance": 0, "fred": 0, "worldbank": 0}
+        # Build source success tracking only for sources that actually appeared
+        # in the catalog.  Sources that had zero tasks (e.g. FRED when the API
+        # key is absent) are intentionally absent and must not be flagged as
+        # missing — that would cause a false hard-fail.
+        catalog_sources = {
+            info.get("source")
+            for info in catalog.values()
+            if info.get("source")
+        }
+        source_success: Dict[str, int] = {src: 0 for src in catalog_sources}
         for report in self.quality_reports.values():
             src = report.get("source")
             if src in source_success and report.get("status") == "success":

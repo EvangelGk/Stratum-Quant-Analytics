@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from .mixed_frequency import stationary_transform
+
 
 def feature_decay_analysis(
     df: pd.DataFrame,
@@ -37,14 +39,20 @@ def feature_decay_analysis(
         work_df = work_df.dropna(subset=["date"]).sort_values("date")
 
     out: Dict[str, Any] = {}
-    y = pd.to_numeric(work_df[target], errors="coerce")
+    # Apply stationary transforms before computing lag correlations.
+    # Raw macro level series (inflation index, energy index) trend over time;
+    # Pearson correlation on trending levels produces spuriously high values
+    # that reflect shared drift, not genuine predictive information.
+    y_raw = pd.to_numeric(work_df[target], errors="coerce")
+    y, _ = stationary_transform(y_raw, target, keep_as_is=True)
     for feature in features:
         if feature not in work_df.columns:
             continue
-        x_base = pd.to_numeric(work_df[feature], errors="coerce")
+        x_raw = pd.to_numeric(work_df[feature], errors="coerce")
+        x_stationary, transform_method = stationary_transform(x_raw, feature)
         rows = []
         for lag in range(0, max_lag + 1):
-            aligned = pd.concat([y, x_base.shift(lag)], axis=1).dropna()
+            aligned = pd.concat([y, x_stationary.shift(lag)], axis=1).dropna()
             if len(aligned) < 25:
                 corr = None
             else:
@@ -64,6 +72,7 @@ def feature_decay_analysis(
         out[feature] = {
             "baseline_correlation": baseline,
             "half_life_lag_days": half_life,
+            "transform_method": transform_method,
             "decay_scan": rows,
         }
 

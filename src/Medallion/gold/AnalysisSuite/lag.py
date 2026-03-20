@@ -63,6 +63,7 @@ def lag_analysis(
         if panel.empty or len(panel) <= max(10, reference_lag_days + 5):
             raise DataValidationError("Insufficient aligned data for lag analysis.")
 
+        publication_lag_days = int(metadata.get(column, {}).get("lag_days", 0))
         lag_table = []
         best_row = {"lag_days": 0, "correlation": 0.0}
         target_series = panel[target]
@@ -75,7 +76,11 @@ def lag_analysis(
                 correlation = None
             else:
                 correlation = float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
-            row = {"lag_days": lag_days, "correlation": correlation}
+            row = {
+                "lag_days": lag_days,
+                "effective_lag_days": int(publication_lag_days + lag_days),
+                "correlation": correlation,
+            }
             lag_table.append(row)
             if isinstance(correlation, float) and abs(correlation) > abs(
                 float(best_row.get("correlation") or 0.0)
@@ -95,9 +100,12 @@ def lag_analysis(
             "target": target,
             "macro_feature": column,
             "ticker": ticker,
-            "best_lag_days": int(best_row["lag_days"]),
+            "publication_lag_days": publication_lag_days,
+            "best_incremental_lag_days": int(best_row["lag_days"]),
+            "best_lag_days": int(best_row["effective_lag_days"]),
             "best_lag_correlation": best_row["correlation"],
-            "reference_lag_days": int(reference_lag_days),
+            "reference_incremental_lag_days": int(reference_lag_days),
+            "reference_lag_days": int(publication_lag_days + reference_lag_days),
             "reference_lag_correlation": reference_row["correlation"],
             "lag_scan": lag_table,
             "data_points": int(len(panel)),

@@ -1,17 +1,24 @@
 import hashlib
 import json
+from typing import Optional
 
 import pandas as pd
 from fredapi import Fred
 
+from exceptions.FetchersExceptions import MissingAPIKeyError
 from .BaseFetcher import BaseFetcher
 
 
 class FredFetcher(BaseFetcher):
     CACHE_SCHEMA_VERSION = "v2"
+    # FRED releases are monthly; a 7-day TTL avoids unnecessary re-fetches
+    # while still picking up revised vintage data within the week.
+    CACHE_TTL_SECONDS: int = 86400 * 7
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: Optional[str]):
         super().__init__()
+        if not api_key:
+            raise MissingAPIKeyError("FredFetcher requires a valid API key.")
         self.fred = Fred(api_key=api_key)
 
     # Fetching data from FRED with caching.
@@ -36,5 +43,5 @@ class FredFetcher(BaseFetcher):
         )
         df = data.to_frame(name="value").reset_index()
         df.columns = ["Date", "Value"]
-        self._set_cached(key, df)
+        self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)
         return df
