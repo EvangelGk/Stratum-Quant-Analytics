@@ -23,6 +23,20 @@ def _fmt_pct(value: object, decimals: int = 2) -> str:
     return "N/A"
 
 
+def _render_kv_table(payload: dict, title: str = "Details") -> None:
+    if not isinstance(payload, dict) or not payload:
+        return
+    rows = []
+    for key, value in payload.items():
+        if isinstance(value, (dict, list)):
+            rows.append({"Field": str(key), "Value": f"{type(value).__name__}[{len(value)}]"})
+        else:
+            rows.append({"Field": str(key), "Value": _fmt_number(value, 4) if isinstance(value, float) else str(value)})
+    if rows:
+        st.markdown(f"**{title}**")
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
 def show_auditor_tab() -> None:
     st.subheader("🧪 System Auditor")
     st.caption(
@@ -197,8 +211,29 @@ def show_auditor_tab() -> None:
                 metrics = result.get("metrics", {})
                 if isinstance(metrics, dict) and metrics:
                     m1, m2, m3 = st.columns(3)
-                    m1.metric("OOS R2", _fmt_number(metrics.get("out_of_sample_r2"), decimals=4))
-                    m2.metric("Walk-forward avg R2", _fmt_number(metrics.get("walk_forward_avg_r2"), decimals=4))
+                    oos_r2_val = metrics.get("out_of_sample_r2")
+                    oos_ci_lo = metrics.get("out_of_sample_r2_ci_lower")
+                    oos_ci_hi = metrics.get("out_of_sample_r2_ci_upper")
+                    oos_conf = metrics.get("out_of_sample_r2_ci_confidence")
+                    if oos_ci_lo is not None and oos_ci_hi is not None:
+                        conf_label = f"{int(round((oos_conf or 0.90) * 100))}% CI"
+                        oos_label = f"OOS R² ({conf_label})"
+                        oos_display = f"{_fmt_number(oos_r2_val, 4)}  [{_fmt_number(oos_ci_lo, 4)}, {_fmt_number(oos_ci_hi, 4)}]"
+                    else:
+                        oos_label = "OOS R²"
+                        oos_display = _fmt_number(oos_r2_val, 4)
+                    m1.metric(oos_label, oos_display)
+
+                    wf_avg = metrics.get("walk_forward_avg_r2")
+                    wf_ci_lo = metrics.get("walk_forward_r2_ci_lower")
+                    wf_ci_hi = metrics.get("walk_forward_r2_ci_upper")
+                    if wf_ci_lo is not None and wf_ci_hi is not None:
+                        wf_display = f"{_fmt_number(wf_avg, 4)}  [{_fmt_number(wf_ci_lo, 4)}, {_fmt_number(wf_ci_hi, 4)}]"
+                        wf_label = "Walk-forward avg R² (range)"
+                    else:
+                        wf_display = _fmt_number(wf_avg, 4)
+                        wf_label = "Walk-forward avg R²"
+                    m2.metric(wf_label, wf_display)
                     m3.metric("Model risk", _fmt_number(metrics.get("model_risk_score"), decimals=4))
                 if result.get("likely_over_strict"):
                     st.warning("Governance appears methodologically valid but potentially over-strict.")
@@ -207,7 +242,14 @@ def show_auditor_tab() -> None:
                 dynamic = result.get("dynamic_thresholds", {})
                 if isinstance(dynamic, dict) and dynamic:
                     st.markdown("**🧩 Dynamic threshold flags:**")
-                    st.json(dynamic)
+                    rows = [
+                        {
+                            "Threshold": str(k).replace("_", " ").title(),
+                            "Enabled": "Yes" if bool(v) else "No",
+                        }
+                        for k, v in dynamic.items()
+                    ]
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
             if name == "integration":
                 metrics = result.get("metrics", {})
@@ -265,10 +307,16 @@ def show_auditor_tab() -> None:
                 "density",
             }:
                 with st.expander("Metrics", expanded=False):
-                    st.json(metrics_payload)
+                    _render_kv_table(metrics_payload, title="Metrics summary")
 
-            with st.expander("🧾 Raw check payload", expanded=False):
-                st.json(result)
+            with st.expander("Archive", expanded=False):
+                st.download_button(
+                    "Download check JSON",
+                    json.dumps(result, indent=2, ensure_ascii=False),
+                    file_name=f"audit_check_{name}.json",
+                    mime="application/json",
+                    key=f"audit_download_{name}",
+                )
 
 
 def show_ops_tab(role: str) -> None:

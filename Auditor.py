@@ -683,6 +683,9 @@ class ScenarioAuditor:
         avg_r2 = walk_forward.get("avg_r2")
         median_r2 = walk_forward.get("median_r2")
         model_risk_score = report.get("model_risk_score")
+        oos_r2_ci = oos.get("r2_ci", {}) or {}
+        wf_r2_ci_lower = walk_forward.get("r2_ci_lower")
+        wf_r2_ci_upper = walk_forward.get("r2_ci_upper")
         passed_gate = bool(gate.get("passed", False))
         severity = str(gate.get("severity", "unknown"))
 
@@ -722,9 +725,14 @@ class ScenarioAuditor:
             "reasons": reasons,
             "metrics": {
                 "out_of_sample_r2": oos.get("r2"),
+                "out_of_sample_r2_ci_lower": oos_r2_ci.get("ci_lower"),
+                "out_of_sample_r2_ci_upper": oos_r2_ci.get("ci_upper"),
+                "out_of_sample_r2_ci_confidence": oos_r2_ci.get("confidence"),
                 "walk_forward_avg_r2": avg_r2,
                 "walk_forward_median_r2": median_r2,
                 "walk_forward_clipped_avg_r2": clipped_avg_r2,
+                "walk_forward_r2_ci_lower": wf_r2_ci_lower,
+                "walk_forward_r2_ci_upper": wf_r2_ci_upper,
                 "model_risk_score": model_risk_score,
             },
             "likely_over_strict": likely_over_strict,

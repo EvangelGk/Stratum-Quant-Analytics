@@ -211,6 +211,42 @@ def build_executive_report_html() -> str:
     explain = build_explainability_lines()
     summary = read_json(OUTPUT_DIR / "analysis_results.json")
     keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
+    results = summary.get("results", {}) if isinstance(summary, dict) else {}
+
+    analysis_rows: list[str] = []
+    if isinstance(results, dict):
+        for key in keys:
+            value = results.get(key)
+            status = "available"
+            highlight = ""
+            if isinstance(value, str) and value.startswith("blocked_by_governance_gate"):
+                status = "blocked"
+                highlight = "Blocked by governance gate"
+            elif isinstance(value, dict):
+                report_val = value.get("value", value)
+                if isinstance(report_val, dict):
+                    if key == "governance_report":
+                        oos = (report_val.get("out_of_sample") or {}).get("r2")
+                        risk = report_val.get("model_risk_score")
+                        if isinstance(oos, (int, float)) and isinstance(risk, (int, float)):
+                            highlight = f"OOS R²={oos:.4f}, Risk={risk:.3f}"
+                    elif key == "governance_gate":
+                        passed = report_val.get("passed")
+                        severity = report_val.get("severity")
+                        highlight = f"Gate={'PASS' if passed else 'BLOCK'} ({severity})"
+                    elif key == "correlation_matrix":
+                        shape = report_val.get("shape", [0, 0])
+                        if isinstance(shape, list) and len(shape) == 2:
+                            highlight = f"Matrix {shape[0]}x{shape[1]}"
+            elif isinstance(value, (int, float)):
+                highlight = f"Value={value:.4f}" if isinstance(value, float) else f"Value={value}"
+            analysis_rows.append(
+                "<tr>"
+                f"<td>{key}</td>"
+                f"<td>{status}</td>"
+                f"<td>{highlight or '-'}</td>"
+                "</tr>"
+            )
 
     diff_html = "Not enough run history yet."
     if diff.get("status") == "ok":
@@ -222,23 +258,122 @@ def build_executive_report_html() -> str:
         )
 
     explain_html = "".join([f"<li>{line}</li>" for line in explain])
+    analysis_table_html = (
+        "<table><thead><tr><th>Analysis</th><th>Status</th><th>Key note</th></tr></thead>"
+        f"<tbody>{''.join(analysis_rows) if analysis_rows else '<tr><td colspan=3>No analyses found.</td></tr>'}</tbody></table>"
+    )
+
+    runtime_delta_text = (
+        f"{diff['duration_delta']:+.2f}s"
+        if diff.get("status") == "ok"
+        else "N/A"
+    )
 
     return f"""
 <html>
-  <head><meta charset='utf-8'><title>Scenario Planner Executive Report</title></head>
-  <body style='font-family: Arial; margin: 24px;'>
-    <h1>Scenario Planner Executive Report</h1>
-    <p>Generated at: {datetime.now().isoformat()}</p>
-    <h3>Summary</h3>
-    <p><b>Data Health Score:</b> {health['score']}/100 ({health['status']})</p>
-    <p><b>Analysis keys:</b> {', '.join(keys)}</p>
-    <h3>Run Comparison</h3>
-    <p>{diff_html}</p>
-    <h3>Explainability</h3>
-    <ul>{explain_html}</ul>
+    <head>
+        <meta charset='utf-8'>
+        <title>Scenario Planner Executive Report</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
+            .page {{ max-width: 980px; margin: 24px auto; padding: 0 12px; }}
+            .hero {{ background: linear-gradient(135deg, #0f766e, #164e63); color: #fff; border-radius: 16px; padding: 22px; }}
+            .cards {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }}
+            .card {{ background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08); }}
+            h1, h2, h3 {{ margin: 0 0 8px 0; }}
+            ul {{ margin-top: 6px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 8px; background: #fff; border-radius: 12px; overflow: hidden; }}
+            th, td {{ border-bottom: 1px solid #e5e7eb; text-align: left; padding: 10px; font-size: 14px; }}
+            th {{ background: #ecfeff; }}
+            .section {{ margin-top: 16px; }}
+            .mono {{ font-family: ui-monospace, Menlo, Consolas, monospace; }}
+        </style>
+    </head>
+    <body>
+        <div class='page'>
+            <div class='hero'>
+                <h1>Scenario Planner Executive Report</h1>
+                <div>Generated at: <span class='mono'>{datetime.now().isoformat()}</span></div>
+            </div>
+
+            <div class='cards'>
+                <div class='card'><h3>Data Health</h3><div><b>{health['score']}/100</b> ({health['status']})</div></div>
+                <div class='card'><h3>Analyses</h3><div><b>{len(keys)}</b> generated outputs</div></div>
+                <div class='card'><h3>Runtime Delta</h3><div>{runtime_delta_text}</div></div>
+            </div>
+
+            <div class='section'>
+                <h2>Run Comparison</h2>
+                <p>{diff_html}</p>
+            </div>
+
+            <div class='section'>
+                <h2>Explainability</h2>
+                <ul>{explain_html}</ul>
+            </div>
+
+            <div class='section'>
+                <h2>Analysis Status Board</h2>
+                {analysis_table_html}
+            </div>
+        </div>
   </body>
 </html>
 """
+
+
+def build_executive_report_text() -> str:
+        health = compute_data_health()
+        diff = build_run_comparison()
+        summary = read_json(OUTPUT_DIR / "analysis_results.json")
+        keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
+        lines = [
+                "Scenario Planner - Human Report Snapshot",
+                f"Generated: {datetime.now().isoformat()}",
+                "",
+                f"Data Health: {health['score']}/100 ({health['status']})",
+                f"Analyses generated: {len(keys)}",
+        ]
+        if diff.get("status") == "ok":
+                lines.append(
+                        f"Runtime: {diff['duration_prev']:.2f}s -> {diff['duration_curr']:.2f}s (delta {diff['duration_delta']:+.2f}s)"
+                )
+        lines.append("")
+        lines.append("Explainability")
+        for line in build_explainability_lines():
+                lines.append(f"- {line}")
+        lines.append("")
+        lines.append("Analyses")
+        for key in keys:
+                lines.append(f"- {key}")
+        return "\n".join(lines)
+
+
+def persist_human_report_files() -> dict[str, str]:
+        reports_dir = OUTPUT_DIR / "human_reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        html = build_executive_report_html()
+        text_report = build_executive_report_text()
+
+        html_latest = reports_dir / "executive_report_latest.html"
+        txt_latest = reports_dir / "executive_report_latest.txt"
+        html_versioned = reports_dir / f"executive_report_{stamp}.html"
+        txt_versioned = reports_dir / f"executive_report_{stamp}.txt"
+
+        html_latest.write_text(html, encoding="utf-8")
+        txt_latest.write_text(text_report, encoding="utf-8")
+        html_versioned.write_text(html, encoding="utf-8")
+        txt_versioned.write_text(text_report, encoding="utf-8")
+
+        return {
+                "reports_dir": str(reports_dir),
+                "html_latest": str(html_latest),
+                "txt_latest": str(txt_latest),
+                "html_versioned": str(html_versioned),
+                "txt_versioned": str(txt_versioned),
+        }
 
 
 def build_smart_alerts() -> list[dict[str, str]]:

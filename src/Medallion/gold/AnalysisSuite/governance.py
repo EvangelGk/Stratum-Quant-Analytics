@@ -101,6 +101,15 @@ def _walk_forward_backtest(
 
     r2_values = [m["r2"] for m in metrics]
     clipped_r2_values = [max(clipped_floor, min(1.0, value)) for value in r2_values]
+    # Natural CI from multiple windows: percentiles of the window-R² distribution.
+    if len(r2_values) >= 4:
+        wf_ci_lower = float(np.percentile(r2_values, 10))
+        wf_ci_upper = float(np.percentile(r2_values, 90))
+    elif len(r2_values) >= 2:
+        wf_ci_lower = float(min(r2_values))
+        wf_ci_upper = float(max(r2_values))
+    else:
+        wf_ci_lower = wf_ci_upper = float(r2_values[0])
     return {
         "status": "ok",
         "windows_requested": windows,
@@ -109,7 +118,88 @@ def _walk_forward_backtest(
         "median_r2": float(np.median(r2_values)),
         "clipped_avg_r2": float(np.mean(clipped_r2_values)),
         "worst_r2": float(np.min(r2_values)),
+        "r2_ci_lower": round(wf_ci_lower, 4),
+        "r2_ci_upper": round(wf_ci_upper, 4),
         "window_metrics": metrics,
+    }
+
+
+def _oos_r2_confidence_interval(
+    model: LinearRegression,
+    test_df: pd.DataFrame,
+    x_cols: List[str],
+    y_col: str,
+    n_bootstrap: int = 200,
+    block_size: int | None = None,
+    confidence: float = 0.90,
+) -> Dict[str, Any]:
+    """Circular block bootstrap confidence interval for out-of-sample R².
+
+    Returns a stable range rather than a single point estimate — more robust
+    to the specific test-period boundary chosen by the 80/20 train/test split.
+    Degenerate bootstrap draws (near-zero outcome variance) are excluded.
+    """
+    n = len(test_df)
+    if n < 5:
+        return {
+            "status": "insufficient_data",
+            "point_estimate": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "mean": None,
+            "std": None,
+            "n_bootstrap": 0,
+            "confidence": confidence,
+        }
+    block = block_size if block_size is not None else max(2, int(np.sqrt(n)))
+    y_arr = test_df[y_col].values.astype(float)
+    x_arr = test_df[x_cols].values.astype(float)
+    point_estimate = float(r2_score(y_arr, model.predict(x_arr)))
+
+    rng = np.random.default_rng(seed=42)
+    r2_samples: List[float] = []
+    for _ in range(n_bootstrap):
+        indices: List[int] = []
+        start = int(rng.integers(0, n))
+        while len(indices) < n:
+            for offset in range(block):
+                indices.append((start + offset) % n)
+            start = (start + block) % n
+        indices = indices[:n]
+        y_boot = y_arr[indices]
+        x_boot = x_arr[indices]
+        if float(np.var(y_boot)) < 1e-12:
+            continue
+        raw_r2 = float(r2_score(y_boot, model.predict(x_boot)))
+        # Clip extreme outliers to [-10, 1] before aggregation.
+        r2_samples.append(max(-10.0, min(1.0, raw_r2)))
+
+    if not r2_samples:
+        return {
+            "status": "ok",
+            "point_estimate": round(point_estimate, 4),
+            "ci_lower": round(point_estimate, 4),
+            "ci_upper": round(point_estimate, 4),
+            "mean": round(point_estimate, 4),
+            "std": 0.0,
+            "n_bootstrap": 0,
+            "confidence": confidence,
+            "block_size": int(block),
+        }
+
+    alpha = 1.0 - confidence
+    ci_lower = float(np.percentile(r2_samples, (alpha / 2) * 100))
+    ci_upper = float(np.percentile(r2_samples, (1.0 - alpha / 2) * 100))
+    return {
+        "status": "ok",
+        "point_estimate": round(point_estimate, 4),
+        "ci_lower": round(ci_lower, 4),
+        "ci_upper": round(ci_upper, 4),
+        "mean": round(float(np.mean(r2_samples)), 4),
+        "std": round(float(np.std(r2_samples)), 4),
+        "n_bootstrap": len(r2_samples),
+        "confidence": confidence,
+        "block_size": int(block),
     }
 
 
@@ -368,6 +458,16 @@ def governance_report(
         else:
             oos_r2 = raw_oos_r2
 
+        # Bootstrap confidence interval for OOS R² — more stable than point estimate.
+        oos_r2_ci = _oos_r2_confidence_interval(
+            model=model,
+            test_df=test_df,
+            x_cols=valid_factors,
+            y_col=target,
+            n_bootstrap=200,
+            confidence=0.90,
+        )
+
         stationarity_known = [
             values.get("is_stationary")
             for values in stationarity.values()
@@ -414,6 +514,7 @@ def governance_report(
             },
             "out_of_sample": {
                 "r2": oos_r2,
+                "r2_ci": oos_r2_ci,
                 "mae": float(mean_absolute_error(y_test, predictions)),
                 "rmse": float(np.sqrt(mean_squared_error(y_test, predictions))),
             },

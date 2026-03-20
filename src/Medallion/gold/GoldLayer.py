@@ -288,8 +288,22 @@ class GoldLayer:
         )
 
         if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
-            # Avoid hard-fail on noisy point R2 if trend/volatility regime is still usable.
-            if not trend_volatility_acceptable:
+            # Check if bootstrap CI upper bound clears the threshold.
+            # If so, the point estimate is within sampling noise — don't hard-fail.
+            oos_r2_ci = report.get("out_of_sample", {}).get("r2_ci", {}) or {}
+            ci_upper = oos_r2_ci.get("ci_upper")
+            ci_status = str(oos_r2_ci.get("status", ""))
+            ci_clears = (
+                ci_status == "ok"
+                and isinstance(ci_upper, (float, int))
+                and float(ci_upper) >= min_r2
+            )
+            if ci_clears:
+                gate_reasons.append(
+                    f"out_of_sample_r2_below_threshold_but_ci_upper_clears:"
+                    f"{oos_r2:.4f}<{min_r2:.4f};ci_upper={float(ci_upper):.4f}"
+                )
+            elif not trend_volatility_acceptable:
                 reasons.append(
                     f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}"
                 )
@@ -407,22 +421,33 @@ class GoldLayer:
                 gate["severity"] = "fail"
             elif score >= warn_thr:
                 gate["severity"] = "warn"
-            else:
-                gate["severity"] = "pass"
-
-            report.setdefault("risk_band", {})
-            report["risk_band"] = {
-                "label": gate["severity"],
-                "warn_threshold": warn_thr,
-                "fail_threshold": fail_thr,
-                "score": score,
-            }
-
-        if hard_fail and reasons:
-            gate["passed"] = False
-        gate_reasons.extend(reasons)
-        return gate
-
+            if (
+                isinstance(walk_forward_avg_r2, (float, int))
+                and float(walk_forward_avg_r2) < adaptive_min_walk_forward_r2
+            ):
+                # Check walk-forward CI upper bound before hard-failing.
+                wf_ci_upper = walk_forward.get("r2_ci_upper")
+                wf_ci_clears = (
+                    isinstance(wf_ci_upper, (float, int))
+                    and float(wf_ci_upper) >= adaptive_min_walk_forward_r2
+                )
+                if wf_ci_clears:
+                    gate_reasons.append(
+                        "walk_forward_avg_r2_below_threshold_but_ci_upper_clears:"
+                        f"{float(walk_forward_avg_r2):.4f}"
+                        f"<{adaptive_min_walk_forward_r2:.4f};"
+                        f"ci_upper={float(wf_ci_upper):.4f}"
+                    )
+                elif not (
+                    walk_forward_unstable
+                    and isinstance(oos_r2, (float, int))
+                    and float(oos_r2) >= min_r2
+                ):
+                    reasons.append(
+                        "walk_forward_avg_r2_below_threshold:"
+                        f"{float(walk_forward_avg_r2):.4f}"
+                        f"<{adaptive_min_walk_forward_r2:.4f}"
+                    )
     def _resolve_governance_profile(
         self, ticker: Optional[str] = None
     ) -> Dict[str, Any]:

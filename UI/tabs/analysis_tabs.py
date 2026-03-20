@@ -11,6 +11,7 @@ from UI.helpers import (
     build_run_comparison,
     build_smart_alerts,
     compute_data_health,
+    persist_human_report_files,
     read_json,
 )
 
@@ -98,8 +99,15 @@ def show_explainability_tab() -> None:
 
 
 def show_reports_tab(role: str) -> None:
-    st.subheader("🧾 Executive Reports (One-click Export)")
+    st.subheader("🧾 Human-Friendly Reports")
+    st.caption("Readable report for humans in the UI. Raw JSON is kept only for archive/download.")
     html_report = build_executive_report_html()
+
+    if st.button("💾 Save Human Report Files", key="save_human_report"):
+        paths = persist_human_report_files()
+        st.success("Saved human report snapshots (latest + versioned).")
+        st.caption(f"Folder: {paths.get('reports_dir', 'N/A')}")
+
     st.download_button(
         "Download HTML Report",
         html_report,
