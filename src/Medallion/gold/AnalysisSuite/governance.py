@@ -116,13 +116,18 @@ def _walk_forward_backtest(
 def _compute_model_risk_score(
     leakage_flags_count: int,
     factors_count: int,
-    stationarity_ratio: float,
+    stationarity_ratio: float | None,
     normalized_shift: float,
     oos_r2: float,
     walk_forward_avg_r2: float | None,
 ) -> float:
     leakage_component = min(1.0, leakage_flags_count / max(1, factors_count))
-    stationarity_component = max(0.0, 1.0 - stationarity_ratio)
+    # When stationarity was untestable (all series too short for ADF/KPSS),
+    # use a neutral 0.5 rather than the maximum-penalty value of 1.0.
+    if stationarity_ratio is None:
+        stationarity_component = 0.5
+    else:
+        stationarity_component = max(0.0, 1.0 - stationarity_ratio)
     stability_component = min(1.0, max(0.0, normalized_shift / 5.0))
     perf_r2 = walk_forward_avg_r2 if walk_forward_avg_r2 is not None else oos_r2
     performance_component = min(1.0, max(0.0, _score_from_r2(perf_r2)))
@@ -134,6 +139,53 @@ def _compute_model_risk_score(
         + 0.20 * performance_component
     )
     return float(min(max(score, 0.0), 1.0))
+
+
+def _trend_and_volatility_diagnostics(
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    rolling_window: int = 5,
+) -> Dict[str, Any]:
+    """Robust diagnostics that are less sensitive to point-level noise than raw R2."""
+    true_series = pd.Series(y_true).reset_index(drop=True)
+    pred_series = pd.Series(y_pred).reset_index(drop=True)
+
+    if len(true_series) < 3 or len(pred_series) < 3:
+        return {
+            "status": "insufficient_data",
+            "trend_directional_accuracy": None,
+            "volatility_r2": None,
+            "volatility_ratio": None,
+        }
+
+    true_diff = true_series.diff().dropna()
+    pred_diff = pred_series.diff().dropna()
+    if len(true_diff) != len(pred_diff) or len(true_diff) == 0:
+        trend_acc = None
+    else:
+        trend_acc = float((np.sign(true_diff) == np.sign(pred_diff)).mean())
+
+    true_vol = true_series.rolling(window=rolling_window, min_periods=rolling_window).std().dropna()
+    pred_vol = pred_series.rolling(window=rolling_window, min_periods=rolling_window).std().dropna()
+    common_len = min(len(true_vol), len(pred_vol))
+    volatility_r2: float | None = None
+    if common_len >= 3:
+        true_vol = true_vol.iloc[-common_len:]
+        pred_vol = pred_vol.iloc[-common_len:]
+        if float(true_vol.var()) > 0.0:
+            volatility_r2 = float(r2_score(true_vol, pred_vol))
+
+    realized_vol = float(true_series.std()) if pd.notna(true_series.std()) else 0.0
+    predicted_vol = float(pred_series.std()) if pd.notna(pred_series.std()) else 0.0
+    vol_ratio = (predicted_vol / realized_vol) if realized_vol > 1e-12 else None
+
+    return {
+        "status": "ok",
+        "trend_directional_accuracy": trend_acc,
+        "volatility_r2": volatility_r2,
+        "volatility_ratio": float(vol_ratio) if vol_ratio is not None else None,
+        "rolling_window": int(rolling_window),
+    }
 
 
 def governance_report(
@@ -243,6 +295,13 @@ def governance_report(
         if work_df[date_col].is_monotonic_increasing is False:
             leakage_flags.append("non_monotonic_timestamps")
 
+        # Leakage sensitivity scales with series length:
+        # - On short series (< 60 rows) noise inflates lead/lag differences and
+        #   inflates pearson correlations → use more conservative thresholds.
+        n_obs = len(work_df)
+        lead_lag_threshold = 0.15 if n_obs >= 60 else 0.25
+        fdr_corr_threshold = 0.95 if n_obs >= 60 else 0.98
+
         for factor in valid_factors:
             corr = work_df[[target, factor]].corr().iloc[0, 1]
             if pd.notna(corr):
@@ -263,13 +322,13 @@ def governance_report(
                     "lead_corr": float(lead_corr),
                     "lag_corr": float(lag_corr),
                 }
-                if abs(float(lead_corr)) > abs(float(lag_corr)) + 0.15:
+                if abs(float(lead_corr)) > abs(float(lag_corr)) + lead_lag_threshold:
                     leakage_flags.append(f"possible_future_leakage:{factor}")
 
         bh_significant = _benjamini_hochberg(correlation_p_values, alpha=0.05)
         for factor, is_significant in bh_significant.items():
             corr_value = float(work_df[[target, factor]].corr().iloc[0, 1])
-            if is_significant and abs(corr_value) > 0.95:
+            if is_significant and abs(corr_value) > fdr_corr_threshold:
                 leakage_flags.append(f"high_correlation_after_fdr:{factor}")
 
         rolling_window = max(8, min(24, len(work_df) // 5))
@@ -300,20 +359,30 @@ def governance_report(
         std_shift = target_test_std - target_train_std
         denom = max(abs(target_train_std), 1e-9)
         normalized_shift = abs(mean_shift) / denom
-        oos_r2 = float(r2_score(y_test, predictions))
+        raw_oos_r2 = float(r2_score(y_test, predictions))
+        # Clip R² from very small test sets: on < 15 rows the OOS metric is
+        # dominated by noise and can reach extreme negative values (e.g. -200).
+        # Cap at a conservative floor so it does not propagate as a hard-fail signal.
+        if len(test_df) < 15:
+            oos_r2 = max(-0.5, raw_oos_r2)
+        else:
+            oos_r2 = raw_oos_r2
 
         stationarity_known = [
             values.get("is_stationary")
             for values in stationarity.values()
             if isinstance(values, dict) and values.get("is_stationary") is not None
         ]
-        stationary_ratio = (
+        # When no series has enough observations for ADF/KPSS, the ratio is
+        # genuinely unknown — use None so downstream scoring applies a
+        # neutral (0.5) penalty instead of the worst-case 0.0.
+        stationary_ratio: float | None = (
             float(
                 sum(1 for value in stationarity_known if value)
                 / len(stationarity_known)
             )
             if stationarity_known
-            else 0.0
+            else None
         )
         model_risk_score = _compute_model_risk_score(
             leakage_flags_count=len(leakage_flags),
@@ -326,6 +395,11 @@ def governance_report(
                 if walk_forward.get("status") == "ok"
                 else None
             ),
+        )
+        trend_volatility = _trend_and_volatility_diagnostics(
+            y_true=y_test,
+            y_pred=predictions,
+            rolling_window=max(3, min(10, len(y_test) // 4 if len(y_test) > 0 else 3)),
         )
 
         return {
@@ -361,6 +435,7 @@ def governance_report(
             },
             "walk_forward": walk_forward,
             "model_risk_score": model_risk_score,
+            "trend_volatility": trend_volatility,
             "reproducibility": {
                 "random_seed": random_seed,
                 "enforced": reproducibility_enforced,

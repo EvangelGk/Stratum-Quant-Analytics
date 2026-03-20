@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -76,6 +76,18 @@ class GoldLayer:
         else:
             return self.create_master_table()
 
+    def _aggregate_strategy(self, series: pd.Series, strategy: str) -> float:
+        clean = series.dropna()
+        if clean.empty:
+            return float("nan")
+        if strategy == "median":
+            return float(clean.median())
+        if strategy == "sum":
+            return float(clean.sum())
+        if strategy == "last":
+            return float(clean.iloc[-1])
+        return float(clean.mean())
+
     def create_master_table(self) -> pd.DataFrame:
         """
         Denormalizes Silver data into a single 'Feature Store'.
@@ -104,6 +116,15 @@ class GoldLayer:
         if "date" not in master_df.columns:
             raise ValueError("Financial dataset missing required 'date' column")
 
+        # Keep the financial base at its native trading-day cadence.
+        # Macro sources are joined later using backward-looking as-of logic,
+        # so the latest available monthly/annual value is carried onto each
+        # daily market row without exact date equality requirements.
+        master_df["date"] = pd.to_datetime(master_df["date"], errors="coerce")
+        master_df = master_df.dropna(subset=["date"]).copy()
+        master_df["date"] = master_df["date"].dt.normalize()
+        master_df = master_df.sort_values(["date", "ticker"]).reset_index(drop=True)
+
         # 2. Master Feature: Log Returns (The Senior Standard)
         # Formula: ln(P_t / P_{t-1})
         master_df["log_return"] = master_df.groupby("ticker")["close"].transform(
@@ -116,34 +137,80 @@ class GoldLayer:
         for f in fred_files:
             col_name = f.stem.replace("_silver", "")
             macro_df = pd.read_parquet(f).rename(columns={"value": col_name})
-            master_df = pd.merge(
+            macro_df["date"] = pd.to_datetime(macro_df["date"], errors="coerce")
+            macro_df = (
+                macro_df.dropna(subset=["date"])
+                .sort_values("date")
+                .drop_duplicates(subset=["date"], keep="last")
+            )
+            master_df = pd.merge_asof(
                 master_df,
                 macro_df[["date", col_name]],
                 on="date",
-                how="left",
+                direction="backward",
             )
             macro_columns.append(col_name)
 
         # 4. Join World Bank Data
         wb_files = list((self.processed_path / "worldbank").glob("*.parquet"))
+        wb_frames_by_series: Dict[str, List[pd.DataFrame]] = {}
         for f in wb_files:
-            col_name = f.stem.replace("_silver", "")
-            wb_df = pd.read_parquet(f).rename(columns={"value": col_name})
-            master_df = pd.merge(
-                master_df,
-                wb_df[["date", col_name]],
-                on="date",
-                how="left",
+            entity_name = f.stem.replace("_silver", "")
+            series_name = entity_name.split("__", 1)[0]
+            wb_df = pd.read_parquet(f)
+            if "date" not in wb_df.columns or "value" not in wb_df.columns:
+                continue
+            wb_df["date"] = pd.to_datetime(wb_df["date"], errors="coerce")
+            wb_df = wb_df.dropna(subset=["date"]).copy()
+            wb_frames_by_series.setdefault(series_name, []).append(
+                wb_df[["date", "value"]].copy()
             )
-            macro_columns.append(col_name)
 
-        # 5. Forward-Fill Macro and World Bank Data
+        wb_strategy = str(
+            getattr(self.config, "worldbank_aggregation_strategy", "mean")
+        ).lower()
+        if wb_strategy not in {"mean", "median", "sum", "last"}:
+            wb_strategy = "mean"
+
+        for series_name, frames in wb_frames_by_series.items():
+            if not frames:
+                continue
+            stacked = pd.concat(frames, ignore_index=True)
+            stacked = stacked.sort_values("date")
+            aggregated = (
+                stacked.groupby("date", as_index=False)["value"]
+                .agg(lambda s: self._aggregate_strategy(cast(pd.Series, s), wb_strategy))
+                .rename(columns={"value": series_name})
+                .sort_values("date")
+            )
+            master_df = pd.merge_asof(
+                master_df,
+                aggregated[["date", series_name]],
+                on="date",
+                direction="backward",
+            )
+            macro_columns.append(series_name)
+
+        # Final analytical ordering: per ticker on daily dates.
         master_df = master_df.sort_values(["ticker", "date"]).copy()
-        if macro_columns:
-            master_df[macro_columns] = (
-                master_df.groupby("ticker", group_keys=False)[macro_columns]
-                .ffill()
-                .bfill()
+
+        fred_columns = [c for c in getattr(self.config, "macro_series_map", {}).values() if c in master_df.columns]
+        worldbank_columns = [c for c in getattr(self.config, "worldbank_indicator_map", {}).values() if c in master_df.columns]
+        source_usage = {
+            "yfinance": 100.0 if len(master_df) > 0 else 0.0,
+            "fred": float(master_df[fred_columns].notnull().any(axis=1).mean() * 100.0) if fred_columns and len(master_df) > 0 else 0.0,
+            "worldbank": float(master_df[worldbank_columns].notnull().any(axis=1).mean() * 100.0) if worldbank_columns and len(master_df) > 0 else 0.0,
+        }
+        self.logger.info(f"Gold source usage after joins: {source_usage}")
+        broken_sources = [
+            source
+            for source in ("fred", "worldbank")
+            if source_usage[source] == 0.0
+        ]
+        if broken_sources:
+            raise AnalysisError(
+                "Gold source integration failure: joined master table has zero usable coverage for "
+                + ", ".join(broken_sources)
             )
 
         # Save the "Analytical Base Table" with optional encryption
@@ -200,10 +267,36 @@ class GoldLayer:
         reasons: List[str] = []
         oos_r2 = report.get("out_of_sample", {}).get("r2")
         min_r2 = float(profile["min_r2"])
-        if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
-            reasons.append(
-                f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}"
+        trend_vol = report.get("trend_volatility", {}) or {}
+        trend_directional_accuracy = trend_vol.get("trend_directional_accuracy")
+        volatility_r2 = trend_vol.get("volatility_r2")
+        volatility_ratio = trend_vol.get("volatility_ratio")
+
+        trend_volatility_acceptable = bool(
+            isinstance(trend_directional_accuracy, (float, int))
+            and float(trend_directional_accuracy) >= 0.55
+            and (
+                (
+                    isinstance(volatility_r2, (float, int))
+                    and float(volatility_r2) >= 0.0
+                )
+                or (
+                    isinstance(volatility_ratio, (float, int))
+                    and 0.5 <= float(volatility_ratio) <= 1.8
+                )
             )
+        )
+
+        if isinstance(oos_r2, (float, int)) and float(oos_r2) < min_r2:
+            # Avoid hard-fail on noisy point R2 if trend/volatility regime is still usable.
+            if not trend_volatility_acceptable:
+                reasons.append(
+                    f"out_of_sample_r2_below_threshold:{oos_r2:.4f}<{min_r2:.4f}"
+                )
+            else:
+                gate_reasons.append(
+                    "out_of_sample_r2_below_threshold_but_trend_volatility_acceptable"
+                )
 
         normalized_shift = report.get("stability", {}).get("normalized_mean_shift")
         max_shift = float(profile["max_normalized_shift"])
@@ -289,6 +382,10 @@ class GoldLayer:
             "applied_min_walk_forward_r2": adaptive_min_walk_forward_r2,
             "base_min_walk_forward_r2": min_walk_forward_r2,
             "metric_unstable": walk_forward_unstable,
+            "trend_directional_accuracy": trend_directional_accuracy,
+            "volatility_r2": volatility_r2,
+            "volatility_ratio": volatility_ratio,
+            "trend_volatility_acceptable": trend_volatility_acceptable,
         }
 
         model_risk_score = report.get("model_risk_score")

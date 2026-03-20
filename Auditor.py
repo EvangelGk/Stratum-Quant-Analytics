@@ -41,6 +41,7 @@ class ScenarioAuditor:
         gold_path: Optional[str] = None,
         project_root: Optional[str] = None,
         user_id: Optional[str] = None,
+        allowed_gap_days: int = 7,
     ) -> None:
         self.project_root = Path(project_root) if project_root else PROJECT_ROOT
         load_dotenv(self.project_root / ".env")
@@ -64,6 +65,13 @@ class ScenarioAuditor:
         self.expected_tickers = self._resolve_expected_tickers()
         self.expected_macro = self._resolve_expected_macro_map()
         self.expected_worldbank = self._resolve_expected_worldbank_map()
+        self.expected_worldbank_economies = self._resolve_expected_worldbank_economies()
+        env_allowed_gap = os.getenv("AUDITOR_ALLOWED_GAP_DAYS", "").strip()
+        try:
+            parsed_gap = int(env_allowed_gap) if env_allowed_gap else int(allowed_gap_days)
+        except ValueError:
+            parsed_gap = int(allowed_gap_days)
+        self.allowed_gap_days = max(1, parsed_gap)
 
     def run_audit(self) -> Dict[str, Any]:
         """Run end-to-end quality, breadth, output and strictness checks."""
@@ -78,6 +86,7 @@ class ScenarioAuditor:
                 "expected_tickers": self.expected_tickers,
                 "expected_macro_series": list(self.expected_macro.values()),
                 "expected_worldbank_series": list(self.expected_worldbank.values()),
+                "expected_worldbank_economies": self.expected_worldbank_economies,
             },
         }
 
@@ -166,6 +175,14 @@ class ScenarioAuditor:
             "NE.TRD.GNFS.ZS": "trade_openness",
         }
 
+    def _resolve_expected_worldbank_economies(self) -> List[str]:
+        if self.config is not None and getattr(self.config, "worldbank_economies", None):
+            return list(self.config.worldbank_economies)
+        raw = os.getenv("WORLDBANK_ECONOMIES", "").strip()
+        if raw:
+            return [token.strip().upper() for token in raw.split(",") if token.strip()]
+        return ["WLD"]
+
     def _read_json(self, path: Path) -> Dict[str, Any]:
         if not path.exists():
             return {}
@@ -185,27 +202,55 @@ class ScenarioAuditor:
         catalog = self._read_json(self.raw_path / "catalog.json")
         source_counts = {source: 0 for source in EXPECTED_SOURCES}
         entity_names_by_source: Dict[str, List[str]] = {source: [] for source in EXPECTED_SOURCES}
+        worldbank_economies_seen: set[str] = set()
         for entity, meta in catalog.items():
             source = str(meta.get("source", ""))
             if source in source_counts:
                 source_counts[source] += 1
                 entity_names_by_source[source].append(entity)
+                if source == "worldbank":
+                    if "__" in entity:
+                        worldbank_economies_seen.add(entity.split("__", 1)[1].upper())
+                    else:
+                        worldbank_economies_seen.add("WLD")
 
         yfinance_cols = [c for c in ["close", "log_return", "ticker", "volume"] if c in df.columns]
         fred_cols = [c for c in self.expected_macro.values() if c in df.columns]
         worldbank_cols = [c for c in self.expected_worldbank.values() if c in df.columns]
 
         source_presence: Dict[str, float] = {}
+        source_cell_fill: Dict[str, float] = {}
+        source_row_masks: Dict[str, pd.Series] = {}
         for source, cols in {
             "yfinance": yfinance_cols,
             "fred": fred_cols,
             "worldbank": worldbank_cols,
         }.items():
             if cols and len(df) > 0:
-                coverage = float(df[cols].notnull().any(axis=1).mean() * 100.0)
+                row_mask = df[cols].notnull().any(axis=1)
+                coverage = float(row_mask.mean() * 100.0)
+                cell_fill = float(df[cols].notnull().mean().mean() * 100.0)
             else:
+                row_mask = pd.Series([False] * len(df), index=df.index)
                 coverage = 0.0
+                cell_fill = 0.0
             source_presence[source] = round(coverage, 2)
+            source_cell_fill[source] = round(cell_fill, 2)
+            source_row_masks[source] = row_mask
+
+        if len(df) > 0:
+            active_source_counts = sum(mask.astype(int) for mask in source_row_masks.values())
+            rows_with_all_sources_pct = float((active_source_counts == len(source_row_masks)).mean() * 100.0)
+            avg_active_source_groups = float(active_source_counts.mean())
+        else:
+            rows_with_all_sources_pct = 0.0
+            avg_active_source_groups = 0.0
+
+        overall_integration = {
+            "rows_with_all_sources_pct": round(rows_with_all_sources_pct, 2),
+            "avg_active_source_groups_per_row": round(avg_active_source_groups, 2),
+            "max_source_groups_per_row": len(source_row_masks),
+        }
 
         breadth = {
             "yfinance": {
@@ -221,10 +266,19 @@ class ScenarioAuditor:
                 "entities": sorted(entity_names_by_source.get("fred", [])),
             },
             "worldbank": {
-                "expected": len(self.expected_worldbank),
+                "expected": len(self.expected_worldbank) * max(1, len(self.expected_worldbank_economies)),
                 "observed": source_counts.get("worldbank", 0),
-                "ratio": self._safe_ratio(source_counts.get("worldbank", 0), len(self.expected_worldbank)),
+                "ratio": self._safe_ratio(
+                    source_counts.get("worldbank", 0),
+                    len(self.expected_worldbank) * max(1, len(self.expected_worldbank_economies)),
+                ),
                 "entities": sorted(entity_names_by_source.get("worldbank", [])),
+                "economies_expected": self.expected_worldbank_economies,
+                "economies_seen": sorted(worldbank_economies_seen),
+                "economy_coverage_ratio": self._safe_ratio(
+                    len(worldbank_economies_seen),
+                    max(1, len(self.expected_worldbank_economies)),
+                ),
             },
         }
 
@@ -241,6 +295,8 @@ class ScenarioAuditor:
             "passed": passed,
             "status": status,
             "metrics": source_presence,
+            "cell_fill_pct": source_cell_fill,
+            "overall": overall_integration,
             "breadth": breadth,
             "issues": issues,
             "interpretation": (
@@ -250,6 +306,21 @@ class ScenarioAuditor:
 
     def _check_density(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Check null density, dead columns and suspiciously sparse outputs."""
+        if df.empty:
+            return {
+                "passed": False,
+                "status": "fail",
+                "null_pct": None,
+                "row_non_null_pct": None,
+                "zero_var_count": 0,
+                "zero_var_columns": [],
+                "all_zero_columns": [],
+                "issues": ["no_rows_in_gold_table"],
+                "interpretation": (
+                    "No analytical rows were produced, so density cannot support decision use."
+                ),
+            }
+
         total_cells = max(df.shape[0] * df.shape[1], 1)
         null_pct = float((df.isnull().sum().sum() / total_cells) * 100.0)
         numeric_df = df.select_dtypes(include=[np.number])
@@ -268,9 +339,23 @@ class ScenarioAuditor:
             if not numeric_df[col].dropna().empty and float(numeric_df[col].abs().sum()) == 0.0
         ]
         row_non_null_pct = float(df.notnull().any(axis=1).mean() * 100.0) if len(df) else 0.0
+        issues: List[str] = []
 
-        passed = null_pct < 25.0 and len(zero_var_cols) <= 2 and row_non_null_pct > 90.0
-        status = "pass" if passed else ("warn" if null_pct < 40.0 else "fail")
+        if len(candidate_cols) == 0:
+            issues.append("no_numeric_signal_columns")
+        if not np.isfinite(null_pct) or not np.isfinite(row_non_null_pct):
+            issues.append("density_metrics_invalid")
+        if null_pct >= 25.0:
+            issues.append("null_density_high")
+        if row_non_null_pct <= 90.0:
+            issues.append("row_coverage_low")
+        if len(zero_var_cols) > 2:
+            issues.append("too_many_zero_variance_columns")
+
+        passed = len(issues) == 0
+        status = "pass"
+        if not passed:
+            status = "fail" if ("density_metrics_invalid" in issues or "no_numeric_signal_columns" in issues or "null_density_high" in issues) else "warn"
         return {
             "passed": passed,
             "status": status,
@@ -279,6 +364,12 @@ class ScenarioAuditor:
             "zero_var_count": len(zero_var_cols),
             "zero_var_columns": zero_var_cols[:10],
             "all_zero_columns": all_zero_cols[:10],
+            "issues": issues,
+            "metrics": {
+                "null_pct": round(null_pct, 2),
+                "row_non_null_pct": round(row_non_null_pct, 2),
+                "zero_var_count": len(zero_var_cols),
+            },
             "interpretation": (
                 "Checks whether the analytical table is dense enough to support modelling and whether numeric features are effectively dead."
             ),
@@ -288,10 +379,12 @@ class ScenarioAuditor:
         """Check whether produced values are statistically plausible for decision support."""
         issues: List[str] = []
         metrics: Dict[str, Any] = {}
+        signals_evaluated = 0
 
         if "log_return" in df.columns:
             series = pd.to_numeric(df["log_return"], errors="coerce").dropna()
             if not series.empty:
+                signals_evaluated += 1
                 max_abs = float(series.abs().max())
                 std = float(series.std()) if pd.notna(series.std()) else 0.0
                 median = float(series.median())
@@ -312,12 +405,17 @@ class ScenarioAuditor:
 
         if "quality_score" in df.columns:
             quality_mean = float(pd.to_numeric(df["quality_score"], errors="coerce").mean())
-            metrics["avg_quality_score"] = round(quality_mean, 2)
-            if quality_mean < 60.0:
-                issues.append("low_average_quality_score")
+            if np.isfinite(quality_mean):
+                signals_evaluated += 1
+                metrics["avg_quality_score"] = round(quality_mean, 2)
+                if quality_mean < 60.0:
+                    issues.append("low_average_quality_score")
+
+        if signals_evaluated == 0:
+            issues.append("insufficient_statistical_signal")
 
         passed = len(issues) == 0
-        status = "pass" if passed else ("warn" if len(issues) <= 2 else "fail")
+        status = "pass" if passed else ("fail" if "insufficient_statistical_signal" in issues else "warn")
         return {
             "passed": passed,
             "status": status,
@@ -328,49 +426,157 @@ class ScenarioAuditor:
             ),
         }
 
-    def _check_continuity(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Check whether temporal gaps are reasonable for the observed data frequency."""
+    def check_temporal_continuity(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Assess temporal continuity using business-day gaps and configurable threshold."""
         if "date" not in df.columns:
-            return {"passed": False, "status": "fail", "error": "No date column"}
+            return {
+                "passed": False,
+                "max_gap": None,
+                "median_gap": None,
+                "error": "No date column",
+            }
 
         work = df.copy()
         work["date"] = pd.to_datetime(work["date"], errors="coerce")
         work = work.dropna(subset=["date"])
         if work.empty:
-            return {"passed": False, "status": "fail", "error": "No valid dates"}
+            return {
+                "passed": False,
+                "max_gap": None,
+                "median_gap": None,
+                "error": "No valid dates",
+            }
 
-        per_group_metrics: Dict[str, Dict[str, float]] = {}
-        grouping = work["ticker"].fillna("ALL") if "ticker" in work.columns else pd.Series(["ALL"] * len(work), index=work.index)
-        work = work.assign(_group=grouping)
+        # Focus continuity on daily market series where ticker semantics apply.
+        # Macro/worldbank joins can be sparse by design and should not dominate this check.
+        if "ticker" in work.columns:
+            work = work[work["ticker"].notna()].copy()
+            work["ticker"] = work["ticker"].astype(str)
+        else:
+            work["ticker"] = "ALL"
 
+        if "close" in work.columns:
+            work = work[pd.to_numeric(work["close"], errors="coerce").notna()].copy()
+
+        if work.empty:
+            return {
+                "passed": False,
+                "max_gap": None,
+                "median_gap": None,
+                "error": "No ticker-level market rows for continuity",
+            }
+
+        duplicate_rows = int(work.duplicated(subset=["date", "ticker"]).sum())
+        work = work.drop_duplicates(subset=["date", "ticker"]).sort_values(
+            ["ticker", "date"]
+        )
+
+        per_group: Dict[str, Dict[str, Any]] = {}
         failed_groups: List[str] = []
-        for group_name, group_df in work.groupby("_group"):
-            ordered = group_df.sort_values("date")
-            gaps = ordered["date"].diff().dt.days.dropna()
-            if gaps.empty:
-                per_group_metrics[str(group_name)] = {"median_gap_days": 0.0, "max_gap_days": 0.0, "allowed_gap_days": 0.0}
+        all_business_gaps: List[int] = []
+
+        def _detect_cadence(dates: List[pd.Timestamp]) -> str:
+            if len(dates) < 3:
+                return "business_day"
+            month_deltas = [
+                (dates[i].year - dates[i - 1].year) * 12 + (dates[i].month - dates[i - 1].month)
+                for i in range(1, len(dates))
+            ]
+            valid_month_deltas = [delta for delta in month_deltas if delta >= 0]
+            if valid_month_deltas and float(np.median(valid_month_deltas)) >= 1.0:
+                return "monthly"
+            return "business_day"
+
+        for ticker, group_df in work.groupby("ticker"):
+            dates = group_df["date"].sort_values().tolist()
+            if len(dates) < 2:
+                per_group[str(ticker)] = {
+                    "max_gap": 0,
+                    "median_gap": 0,
+                    "allowed_gap": self.allowed_gap_days,
+                    "cadence": "unknown",
+                }
                 continue
-            median_gap = float(gaps.median())
-            max_gap = float(gaps.max())
-            allowed_gap = float(max(35.0, median_gap * 3.0))
-            per_group_metrics[str(group_name)] = {
-                "median_gap_days": round(median_gap, 2),
-                "max_gap_days": round(max_gap, 2),
-                "allowed_gap_days": round(allowed_gap, 2),
+
+            cadence = _detect_cadence(dates)
+            if cadence == "monthly":
+                # Month-based gap: consecutive monthly observations count as 1.
+                gaps = [
+                    max(
+                        (dates[i].year - dates[i - 1].year) * 12
+                        + (dates[i].month - dates[i - 1].month),
+                        0,
+                    )
+                    for i in range(1, len(dates))
+                ]
+                allowed_gap = 1
+            else:
+                # Business-day gap: Friday -> Monday counts as 1 day.
+                gaps = [
+                    max(len(pd.bdate_range(start=dates[i - 1], end=dates[i])) - 1, 0)
+                    for i in range(1, len(dates))
+                ]
+                allowed_gap = self.allowed_gap_days
+            if gaps:
+                all_business_gaps.extend(gaps)
+            max_gap = int(max(gaps)) if gaps else 0
+            median_gap = float(np.median(gaps)) if gaps else 0.0
+            per_group[str(ticker)] = {
+                "max_gap": max_gap,
+                "median_gap": round(median_gap, 2),
+                "allowed_gap": allowed_gap,
+                "cadence": cadence,
             }
             if max_gap > allowed_gap:
-                failed_groups.append(str(group_name))
+                failed_groups.append(str(ticker))
 
-        passed = len(failed_groups) == 0
+        max_gap_all = int(max(all_business_gaps)) if all_business_gaps else 0
+        median_gap_all = float(np.median(all_business_gaps)) if all_business_gaps else 0.0
+        cadence_modes = [
+            payload.get("cadence")
+            for payload in per_group.values()
+            if isinstance(payload, dict) and payload.get("cadence")
+        ]
+        dominant_cadence = max(set(cadence_modes), key=cadence_modes.count) if cadence_modes else "unknown"
+        overall_allowed_gap = 1 if dominant_cadence == "monthly" else self.allowed_gap_days
+        warnings: List[str] = []
+        if duplicate_rows > 0:
+            warnings.append(
+                f"deduplicated_rows:{duplicate_rows} based on ['date','ticker']"
+            )
+        if median_gap_all == 0:
+            warnings.append(
+                "median_gap_is_zero; verify duplicate timestamps or intraday consolidation"
+            )
+
+        # Median gap at zero with deduplications strongly suggests duplicate timestamp noise.
+        duplicate_signal = duplicate_rows > 0 and median_gap_all == 0
+        passed = len(failed_groups) == 0 and not duplicate_signal
         return {
             "passed": passed,
-            "status": "pass" if passed else "warn",
+            "max_gap": max_gap_all,
+            "median_gap": round(median_gap_all, 2),
+            "allowed_gap": overall_allowed_gap,
             "failed_groups": failed_groups,
-            "metrics": per_group_metrics,
-            "interpretation": (
-                "Uses adaptive gap thresholds based on observed frequency, so monthly series are not judged by daily-data standards."
-            ),
+            "per_group": per_group,
+            "warnings": warnings,
+            "duplicate_rows_removed": duplicate_rows,
+            "duplicate_signal": duplicate_signal,
+            "cadence": dominant_cadence,
         }
+
+    def _check_continuity(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Compatibility wrapper around temporal continuity check."""
+        continuity = self.check_temporal_continuity(df)
+        passed = bool(continuity.get("passed", False))
+        status = "pass" if passed else "warn"
+        continuity["status"] = status
+        continuity["metrics"] = continuity.get("per_group", {})
+        continuity["interpretation"] = (
+            "Evaluates continuity with business-day gaps and configurable threshold. "
+            "A weekend-only break is not treated as a major gap."
+        )
+        return continuity
 
     def _check_outputs(self) -> Dict[str, Any]:
         """Check whether outputs are non-empty, non-zero and usable for downstream decisions."""

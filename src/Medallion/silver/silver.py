@@ -239,27 +239,46 @@ class SilverLayer:
     ) -> Tuple[pd.DataFrame, bool, bool]:
         """Unifies structure and measurement units with business alignment."""
         try:
+            canonical_entity = entity_name.split("__", 1)[0]
             unit_normalized = False
             temporal_aligned = False
 
             # Snake_case columns (Standardization)
             df.columns = [col.lower().replace(" ", "_") for col in df.columns]
 
-            # Temporal Alignment: Force all dates to Month-End for joins
+            # Temporal alignment by source:
+            # - yfinance keeps daily granularity
+            # - macro sources (fred/worldbank) align to month-end
             if "date" in df.columns:
-                df["date"] = pd.to_datetime(df["date"])
-                df["date"] = df["date"] + pd.offsets.MonthEnd(0)
+                if source == "worldbank":
+                    # World Bank often arrives as yearly values; if date is numeric
+                    # year-like, convert explicitly to year-end to avoid epoch parsing.
+                    year_like = pd.to_numeric(df["date"], errors="coerce")
+                    if year_like.notna().all() and year_like.between(1800, 2200).all():
+                        df["date"] = pd.to_datetime(
+                            year_like.astype(int).astype(str) + "-12-31",
+                            errors="coerce",
+                        )
+                    else:
+                        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                else:
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.dropna(subset=["date"])
+                if source in {"fred", "worldbank"}:
+                    df["date"] = df["date"] + pd.offsets.MonthEnd(0)
+                else:
+                    df["date"] = df["date"].dt.normalize()
                 temporal_aligned = True
 
             # Unit normalization is intentionally explicit to avoid corrupting
             # absolute/index indicators (e.g., CPI indexes, energy usage levels).
             contract = SOURCE_CONTRACTS.get(source)
             percentage_entities = contract.percentage_entities if contract else set()
-            series_contract = get_series_contract(source, entity_name)
+            series_contract = get_series_contract(source, canonical_entity)
             if (
                 source in ["fred", "worldbank"]
                 and "value" in df.columns
-                and entity_name in percentage_entities
+                and canonical_entity in percentage_entities
                 and series_contract.unit_kind == "percentage"
             ):
                 if df["value"].max() > 1.0:
@@ -283,7 +302,8 @@ class SilverLayer:
 
             initial_nulls = df.isnull().sum().sum()
             warnings: List[str] = []
-            series_contract = get_series_contract(source, entity_name)
+            canonical_entity = entity_name.split("__", 1)[0]
+            series_contract = get_series_contract(source, canonical_entity)
 
             # Compliance Check: Reject if ANY numeric column exceeds 30% nulls.
             # Checking per-column prevents dense columns from masking sparse ones.
@@ -297,7 +317,7 @@ class SilverLayer:
                 float(numeric_null_pct.max()) if worst_col is not None else 0.0
             )
             dynamic_threshold = self._resolve_dynamic_null_threshold(
-                source, entity_name, base_override=series_contract.null_tolerance_pct
+                source, canonical_entity, base_override=series_contract.null_tolerance_pct
             )
             severe_threshold = min(
                 100.0,
@@ -535,10 +555,12 @@ class SilverLayer:
         if not samples:
             return base
         recent = samples[-window:]
-        # Dynamic rule: mean + 2*std capped in [base, 90]
+        # Dynamic rule: mean + 2*std capped in [base, 70].
+        # The upper bound is 70% (not 90%) to prevent the threshold from
+        # eroding into meaninglessness after a run with unusually high nulls.
         mean = float(np.mean(recent))
         std = float(np.std(recent))
-        adaptive = max(base, min(90.0, mean + (2.0 * std)))
+        adaptive = max(base, min(70.0, mean + (2.0 * std)))
         return adaptive
 
     def _append_quality_history(self) -> None:

@@ -72,7 +72,17 @@ class WorldBankFetcher(BaseFetcher):
             df["Date"] = df["Date"].astype(str).str.replace("YR", "", regex=False)
             numeric_dates = pd.to_numeric(df["Date"], errors="coerce")
             if numeric_dates.notna().all():
-                df["Date"] = numeric_dates.astype(int)
+                # Treat year-like values as real calendar years, not epoch integers.
+                df["Date"] = pd.to_datetime(
+                    numeric_dates.astype(int).astype(str) + "-12-31",
+                    errors="coerce",
+                )
+            else:
+                df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+        # Remove rows that still have invalid dates after normalization.
+        if "Date" in df.columns:
+            df = df.dropna(subset=["Date"])
 
         if "Value" not in df.columns:
             df["Value"] = pd.NA

@@ -7,7 +7,7 @@ from .BaseFetcher import BaseFetcher
 
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
-    CACHE_SCHEMA_VERSION = "v2"
+    CACHE_SCHEMA_VERSION = "v3"
 
     def __init__(self) -> None:
         super().__init__()
@@ -34,7 +34,7 @@ class YFinanceFetcher(BaseFetcher):
                 ticker,
                 start=start_date,
                 end=end_date,
-                interval="1mo",
+                interval="1d",
                 auto_adjust=False,
                 progress=False,
                 threads=False,

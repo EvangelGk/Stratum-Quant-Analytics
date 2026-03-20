@@ -26,6 +26,9 @@ The Scenario Planner is a comprehensive financial data pipeline that implements 
 3. **Run**
    ```bash
    poetry run python src/main.py
+
+   # Launch the Streamlit command center
+   poetry run streamlit run UI/streamlit_app.py
    ```
 
 ## What Happens Automatically
@@ -38,6 +41,11 @@ The application will:
 - Create analytical datasets
 - Run comprehensive analyses
 - Generate reports and save results
+
+After each successful pipeline run, the application also:
+- Runs `Auditor.py` automatically
+- Writes `output/<user_id>/audit_report.json`
+- Exposes the result in the `Auditor` tab inside the Streamlit UI
 
 ## Reproducibility and Governance Controls
 
@@ -69,7 +77,14 @@ The application will:
 - `data/users/<user_id>/processed/`: Cleaned and transformed data
 - `data/users/<user_id>/gold/master_table.parquet`: Combined analytical dataset
 - `output/<user_id>/`: Analysis results and reports
+- `output/<user_id>/audit_report.json`: Independent system audit result
 - `logs/`: Detailed operation logs and metrics
+
+### Streamlit UI
+- Launch command: `poetry run streamlit run UI/streamlit_app.py`
+- Main tabs include health, analytics, governance, logs, and `Auditor`
+- The `Auditor` tab lets you inspect whether outputs are decision-ready and whether
+   governance or quality thresholds appear too strict for the current run
 
 ## Analysis Explanations
 
@@ -208,6 +223,14 @@ Edit `src/Fetchers/ProjectConfig.py` for:
    `data/users/<user_id>/gold/governance/`.
 - Artifacts include run context (`run_id`, `correlation_id`), gate decision,
    severity band, and full governance report payload.
+
+### Auditor Temporal Continuity
+- Temporal continuity is currently an auditor-side quality check, not a pipeline hard-stop.
+- It uses business-day gaps, duplicate removal on `['date', 'ticker']`, and a configurable
+   allowed gap threshold.
+- This means weekend gaps are not treated as major discontinuities.
+- If you later want continuity to affect pipeline governance directly, that would require an
+   explicit integration into the pipeline/governance layer rather than the auditor alone.
 
 ### Key Metrics
 - Records processed per data source

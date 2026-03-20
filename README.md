@@ -79,6 +79,11 @@ Where `μ` is the drift (mean log-return), `σ` is historical volatility, and `d
 
 ```
 scenario-planner/
+├── UI/
+│   ├── streamlit_app.py        # Main Streamlit entrypoint
+│   ├── constants.py            # Shared UI paths, roles, and stage metadata
+│   └── helpers.py              # Shared UI utilities
+├── Auditor.py                  # Independent system auditor
 ├── src/
 │   ├── main.py                  # Entry point
 │   ├── Fetchers/
@@ -146,6 +151,9 @@ cp .env.example .env
 poetry run python src/main.py
 
 # Full mode (set ENVIRONMENT=actual in .env)
+
+# Streamlit command center
+poetry run streamlit run UI/streamlit_app.py
 ```
 
 ### 4. Explore Results
@@ -155,6 +163,10 @@ Open `notebooks/demo_analysis.ipynb` in Jupyter to visualise Monte Carlo paths, 
 ```bash
 poetry run jupyter notebook notebooks/demo_analysis.ipynb
 ```
+
+The Streamlit UI now includes an `Auditor` tab. After every successful pipeline run,
+the system automatically executes `Auditor.py`, stores the result under
+`output/<user_id>/audit_report.json`, and surfaces the report in the UI.
 
 ---
 
@@ -196,19 +208,27 @@ All configuration is driven by environment variables (see `.env.example`):
 | `SILVER_MIN_ROWS_RATIO` | `0.1` | Minimum observed/expected row ratio before hard-stop |
 | `SILVER_BASE_NULL_THRESHOLD` | `30.0` | Base null threshold (%) for dynamic data quality gating |
 | `SILVER_DYNAMIC_THRESHOLD_WINDOW` | `20` | Rolling history window for adaptive null thresholds |
+| `SILVER_WARN_TO_FAIL_BUFFER` | `15.0` | Additional null-threshold buffer between warn and hard-fail |
+| `SILVER_OUTLIER_WARNING_RATIO` | `0.1` | Warn when clipped outliers exceed this row ratio |
 | `MACRO_SERIES_MAP` | *(built-in)* | Optional JSON override for FRED series registry |
 | `WORLDBANK_INDICATOR_MAP` | *(built-in)* | Optional JSON override for World Bank indicator registry |
+| `WORLDBANK_ECONOMIES` | `WLD` | Comma-separated ISO-3 economies for World Bank ingestion and controlled aggregation |
+| `WORLDBANK_AGGREGATION_STRATEGY` | `mean` | Pre-merge economy aggregation rule: `mean`/`median`/`sum`/`last` |
+| `AUTO_ML_ENABLED` | `false` | Enable Auto-ML analysis output |
 | `GOVERNANCE_HARD_FAIL` | `true` | Block advanced analyses if governance gate fails |
-| `GOVERNANCE_MIN_R2` | `-0.25` | Minimum out-of-sample R2 threshold |
+| `GOVERNANCE_MIN_R2` | `0.0` | Minimum out-of-sample R2 threshold |
 | `GOVERNANCE_MAX_NORMALIZED_SHIFT` | `2.5` | Maximum train/test normalized drift |
 | `GOVERNANCE_MAX_LEAKAGE_FLAGS` | `1` | Maximum tolerated leakage flags |
 | `GOVERNANCE_MIN_STATIONARY_RATIO` | `0.4` | Minimum stationary-series ratio |
 | `GOVERNANCE_WALK_FORWARD_WINDOWS` | `4` | Walk-forward backtesting windows |
-| `GOVERNANCE_MIN_WALK_FORWARD_R2` | `-0.25` | Minimum walk-forward average R2 |
+| `GOVERNANCE_MIN_WALK_FORWARD_R2` | `0.0` | Minimum walk-forward average R2 |
+| `GOVERNANCE_UNSTABLE_WALK_FORWARD_FLOOR` | `-5.0` | Instability trigger floor for raw walk-forward R2 |
+| `GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR` | `-2.0` | Clipping floor for robust walk-forward risk scoring |
 | `GOVERNANCE_MAX_MODEL_RISK_SCORE` | `0.6` | Maximum composite model risk score |
 | `GOVERNANCE_REGIME` | `normal` | Governance policy profile: `normal` / `stress` / `crisis` |
 | `GOVERNANCE_MODEL_RISK_WARN_THRESHOLD` | `0.4` | Warning band threshold for model risk score |
 | `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD` | `0.6` | Failure band threshold for model risk score |
+| `AUDITOR_ALLOWED_GAP_DAYS` | `7` | Business-day gap threshold used by temporal continuity audit |
 | `GIT_COMMIT_SHA` | `unversioned` | Optional code lineage identifier for run-contract logs |
 
 ---
@@ -224,6 +244,26 @@ All configuration is driven by environment variables (see `.env.example`):
 | ML | `scikit-learn` | Ridge regression |
 | Caching | `diskcache` | Rate-limit-aware API response cache |
 | Serialisation | `pyarrow` (ZSTD Parquet) | Columnar, compressed data storage |
+
+---
+
+## Audit And Quality Controls
+
+- `Auditor.py` acts as an independent-but-integrated judge of the system output.
+- It checks source breadth, output density, statistical plausibility, temporal continuity,
+    threshold strictness, and governance soundness.
+- Temporal continuity in the auditor now uses business-day logic, duplicate removal on
+    `['date', 'ticker']`, and a configurable allowed gap threshold.
+- The auditor is intentionally separate from the pipeline's core transformations,
+    so it can critique the produced artifacts instead of inheriting the pipeline's assumptions.
+
+## World Bank Coverage
+
+- World Bank ingestion supports configurable multi-economy breadth via `WORLDBANK_ECONOMIES`.
+- To avoid row explosion in Gold, aggregation is controlled before the merge step rather than
+    joining every economy-row directly into the analytical master table.
+- Auditor integration checks both indicator breadth and economy coverage, so World Bank is no
+    longer judged only as a single global corner of the source.
 
 ---
 

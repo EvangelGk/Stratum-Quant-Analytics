@@ -31,12 +31,12 @@ class ProjectConfig:
     random_seed: Optional[int] = 42
     enforce_reproducibility: bool = True
     governance_hard_fail: bool = True
-    governance_min_r2: float = -0.25
+    governance_min_r2: float = 0.0
     governance_max_normalized_shift: float = 2.5
     governance_max_leakage_flags: int = 1
     governance_min_stationary_ratio: float = 0.4
     governance_walk_forward_windows: int = 4
-    governance_min_walk_forward_r2: float = -0.25
+    governance_min_walk_forward_r2: float = 0.0
     governance_max_model_risk_score: float = 0.6
     governance_regime: str = "normal"
     governance_model_risk_warn_threshold: float = 0.4
@@ -56,6 +56,8 @@ class ProjectConfig:
     governance_clipped_walk_forward_floor: float = -2.0
     auto_ml_enabled: bool = True
     target_tickers: List[str] = field(default_factory=list)
+    worldbank_economies: List[str] = field(default_factory=lambda: ["WLD"])
+    worldbank_aggregation_strategy: str = "mean"
     macro_series_map: Dict[str, str] = field(
         default_factory=lambda: {
             "CPIAUCSL": "inflation",
@@ -154,6 +156,26 @@ class ProjectConfig:
                 deduped.append(ticker)
         return deduped
 
+    @staticmethod
+    def _parse_code_list(raw_value: Optional[str], default: List[str]) -> List[str]:
+        if raw_value is None:
+            return list(default)
+        value = raw_value.strip()
+        if not value:
+            return list(default)
+        parsed: List[str] = []
+        try:
+            maybe_json = json.loads(value)
+            if isinstance(maybe_json, list):
+                parsed = [str(item).strip().upper() for item in maybe_json if str(item).strip()]
+        except (ValueError, TypeError):
+            parsed = [token.strip().upper() for token in value.split(",") if token.strip()]
+        deduped: List[str] = []
+        for code in parsed:
+            if code not in deduped:
+                deduped.append(code)
+        return deduped or list(default)
+
     @classmethod
     def load_from_env(cls) -> "ProjectConfig":
         load_dotenv()
@@ -192,7 +214,7 @@ class ProjectConfig:
             os.getenv("ENFORCE_REPRODUCIBILITY"), True
         )
         governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), True)
-        governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), -0.25)
+        governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), 0.0)
         governance_max_normalized_shift = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_NORMALIZED_SHIFT", "2.5"),
             "GOVERNANCE_MAX_NORMALIZED_SHIFT",
@@ -214,7 +236,7 @@ class ProjectConfig:
             4,
         )
         governance_min_walk_forward_r2 = cls._parse_float(
-            os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), -0.25
+            os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), 0.0
         )
         governance_max_model_risk_score = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_MODEL_RISK_SCORE", "0.6"),
@@ -274,6 +296,14 @@ class ProjectConfig:
             os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0
         )
         auto_ml_enabled = cls._parse_bool(os.getenv("AUTO_ML_ENABLED"), False)
+        worldbank_economies = cls._parse_code_list(
+            os.getenv("WORLDBANK_ECONOMIES"), ["WLD"]
+        )
+        worldbank_aggregation_strategy = (
+            os.getenv("WORLDBANK_AGGREGATION_STRATEGY", "mean").strip().lower()
+        )
+        if worldbank_aggregation_strategy not in {"mean", "median", "sum", "last"}:
+            worldbank_aggregation_strategy = "mean"
         if governance_model_risk_fail_threshold < governance_model_risk_warn_threshold:
             (
                 governance_model_risk_warn_threshold,
@@ -375,6 +405,8 @@ class ProjectConfig:
             governance_clipped_walk_forward_floor=governance_clipped_walk_forward_floor,
             auto_ml_enabled=auto_ml_enabled,
             target_tickers=target_tickers,
+            worldbank_economies=worldbank_economies,
+            worldbank_aggregation_strategy=worldbank_aggregation_strategy,
             macro_series_map=macro_series_map,
             worldbank_indicator_map=worldbank_indicator_map,
         )
@@ -419,6 +451,14 @@ class ProjectConfig:
         if not self.worldbank_indicator_map:
             raise ValueError(
                 "Invalid configuration: WORLDBANK_INDICATOR_MAP cannot be empty"
+            )
+        if not self.worldbank_economies:
+            raise ValueError(
+                "Invalid configuration: WORLDBANK_ECONOMIES cannot be empty"
+            )
+        if self.worldbank_aggregation_strategy not in {"mean", "median", "sum", "last"}:
+            raise ValueError(
+                "Invalid configuration: WORLDBANK_AGGREGATION_STRATEGY must be one of mean|median|sum|last"
             )
         if self.target_tickers is not None and len(self.target_tickers) == 0:
             # Empty list is valid only when omitted; if explicitly provided as empty,
@@ -479,6 +519,8 @@ class ProjectConfig:
             "governance_unstable_walk_forward_floor": self.governance_unstable_walk_forward_floor,
             "governance_clipped_walk_forward_floor": self.governance_clipped_walk_forward_floor,
             "target_tickers": self.target_tickers,
+            "worldbank_economies": self.worldbank_economies,
+            "worldbank_aggregation_strategy": self.worldbank_aggregation_strategy,
             "macro_series_map": self.macro_series_map,
             "worldbank_indicator_map": self.worldbank_indicator_map,
             "targets": self.get_targets(),

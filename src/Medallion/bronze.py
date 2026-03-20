@@ -105,16 +105,24 @@ class BronzeLayer:
         # 3. World Bank
         wb_fetcher = self.factory.get_fetcher("worldbank")
         wb_map = dict(getattr(self.config, "worldbank_indicator_map", {}))
+        economies = list(getattr(self.config, "worldbank_economies", ["WLD"]))
         for indicator, filename in wb_map.items():
-            tasks.append(
-                (
-                    wb_fetcher,
-                    (indicator, "WLD", self.config.start_date, self.config.end_date),
-                    filename,
-                    "worldbank",
+            for economy in economies:
+                wb_filename = f"{filename}__{economy.lower()}"
+                tasks.append(
+                    (
+                        wb_fetcher,
+                        (
+                            indicator,
+                            economy,
+                            self.config.start_date,
+                            self.config.end_date,
+                        ),
+                        wb_filename,
+                        "worldbank",
+                    )
                 )
-            )
-            source_expected_counts["worldbank"] += 1
+                source_expected_counts["worldbank"] += 1
 
         # Execute tasks in parallel
         max_workers = min(self.config.max_workers, len(tasks))
