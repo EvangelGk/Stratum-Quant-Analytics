@@ -1,23 +1,21 @@
-import importlib
-from typing import Any, Callable, Optional, Union, cast
+from __future__ import annotations
 
+from typing import Any, Dict, Optional
+
+import numpy as np
 import pandas as pd
+from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import ElasticNet, Ridge
+from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
-
-compare_models: Optional[Callable[..., Any]] = None
-predict_model: Optional[Callable[..., Any]] = None
-setup: Optional[Callable[..., Any]] = None
-
-try:
-    pycaret_regression = importlib.import_module("pycaret.regression")
-    compare_models = getattr(pycaret_regression, "compare_models", None)
-    predict_model = getattr(pycaret_regression, "predict_model", None)
-    setup = getattr(pycaret_regression, "setup", None)
-except Exception:
-    compare_models = None
-    predict_model = None
-    setup = None
+from .mixed_frequency import (
+    add_volatility_regime_feature,
+    aggregate_source_importance,
+    prepare_supervised_frame,
+)
 
 
 def auto_ml_regression(
@@ -25,7 +23,9 @@ def auto_ml_regression(
     target: str,
     features: list,
     random_state: Optional[int] = None,
-) -> Union[dict, None]:
+    ticker: Optional[str] = None,
+    macro_lag_days: int = 0,
+) -> Dict[str, Any]:
     """Select and fit the best regression model automatically via PyCaret.
 
     Uses PyCaret's ``compare_models()`` to benchmark a large suite of
@@ -65,31 +65,162 @@ def auto_ml_regression(
             from ``df``.
     """
     try:
-        if any(func is None for func in (setup, compare_models, predict_model)):
-            raise AnalysisError(
-                "PyCaret is not installed. Install optional dependency 'pycaret' "
-                "to use auto_ml_regression."
-            )
-
         if target not in df.columns or not all(f in df.columns for f in features):
             raise DataValidationError("Columns not found.")
 
-        setup_fn = cast(Callable[..., Any], setup)
-        compare_models_fn = cast(Callable[..., Any], compare_models)
-        predict_model_fn = cast(Callable[..., Any], predict_model)
-
-        data = df[features + [target]].dropna()
-        setup_fn(
-            data=data,
+        panel, metadata = prepare_supervised_frame(
+            df=df,
             target=target,
-            silent=True,
-            verbose=False,
-            session_id=random_state,
-            fold_shuffle=False,
+            features=features,
+            ticker=ticker,
+            macro_lag_days=macro_lag_days,
         )
-        best_model = compare_models_fn()
-        predictions = predict_model_fn(best_model, data=data)
-        return {"best_model": str(best_model), "predictions": predictions}
+        panel = add_volatility_regime_feature(
+            panel,
+            date_col="date",
+            return_col=target,
+            window=30,
+            threshold_quantile=0.75,
+        )
+        model_features = list(features)
+        if "volatility_regime_high" in panel.columns:
+            model_features.append("volatility_regime_high")
+            metadata["volatility_regime_high"] = {
+                "source": "derived",
+                "lag_days": 0,
+                "transformation": "binary_regime_indicator",
+                "native_horizon_days": 1,
+            }
+
+        if len(panel) < max(60, len(features) * 12):
+            raise DataValidationError("Insufficient stationary rows for AutoML.")
+
+        holdout_size = max(20, int(len(panel) * 0.2))
+        train_df = panel.iloc[:-holdout_size].copy()
+        test_df = panel.iloc[-holdout_size:].copy()
+        if train_df.empty or test_df.empty:
+            raise DataValidationError("Unable to create train/test split for AutoML.")
+
+        x_train = train_df[model_features]
+        y_train = train_df[target]
+        x_test = test_df[model_features]
+        y_test = test_df[target]
+
+        seed = 42 if random_state is None else int(random_state)
+        candidates = {
+            "Ridge": Ridge(alpha=0.5),
+            "ElasticNet": ElasticNet(alpha=0.01, l1_ratio=0.3, random_state=seed),
+            "RandomForest": RandomForestRegressor(
+                n_estimators=300,
+                min_samples_leaf=4,
+                random_state=seed,
+                n_jobs=-1,
+            ),
+            "ExtraTrees": ExtraTreesRegressor(
+                n_estimators=300,
+                min_samples_leaf=4,
+                random_state=seed,
+                n_jobs=-1,
+            ),
+            "GradientBoosting": GradientBoostingRegressor(random_state=seed),
+        }
+
+        split_count = max(2, min(5, len(train_df) // 60))
+        splitter = TimeSeriesSplit(n_splits=split_count)
+        candidate_scores = []
+        best_name = ""
+        best_score = -np.inf
+
+        for name, estimator in candidates.items():
+            fold_r2 = []
+            fold_mae = []
+            for train_idx, valid_idx in splitter.split(x_train):
+                fold_x_train = x_train.iloc[train_idx]
+                fold_y_train = y_train.iloc[train_idx]
+                fold_x_valid = x_train.iloc[valid_idx]
+                fold_y_valid = y_train.iloc[valid_idx]
+                estimator.fit(fold_x_train, fold_y_train)
+                fold_predictions = estimator.predict(fold_x_valid)
+                fold_r2.append(float(r2_score(fold_y_valid, fold_predictions)))
+                fold_mae.append(float(mean_absolute_error(fold_y_valid, fold_predictions)))
+
+            mean_r2 = float(np.mean(fold_r2))
+            mean_mae = float(np.mean(fold_mae))
+            candidate_scores.append(
+                {
+                    "model": name,
+                    "cv_r2": mean_r2,
+                    "cv_mae": mean_mae,
+                }
+            )
+            if mean_r2 > best_score:
+                best_score = mean_r2
+                best_name = name
+
+        best_model = candidates[best_name]
+        best_model.fit(x_train, y_train)
+        holdout_predictions = best_model.predict(x_test)
+
+        if hasattr(best_model, "feature_importances_"):
+            raw_values = np.asarray(getattr(best_model, "feature_importances_"), dtype=float)
+        elif hasattr(best_model, "coef_"):
+            raw_values = np.abs(np.asarray(getattr(best_model, "coef_"), dtype=float))
+        else:
+            perm = permutation_importance(
+                best_model,
+                x_test,
+                y_test,
+                n_repeats=10,
+                random_state=seed,
+                scoring="r2",
+            )
+            raw_values = np.abs(np.asarray(perm.importances_mean, dtype=float))
+
+        total_importance = float(np.sum(raw_values)) or 1.0
+        feature_importance = {
+            feature: float(value / total_importance)
+            for feature, value in zip(model_features, raw_values)
+        }
+
+        prediction_frame = pd.DataFrame(
+            {
+                "date": test_df["date"],
+                "actual": y_test.values,
+                "prediction": holdout_predictions,
+            }
+        )
+        return {
+            "best_model": best_name,
+            "ticker": ticker,
+            "cv_r2": round(best_score, 6),
+            "holdout_r2": round(float(r2_score(y_test, holdout_predictions)), 6),
+            "holdout_mae": round(float(mean_absolute_error(y_test, holdout_predictions)), 6),
+            "candidate_scores": sorted(
+                candidate_scores,
+                key=lambda item: float(item["cv_r2"]),
+                reverse=True,
+            ),
+            "feature_importance": sorted(
+                [
+                    {
+                        "feature": feature,
+                        "importance": round(value, 6),
+                    }
+                    for feature, value in feature_importance.items()
+                ],
+                key=lambda item: float(item["importance"]),
+                reverse=True,
+            ),
+            "source_importance": aggregate_source_importance(feature_importance),
+            "predictions": prediction_frame,
+            "validation_scheme": "walk_forward_time_series_split",
+            "regime_feature": {
+                "enabled": "volatility_regime_high" in panel.columns,
+                "window_days": 30,
+                "threshold_quantile": 0.75,
+            },
+            "transformations": metadata,
+        }
     except DataValidationError:
         raise
     except Exception as e:

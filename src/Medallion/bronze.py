@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from exceptions.FetchersExceptions import FetcherError, RateLimitError, TimeoutError
+from exceptions.FetchersExceptions import FetcherError, MissingAPIKeyError, RateLimitError, TimeoutError
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig
 from logger.Messages.FetchersMess import (
@@ -88,19 +88,22 @@ class BronzeLayer:
             )
             source_expected_counts["yfinance"] += 1
 
-        # 2. Macro Data (FRED)
-        fred_fetcher = self.factory.get_fetcher("fred")
-        macro_map = dict(getattr(self.config, "macro_series_map", {}))
-        for series_id, filename in macro_map.items():
-            tasks.append(
-                (
-                    fred_fetcher,
-                    (series_id, self.config.start_date, self.config.end_date),
-                    filename,
-                    "fred",
+        # 2. Macro Data (FRED) — optional; skipped when FRED_API_KEY is absent.
+        try:
+            fred_fetcher = self.factory.get_fetcher("fred")
+            macro_map = dict(getattr(self.config, "macro_series_map", {}))
+            for series_id, filename in macro_map.items():
+                tasks.append(
+                    (
+                        fred_fetcher,
+                        (series_id, self.config.start_date, self.config.end_date),
+                        filename,
+                        "fred",
+                    )
                 )
-            )
-            source_expected_counts["fred"] += 1
+                source_expected_counts["fred"] += 1
+        except (MissingAPIKeyError, ValueError) as _fred_err:
+            self.logger.warning("FRED source skipped: %s", _fred_err)
 
         # 3. World Bank
         wb_fetcher = self.factory.get_fetcher("worldbank")

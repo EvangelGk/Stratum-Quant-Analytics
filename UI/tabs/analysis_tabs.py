@@ -71,6 +71,30 @@ def show_scenario_builder_tab() -> None:
     st.subheader("🎛️ Scenario Builder (Custom Shocks)")
     st.caption("Set custom macro shocks and see immediate impact estimates.")
 
+    # ── Preset scenario selector (wired to analysis_suite PRESET_SCENARIOS) ──
+    try:
+        from analysis_suite import PRESET_SCENARIOS as _PRESETS
+    except ImportError:
+        _PRESETS = {}
+
+    preset_options = ["custom"] + sorted(_PRESETS.keys())
+    selected_preset = st.selectbox(
+        "Preset scenario",
+        options=preset_options,
+        format_func=lambda k: k.replace("_", " ").title(),
+    )
+    if selected_preset != "custom" and selected_preset in _PRESETS:
+        preset_meta = _PRESETS[selected_preset]
+        st.info(
+            f"**{selected_preset.replace('_', ' ').title()}** — {preset_meta['description']}"
+        )
+        shocks_preview = ", ".join(
+            f"{k}: {v:+.1%}" for k, v in preset_meta["factor_shocks"].items()
+        )
+        st.caption(f"Preset factor shocks: {shocks_preview}")
+
+    st.divider()
+
     c1, c2, c3 = st.columns(3)
     inflation_shock = c1.slider("Inflation shock (%)", -10.0, 10.0, 1.0, 0.5)
     energy_shock = c2.slider("Energy shock (%)", -20.0, 20.0, 2.0, 0.5)
@@ -80,15 +104,34 @@ def show_scenario_builder_tab() -> None:
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
     elasticity_val = results.get("elasticity")
 
+    # ── Contract-aware elasticity extraction: elasticity() returns a dict ──
     baseline_move = 0.0
-    if isinstance(elasticity_val, (int, float)):
-        baseline_move = float(elasticity_val) * (inflation_shock / 100.0)
+    _static_elast: float | None = None
+    if isinstance(elasticity_val, dict):
+        _static_elast = elasticity_val.get("static_elasticity")
+    elif isinstance(elasticity_val, (int, float)):
+        _static_elast = float(elasticity_val)
+    if isinstance(_static_elast, (int, float)):
+        baseline_move = float(_static_elast) * (inflation_shock / 100.0)
 
     total_shock = (inflation_shock * 0.5 + energy_shock * 0.3 + rate_shock * 0.2) / 100.0
     estimated_return_shift = baseline_move + total_shock
 
     st.metric("Estimated return shift", f"{estimated_return_shift * 100:.2f}%")
     st.info("This is a fast directional estimate. Use Stress Test and Forecast outputs for detailed decisions.")
+
+    # ── Stress test results from last pipeline run ────────────────────────────
+    stress_res = results.get("stress_test")
+    if isinstance(stress_res, dict) and "results" in stress_res:
+        st.markdown("### 📊 Last-Run Stress Test Results")
+        scenario_meta = stress_res.get("scenario", {})
+        if scenario_meta.get("name"):
+            st.caption(f"Scenario: **{scenario_meta['name'].replace('_', ' ').title()}** — {scenario_meta.get('description', '')}")
+        for factor, detail in stress_res["results"].items():
+            ca, cb, cc = st.columns(3)
+            ca.metric(factor, f"{detail.get('shock', 0.0):+.2%}", delta_color="off")
+            cb.metric("β", f"{detail.get('beta', 0.0):.4f}")
+            cc.metric("Impact", f"{detail.get('predicted_impact', 0.0):.2%}", delta_color="inverse")
 
 
 def show_explainability_tab() -> None:

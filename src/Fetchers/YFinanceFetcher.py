@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import pandas as pd
 
 from exceptions.FetchersExceptions import APIError, CacheError
@@ -7,16 +10,33 @@ from .BaseFetcher import BaseFetcher
 
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
-    CACHE_SCHEMA_VERSION = "v3"
+    CACHE_SCHEMA_VERSION = "v4"  # bumped: AUTO_ADJUST changed False→True
+    FETCH_INTERVAL = "1d"
+    # True: yfinance adjusts Close (and all OHLCV) for splits and dividends.
+    # This means `close` in the Silver/Gold layers is already corporate-action
+    # adjusted — log-returns computed from it are free of split/dividend spikes.
+    AUTO_ADJUST = True
 
     def __init__(self) -> None:
         super().__init__()
 
     # Fetching data from Yahoo Finance with caching.
     def fetch(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        cache_profile = {
+            "schema": self.CACHE_SCHEMA_VERSION,
+            "ticker": str(ticker).upper(),
+            "start": str(start_date),
+            "end": str(end_date),
+            "interval": self.FETCH_INTERVAL,
+            "auto_adjust": self.AUTO_ADJUST,
+            "normalizer": "ohlcv-v1",
+        }
+        cache_profile_hash = hashlib.sha256(
+            json.dumps(cache_profile, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
         key = (
             f"yfinance_{self.CACHE_SCHEMA_VERSION}_"
-            f"{ticker}_{start_date}_{end_date}"
+            f"{ticker}_{cache_profile_hash}"
         )
         try:
             cached = self._get_cached(key)
@@ -34,8 +54,8 @@ class YFinanceFetcher(BaseFetcher):
                 ticker,
                 start=start_date,
                 end=end_date,
-                interval="1d",
-                auto_adjust=False,
+                interval=self.FETCH_INTERVAL,
+                auto_adjust=self.AUTO_ADJUST,
                 progress=False,
                 threads=False,
             )

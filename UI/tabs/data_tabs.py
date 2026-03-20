@@ -5,12 +5,19 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from UI.constants import GOLD_DIR, LOGS_DIR, OUTPUT_DIR, PROJECT_ROOT, RAW_DIR, PROCESSED_DIR
 from UI.content import ANALYSIS_HELP, LAYER_HELP
-from UI.helpers import load_session_history, read_json
+from UI.helpers import load_session_history
 from UI.rendering import FETCHERS_MOD, MAIN_MOD, MEDALLION_MOD, render_logger_message
+from UI.traffic_light import (
+    badge_html,
+    score_governance_gate,
+    score_model_risk,
+    score_oos_r2,
+)
 
 
 def _human_label(text: str) -> str:
@@ -64,13 +71,259 @@ def _render_key_values(payload: object, header: str = "Summary") -> None:
     )
 
 
+@st.cache_data(show_spinner=False)
+def _read_json_cached(path_str: str, mtime_ns: int) -> dict:
+    _ = mtime_ns  # cache key component (file changes -> cache invalidation)
+    path = Path(path_str)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+@st.cache_data(show_spinner=False)
+def _read_csv_cached(path_str: str, mtime_ns: int) -> pd.DataFrame:
+    _ = mtime_ns
+    path = Path(path_str)
+    return pd.read_csv(path)
+
+
+@st.cache_data(show_spinner=False)
+def _read_parquet_cached(path_str: str, mtime_ns: int) -> pd.DataFrame:
+    _ = mtime_ns
+    path = Path(path_str)
+    return pd.read_parquet(path)
+
+
+def _read_json_fast(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return _read_json_cached(str(path), path.stat().st_mtime_ns)
+
+
+def _read_csv_fast(path: Path) -> pd.DataFrame:
+    return _read_csv_cached(str(path), path.stat().st_mtime_ns)
+
+
+def _read_parquet_fast(path: Path) -> pd.DataFrame:
+    return _read_parquet_cached(str(path), path.stat().st_mtime_ns)
+
+
+def _render_quant_insights(summary: dict) -> None:
+    results = summary.get("results", {}) if isinstance(summary, dict) else {}
+    if not isinstance(results, dict) or not results:
+        return
+
+    st.markdown("---")
+    st.markdown("### 📉 Insights Dashboard")
+
+    gov = results.get("governance_report", {}) if isinstance(results.get("governance_report"), dict) else {}
+    mc = results.get("monte_carlo", {}) if isinstance(results.get("monte_carlo"), dict) else {}
+    lag = results.get("lag_analysis", {}) if isinstance(results.get("lag_analysis"), dict) else {}
+    elas = results.get("elasticity", {}) if isinstance(results.get("elasticity"), dict) else {}
+    stress = results.get("stress_test", {}) if isinstance(results.get("stress_test"), dict) else {}
+    fc = results.get("forecasting", {}) if isinstance(results.get("forecasting"), dict) else {}
+    decay = results.get("feature_decay", {}) if isinstance(results.get("feature_decay"), dict) else {}
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("OOS R²", _fmt_scalar((gov.get("out_of_sample") or {}).get("r2")))
+    k2.metric("Model Risk", _fmt_scalar(gov.get("model_risk_score")))
+    k3.metric("Best Lag (days)", _fmt_scalar(lag.get("best_lag_days")))
+    k4.metric("Elasticity β", _fmt_scalar(elas.get("static_elasticity")))
+
+    stress_results = stress.get("results", {}) if isinstance(stress, dict) else {}
+    if isinstance(stress_results, dict) and stress_results:
+        stress_rows = []
+        for factor, metrics in stress_results.items():
+            if isinstance(metrics, dict):
+                stress_rows.append(
+                    {
+                        "factor": str(factor),
+                        "impact": float(metrics.get("predicted_impact", 0.0)),
+                        "shock": float(metrics.get("shock", 0.0)),
+                    }
+                )
+        if stress_rows:
+            sdf = pd.DataFrame(stress_rows).sort_values("impact")
+            fig = px.bar(
+                sdf,
+                x="impact",
+                y="factor",
+                orientation="h",
+                title="Stress Impact per Factor",
+                color="impact",
+                color_continuous_scale="RdYlGn",
+            )
+            fig.update_layout(height=360, coloraxis_showscale=False)
+            st.plotly_chart(fig, width="stretch")
+
+    lag_scan = lag.get("lag_scan", []) if isinstance(lag, dict) else []
+    if isinstance(lag_scan, list) and lag_scan:
+        ldf = pd.DataFrame(lag_scan)
+        if {"lag_days", "correlation"}.issubset(ldf.columns):
+            ldf = ldf.dropna(subset=["correlation"])
+            if not ldf.empty:
+                fig = px.line(
+                    ldf,
+                    x="lag_days",
+                    y="correlation",
+                    markers=True,
+                    title="Lag Profile (Correlation vs Lag Days)",
+                )
+                fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
+                fig.update_layout(height=330)
+                st.plotly_chart(fig, width="stretch")
+
+    rolling = elas.get("rolling_elasticity", []) if isinstance(elas, dict) else []
+    if isinstance(rolling, list) and rolling:
+        edf = pd.DataFrame(rolling)
+        if {"date", "elasticity"}.issubset(edf.columns):
+            edf["date"] = pd.to_datetime(edf["date"], errors="coerce")
+            edf = edf.dropna(subset=["date", "elasticity"])
+            if not edf.empty:
+                fig = px.line(
+                    edf,
+                    x="date",
+                    y="elasticity",
+                    title="Rolling Elasticity (Time-varying Macro Sensitivity)",
+                )
+                fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
+                fig.update_layout(height=330)
+                st.plotly_chart(fig, width="stretch")
+
+    if isinstance(mc, dict) and mc:
+        risk_keys = [
+            "value_at_risk_95",
+            "value_at_risk_99",
+            "conditional_var_95",
+            "expected_shortfall_99",
+            "historical_var_95",
+            "historical_es_95",
+            "parametric_var_95",
+            "parametric_es_95",
+        ]
+        risk_rows = []
+        for key in risk_keys:
+            val = mc.get(key)
+            if isinstance(val, (int, float)):
+                risk_rows.append({"metric": _human_label(key), "value": float(val)})
+        if risk_rows:
+            rdf = pd.DataFrame(risk_rows)
+            fig = go.Figure(
+                data=[
+                    go.Bar(
+                        x=rdf["metric"],
+                        y=rdf["value"],
+                        marker_color="#0f766e",
+                    )
+                ]
+            )
+            fig.update_layout(
+                title="Monte Carlo Risk Stack (VaR / ES)",
+                xaxis_title="Risk Metric",
+                yaxis_title="Loss (absolute)",
+                height=360,
+            )
+            st.plotly_chart(fig, width="stretch")
+
+    if isinstance(fc, dict) and fc.get("forecast"):
+        forecast = fc.get("forecast", [])
+        lower = fc.get("lower_90", [])
+        upper = fc.get("upper_90", [])
+        horizon = list(range(1, len(forecast) + 1))
+        if forecast and len(lower) == len(forecast) and len(upper) == len(forecast):
+            ribbon_df = pd.DataFrame(
+                {
+                    "step": horizon,
+                    "forecast": forecast,
+                    "lower_90": lower,
+                    "upper_90": upper,
+                }
+            )
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=ribbon_df["step"],
+                    y=ribbon_df["upper_90"],
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=ribbon_df["step"],
+                    y=ribbon_df["lower_90"],
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor="rgba(15,118,110,0.20)",
+                    line=dict(width=0),
+                    name="90% CI",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=ribbon_df["step"],
+                    y=ribbon_df["forecast"],
+                    mode="lines+markers",
+                    line=dict(color="#0f766e", width=3),
+                    name="Forecast",
+                )
+            )
+            fig.update_layout(
+                title="Volatility Forecast with 90% Confidence Ribbon",
+                xaxis_title="Forecast Horizon (steps)",
+                yaxis_title="Annualized Volatility",
+                height=360,
+            )
+            st.plotly_chart(fig, width="stretch")
+
+    if isinstance(decay, dict) and isinstance(decay.get("results"), dict):
+        decay_rows = []
+        for feature, payload in decay["results"].items():
+            if not isinstance(payload, dict):
+                continue
+            hl = payload.get("half_life_lag_days")
+            base = payload.get("baseline_correlation")
+            if isinstance(hl, int):
+                decay_rows.append(
+                    {
+                        "feature": str(feature),
+                        "half_life_lag_days": hl,
+                        "baseline_correlation": float(base) if isinstance(base, (int, float)) else 0.0,
+                    }
+                )
+        if decay_rows:
+            ddf = pd.DataFrame(decay_rows).sort_values("half_life_lag_days")
+            fig = px.bar(
+                ddf,
+                x="feature",
+                y="half_life_lag_days",
+                color="baseline_correlation",
+                color_continuous_scale="Tealgrn",
+                title="Feature Decay (Information Half-Life)",
+            )
+            fig.update_layout(height=360, coloraxis_colorbar_title="Baseline corr")
+            st.plotly_chart(fig, width="stretch")
+
+
 def _render_governance_payload(payload: dict) -> None:
     gate = payload.get("gate", payload.get("value", payload))
     report = payload.get("report", {})
     if isinstance(gate, dict):
+        gate_passed = bool(gate.get("passed"))
+        severity = str(gate.get("severity", "unknown"))
+        tl_c, tl_l, tl_d = score_governance_gate(gate_passed, severity)
+        st.markdown(
+            badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Gate Passed", "Yes" if gate.get("passed") else "No")
-        c2.metric("Severity", str(gate.get("severity", "unknown")).upper())
+        c1.metric("Gate Passed", "Yes" if gate_passed else "No")
+        c2.metric("Severity", severity.upper())
         c3.metric("Regime", str(gate.get("regime", "unknown")).upper())
         reasons = gate.get("reasons", []) or []
         if reasons:
@@ -79,13 +332,464 @@ def _render_governance_payload(payload: dict) -> None:
                 st.markdown(f"- {reason}")
 
     if isinstance(report, dict):
-        oos = (report.get("out_of_sample") or {}).get("r2")
+        oos_r2_val = (report.get("out_of_sample") or {}).get("r2")
         wf = (report.get("walk_forward") or {}).get("avg_r2")
         risk = report.get("model_risk_score")
         m1, m2, m3 = st.columns(3)
-        m1.metric("OOS R²", _fmt_scalar(oos))
+        m1.metric("OOS R²", _fmt_scalar(oos_r2_val))
         m2.metric("Walk-forward R²", _fmt_scalar(wf))
         m3.metric("Model Risk", _fmt_scalar(risk))
+        r2_c, r2_l, r2_d = score_oos_r2(oos_r2_val)
+        mr_c, mr_l, mr_d = score_model_risk(risk)
+        b1, b2 = st.columns(2)
+        b1.markdown(badge_html(r2_l, r2_c, r2_d), unsafe_allow_html=True)
+        b2.markdown(badge_html(mr_l, mr_c, mr_d), unsafe_allow_html=True)
+
+
+def _render_sensitivity_regression_payload(value: dict) -> None:
+    coeffs = value.get("coefficients", {}) if isinstance(value, dict) else {}
+    if not isinstance(coeffs, dict) or not coeffs:
+        _render_key_values(value, header="Sensitivity Summary")
+        return
+
+    st.markdown("### 🧭 Τι επηρεάζει περισσότερο τις αποδόσεις")
+    r2 = value.get("r2")
+    n_obs = value.get("n_obs")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Model", str(value.get("model", "N/A")))
+    c2.metric("R²", _fmt_scalar(r2))
+    c3.metric("Παρατηρήσεις", _fmt_scalar(n_obs))
+
+    cdf = pd.DataFrame(
+        [{"factor": str(k), "coefficient": float(v)} for k, v in coeffs.items()]
+    )
+    cdf["abs_coef"] = cdf["coefficient"].abs()
+    cdf = cdf.sort_values("abs_coef", ascending=False)
+    fig = px.bar(
+        cdf,
+        x="factor",
+        y="coefficient",
+        color="coefficient",
+        color_continuous_scale="RdYlGn",
+        title="Επίδραση κάθε macro factor στις αποδόσεις",
+    )
+    fig.update_layout(height=360, coloraxis_colorbar_title="Coef")
+    st.plotly_chart(fig, width="stretch")
+
+    top = cdf.iloc[0]
+    direction = "αυξάνει" if float(top["coefficient"]) > 0 else "μειώνει"
+    st.success(
+        f"Κυρίαρχος παράγοντας: **{top['factor']}**. Όταν ανεβαίνει, τείνει να **{direction}** την απόδοση."
+    )
+
+
+def _render_backtest_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Backtest Summary")
+        return
+
+    st.markdown("### 🧪 Πώς πήγε το μοντέλο στην κρίση 2020-2022")
+    te = value.get("tracking_error")
+    mdd = value.get("maximum_drawdown")
+    train_rows = value.get("train_rows")
+    test_rows = value.get("test_rows")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Train rows", _fmt_scalar(train_rows))
+    k2.metric("Test rows", _fmt_scalar(test_rows))
+    k3.metric("Tracking Error", _fmt_scalar(te))
+    k4.metric("Max Drawdown", _fmt_scalar(mdd))
+
+    preds = value.get("predictions", [])
+    actual = value.get("actual", [])
+    if isinstance(preds, list) and isinstance(actual, list) and preds and len(preds) == len(actual):
+        bdf = pd.DataFrame(
+            {
+                "step": list(range(1, len(preds) + 1)),
+                "predicted_return": [float(x) for x in preds],
+                "actual_return": [float(x) for x in actual],
+            }
+        )
+        bdf["predicted_curve"] = (1.0 + bdf["predicted_return"]).cumprod()
+        bdf["actual_curve"] = (1.0 + bdf["actual_return"]).cumprod()
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=bdf["step"],
+                y=bdf["actual_curve"],
+                mode="lines",
+                name="Πραγματική πορεία",
+                line=dict(color="#b91c1c", width=3),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=bdf["step"],
+                y=bdf["predicted_curve"],
+                mode="lines",
+                name="Πρόβλεψη μοντέλου",
+                line=dict(color="#0f766e", width=3),
+            )
+        )
+        fig.update_layout(
+            title="Σύγκριση πρόβλεψης vs πραγματικότητας (2020-2022)",
+            xaxis_title="Χρονικό βήμα",
+            yaxis_title="Σωρευτική πορεία κεφαλαίου",
+            height=380,
+        )
+        st.plotly_chart(fig, width="stretch")
+
+        avg_abs_err = float((bdf["predicted_return"] - bdf["actual_return"]).abs().mean())
+        st.info(
+            "Απλή ανάγνωση: αν οι 2 καμπύλες είναι κοντά, το μοντέλο "
+            "κρατάει καλά στη κρίση. Όσο απομακρύνονται, τόσο αυξάνει το σφάλμα. "
+            f"Μέσο απόλυτο σφάλμα ανά περίοδο: {avg_abs_err:.4f}."
+        )
+
+
+def _render_elasticity_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Elasticity Summary")
+        return
+
+    static_el = value.get("static_elasticity")
+    points = value.get("data_points")
+    f1, f2, f3 = st.columns(3)
+    f1.metric("Static Elasticity", _fmt_scalar(static_el))
+    f2.metric("Data Points", _fmt_scalar(points))
+    f3.metric("Macro Factor", str(value.get("macro_factor", "N/A")))
+
+    direction = "ανεβαίνει" if isinstance(static_el, (int, float)) and static_el >= 0 else "πέφτει"
+    st.success(
+        f"Απλό insight: όταν ο macro factor αυξάνεται, η απόδοση τείνει να **{direction}**."
+    )
+
+    rolling = value.get("rolling_elasticity", [])
+    if isinstance(rolling, list) and rolling:
+        rdf = pd.DataFrame(rolling)
+        if {"date", "elasticity"}.issubset(rdf.columns):
+            rdf["date"] = pd.to_datetime(rdf["date"], errors="coerce")
+            rdf = rdf.dropna(subset=["date", "elasticity"])
+            if not rdf.empty:
+                fig = px.line(
+                    rdf,
+                    x="date",
+                    y="elasticity",
+                    title="Πώς αλλάζει η ευαισθησία στον χρόνο",
+                )
+                fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
+                fig.update_layout(height=340)
+                st.plotly_chart(fig, width="stretch")
+
+
+def _render_lag_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Lag Summary")
+        return
+
+    best_lag = value.get("best_lag_days")
+    best_corr = value.get("best_lag_correlation")
+    rlag = value.get("reference_lag_days")
+    rcorr = value.get("reference_lag_correlation")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Best Lag (days)", _fmt_scalar(best_lag))
+    c2.metric("Best Corr", _fmt_scalar(best_corr))
+    c3.metric("Reference Lag", _fmt_scalar(rlag))
+    c4.metric("Reference Corr", _fmt_scalar(rcorr))
+
+    scan = value.get("lag_scan", [])
+    if isinstance(scan, list) and scan:
+        ldf = pd.DataFrame(scan)
+        if {"lag_days", "correlation"}.issubset(ldf.columns):
+            ldf = ldf.dropna(subset=["correlation"])
+            if not ldf.empty:
+                fig = px.line(
+                    ldf,
+                    x="lag_days",
+                    y="correlation",
+                    markers=True,
+                    title="Καθυστέρηση επίδρασης macro factor",
+                )
+                fig.add_hline(y=0, line_dash="dot", line_color="#777")
+                fig.update_layout(height=340)
+                st.plotly_chart(fig, width="stretch")
+
+
+def _render_forecasting_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Forecast Summary")
+        return
+
+    current_vol = value.get("current_volatility")
+    vol_window = value.get("volatility_window")
+    c1, c2 = st.columns(2)
+    c1.metric("Current Annualized Vol", _fmt_scalar(current_vol))
+    c2.metric("Volatility Window", _fmt_scalar(vol_window))
+
+    forecast = value.get("forecast", [])
+    lower = value.get("lower_90", [])
+    upper = value.get("upper_90", [])
+    if isinstance(forecast, list) and forecast:
+        x = list(range(1, len(forecast) + 1))
+        fdf = pd.DataFrame({"step": x, "forecast": forecast})
+        fig = go.Figure()
+        if isinstance(lower, list) and isinstance(upper, list) and len(lower) == len(forecast) and len(upper) == len(forecast):
+            fig.add_trace(go.Scatter(x=x, y=upper, mode="lines", line=dict(width=0), showlegend=False))
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=lower,
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor="rgba(2,132,199,0.2)",
+                    line=dict(width=0),
+                    name="90% Διάστημα",
+                )
+            )
+        fig.add_trace(
+            go.Scatter(
+                x=fdf["step"],
+                y=fdf["forecast"],
+                mode="lines+markers",
+                name="Πρόβλεψη",
+                line=dict(color="#0284c7", width=3),
+            )
+        )
+        fig.update_layout(height=340, title="Πρόβλεψη μεταβλητότητας")
+        st.plotly_chart(fig, width="stretch")
+
+
+def _render_monte_carlo_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Monte Carlo Summary")
+        return
+
+    st.markdown("### 🎲 Monte Carlo Risk Snapshot")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Scenario", str(value.get("scenario", "N/A")))
+    c2.metric("Daily Vol", _fmt_scalar(value.get("daily_volatility")))
+    c3.metric("Scenario Vol", _fmt_scalar(value.get("scenario_volatility")))
+
+    risk_metrics = [
+        "value_at_risk_95",
+        "value_at_risk_99",
+        "conditional_var_95",
+        "expected_shortfall_99",
+        "historical_var_95",
+        "historical_es_95",
+        "parametric_var_95",
+        "parametric_es_95",
+    ]
+    rows = []
+    for k in risk_metrics:
+        v = value.get(k)
+        if isinstance(v, (int, float)):
+            rows.append({"metric": _human_label(k), "value": float(v)})
+    if rows:
+        rdf = pd.DataFrame(rows)
+        fig = px.bar(rdf, x="metric", y="value", title="Κρίσιμες απώλειες (VaR / ES)")
+        fig.update_layout(height=350)
+        st.plotly_chart(fig, width="stretch")
+
+
+def _render_auto_ml_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Auto ML Summary")
+        return
+
+    best_model = value.get("best_model", "N/A")
+    c1 = st.columns(1)[0]
+    c1.metric("Best Model", str(best_model))
+    st.success("Το AutoML διάλεξε το μοντέλο που απέδωσε καλύτερα για τα δεδομένα αυτού του run.")
+
+    preds = value.get("predictions")
+    if isinstance(preds, list) and preds:
+        pdf = pd.DataFrame(preds)
+        if {"prediction"}.issubset(pdf.columns):
+            fig = px.histogram(pdf, x="prediction", nbins=30, title="Κατανομή προβλέψεων")
+            fig.update_layout(height=320)
+            st.plotly_chart(fig, width="stretch")
+
+
+def _render_feature_decay_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Feature Decay Summary")
+        return
+    results = value.get("results", {}) if isinstance(value.get("results"), dict) else {}
+    if not results:
+        _render_key_values(value, header="Feature Decay Summary")
+        return
+
+    rows = []
+    for feature, payload in results.items():
+        if isinstance(payload, dict):
+            rows.append(
+                {
+                    "feature": str(feature),
+                    "half_life_lag_days": payload.get("half_life_lag_days"),
+                    "baseline_correlation": payload.get("baseline_correlation"),
+                }
+            )
+    ddf = pd.DataFrame(rows)
+    st.dataframe(ddf, width="stretch", hide_index=True)
+    if not ddf.empty and "half_life_lag_days" in ddf.columns:
+        ddf = ddf.dropna(subset=["half_life_lag_days"])
+        if not ddf.empty:
+            fig = px.bar(ddf, x="feature", y="half_life_lag_days", title="Πόσο γρήγορα παλιώνει η πληροφορία")
+            fig.update_layout(height=330)
+            st.plotly_chart(fig, width="stretch")
+
+
+def _render_governance_report_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Governance Report")
+        return
+    oos = (value.get("out_of_sample") or {}).get("r2")
+    wf = (value.get("walk_forward") or {}).get("avg_r2")
+    risk = value.get("model_risk_score")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("OOS R²", _fmt_scalar(oos))
+    c2.metric("Walk-forward R²", _fmt_scalar(wf))
+    c3.metric("Model Risk", _fmt_scalar(risk))
+    st.caption("Το Report είναι διάγνωση ποιότητας μοντέλου, όχι τελική άδεια παραγωγής.")
+
+
+def _render_governance_gate_payload(value: dict) -> None:
+    if not isinstance(value, dict):
+        _render_key_values(value, header="Governance Gate")
+        return
+    passed = bool(value.get("passed"))
+    sev = str(value.get("severity", "unknown")).lower()
+    c, l, d = score_governance_gate(passed, sev)
+    st.markdown(badge_html(l, c, d), unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    c1.metric("Gate Decision", "PASS" if passed else "FAIL")
+    c2.metric("Severity", str(value.get("severity", "N/A")).upper())
+    reasons = value.get("reasons", [])
+    if isinstance(reasons, list) and reasons:
+        st.markdown("**Γιατί βγήκε αυτή η απόφαση**")
+        for reason in reasons:
+            st.markdown(f"- {reason}")
+
+
+def _render_analysis_view(analysis_name: str, payload: object) -> None:
+    value = payload.get("value") if isinstance(payload, dict) and "value" in payload else payload
+
+    if analysis_name == "stress_test":
+        if _render_stress_payload(value):
+            return
+    if analysis_name == "sensitivity_regression" and isinstance(value, dict):
+        _render_sensitivity_regression_payload(value)
+        return
+    if analysis_name == "backtest_2020" and isinstance(value, dict):
+        _render_backtest_payload(value)
+        return
+    if analysis_name == "elasticity" and isinstance(value, dict):
+        _render_elasticity_payload(value)
+        return
+    if analysis_name == "lag_analysis" and isinstance(value, dict):
+        _render_lag_payload(value)
+        return
+    if analysis_name == "forecasting" and isinstance(value, dict):
+        _render_forecasting_payload(value)
+        return
+    if analysis_name == "monte_carlo" and isinstance(value, dict):
+        _render_monte_carlo_payload(value)
+        return
+    if analysis_name == "auto_ml" and isinstance(value, dict):
+        _render_auto_ml_payload(value)
+        return
+    if analysis_name == "feature_decay" and isinstance(value, dict):
+        _render_feature_decay_payload(value)
+        return
+    if analysis_name == "governance_report" and isinstance(value, dict):
+        _render_governance_report_payload(value)
+        return
+    if analysis_name == "governance_gate" and isinstance(value, dict):
+        _render_governance_gate_payload(value)
+        return
+
+    _render_analysis_payload(analysis_name, payload)
+
+
+def _render_stress_payload(value: object) -> bool:
+    """Return True when stress payload was rendered with a specific UI path."""
+    if isinstance(value, str) and "Shock map not provided" in value:
+        st.error("Δεν εφαρμόστηκε stress scenario σε αυτό το run.")
+        st.caption(
+            "Το stress_test έμεινε κενό γιατί δεν δόθηκε shock map/scenario. "
+            "Άρα τα stress αποτελέσματα δεν είναι διαθέσιμα για ερμηνεία."
+        )
+        return True
+
+    if not isinstance(value, dict):
+        return False
+
+    scenario = value.get("scenario", {}) if isinstance(value.get("scenario"), dict) else {}
+    results = value.get("results", {}) if isinstance(value.get("results"), dict) else {}
+    st.markdown("### ⚡ Stress Scenario Snapshot")
+    st.metric("Scenario", str(scenario.get("name", "custom")).replace("_", " ").title())
+    if scenario.get("description"):
+        st.caption(str(scenario.get("description")))
+
+    if results:
+        rows = []
+        for factor, m in results.items():
+            if isinstance(m, dict):
+                rows.append(
+                    {
+                        "Factor": factor,
+                        "Shock": float(m.get("shock", 0.0)),
+                        "Beta": float(m.get("beta", 0.0)),
+                        "Impact": float(m.get("predicted_impact", 0.0)),
+                    }
+                )
+        if rows:
+            rdf = pd.DataFrame(rows).sort_values("Impact")
+            fig = px.bar(
+                rdf,
+                x="Impact",
+                y="Factor",
+                orientation="h",
+                title="Impact ανά παράγοντα stress",
+                color="Impact",
+                color_continuous_scale="RdYlGn",
+            )
+            fig.update_layout(height=340, coloraxis_showscale=False)
+            st.plotly_chart(fig, width="stretch")
+    return True
+
+
+def _render_governance_consistency_panel(results: dict) -> None:
+    report = results.get("governance_report")
+    gate = results.get("governance_gate")
+    if not isinstance(report, dict) and not isinstance(gate, dict):
+        return
+
+    st.markdown("### 🛡️ Governance: Τι είναι τι")
+    st.caption(
+        "Governance Report = διαγνωστικό quality/risk report. Governance Gate = τελική απόφαση αν επιτρέπεται η έξοδος. "
+        "Δεν είναι διπλότυπα, έχουν διαφορετικό ρόλο."
+    )
+
+    report_status = str(report.get("status", "unknown")).upper() if isinstance(report, dict) else "N/A"
+    gate_passed = bool(gate.get("passed")) if isinstance(gate, dict) else None
+    gate_severity = str(gate.get("severity", "unknown")).upper() if isinstance(gate, dict) else "N/A"
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Report status", report_status)
+    c2.metric("Gate passed", "Yes" if gate_passed is True else "No" if gate_passed is False else "N/A")
+    c3.metric("Gate severity", gate_severity)
+
+    if isinstance(report, dict) and isinstance(gate, dict):
+        if report_status in {"FAIL", "ERROR", "CRITICAL"} and gate_passed:
+            st.warning(
+                "Το Report δείχνει αδύναμο quality/risk προφίλ, αλλά το Gate το επέτρεψε με warning policy. "
+                "Αυτό είναι επιτρεπτό μόνο όταν το policy είναι advisory και όχι hard-block."
+            )
+        elif report_status == "OK" and gate_passed is False:
+            st.warning(
+                "Το Report είναι OK αλλά το Gate έκοψε το run λόγω policy-level κανόνων/thresholds."
+            )
 
 
 def _render_analysis_payload(analysis_name: str, payload: object) -> None:
@@ -167,7 +871,7 @@ def show_data_tab() -> None:
     selected_label = st.selectbox("Choose file to preview:", options=list(file_labels.keys()))
     selected_file = file_labels[selected_label]
     with st.spinner("Loading data..."):
-        df = pd.read_parquet(selected_file)
+        df = _read_parquet_fast(selected_file)
     st.metric("Data Shape", f"{len(df)} rows × {len(df.columns)} columns")
     st.markdown("**Preview (first 200 rows):**")
     st.dataframe(df.head(200), width="stretch")
@@ -190,42 +894,63 @@ def show_analytics_tab() -> None:
             st.markdown(f"**How to use it:** {corr_help['use']}")
 
     if corr_path.exists():
-        corr_df = pd.read_csv(corr_path, index_col=0)
+        corr_df = _read_csv_fast(corr_path)
+        if not corr_df.empty:
+            corr_df = corr_df.set_index(corr_df.columns[0])
         fig = px.imshow(corr_df, text_auto=".2f", color_continuous_scale="RdBu", zmin=-1, zmax=1, title="Correlation Matrix — Factor Relationships")
         fig.update_layout(height=640)
         st.plotly_chart(fig, width="stretch")
     else:
         st.warning("Correlation matrix not found. Run the pipeline first.")
 
-    summary = read_json(summary_path)
+    summary = _read_json_fast(summary_path)
+    results = summary.get("results", {}) if isinstance(summary, dict) else {}
+    if isinstance(results, dict):
+        _render_governance_consistency_panel(results)
+    _render_quant_insights(summary)
     artifacts = summary.get("artifacts", {}) if isinstance(summary, dict) else {}
     if not artifacts:
         return
     st.markdown("---")
-    st.markdown("### 📊 Analysis Result Files")
-    for analysis_name, file_path in artifacts.items():
-        full_path = OUTPUT_DIR / file_path if not Path(file_path).is_absolute() else Path(file_path)
-        help_entry = ANALYSIS_HELP.get(analysis_name, {})
-        title = help_entry.get("title", analysis_name)
-        with st.expander(f"📊 {title}", expanded=False):
-            if help_entry:
-                st.markdown(f"**What it does:** {help_entry['what']}")
-                st.markdown(f"**How to read it:** {help_entry['read']}")
-                st.markdown(f"**How to use it:** {help_entry['use']}")
-            if full_path.exists():
-                st.caption(f"📄 {file_path}")
-                if full_path.suffix == ".json":
-                    payload = read_json(full_path)
-                    _render_analysis_payload(analysis_name, payload)
-                    st.download_button(
-                        "Download JSON archive",
-                        json.dumps(payload, indent=2, ensure_ascii=False),
-                        file_name=full_path.name,
-                        mime="application/json",
-                        key=f"download_{analysis_name}",
-                    )
-            else:
-                st.warning("File not found — run pipeline first.")
+    st.markdown("### 🧩 Analysis Explorer")
+    st.caption(
+        "Διάλεξε μια ανάλυση για καθαρό insight-first view με γραφήματα και απλή ερμηνεία."
+    )
+
+    analysis_names = sorted(artifacts.keys())
+    selected_analysis = st.selectbox(
+        "Επίλεξε ανάλυση",
+        options=analysis_names,
+        format_func=lambda name: ANALYSIS_HELP.get(name, {}).get("title", _human_label(name)),
+    )
+
+    selected_file = artifacts.get(selected_analysis)
+    full_path = OUTPUT_DIR / selected_file if selected_file and not Path(selected_file).is_absolute() else Path(selected_file)
+    help_entry = ANALYSIS_HELP.get(selected_analysis, {})
+    if help_entry:
+        h1, h2, h3 = st.columns(3)
+        h1.info(f"Τι κάνει: {help_entry['what']}")
+        h2.info(f"Πώς διαβάζεται: {help_entry['read']}")
+        h3.info(f"Πώς βοηθά απόφαση: {help_entry['use']}")
+
+    if not full_path.exists():
+        st.warning("Το αρχείο της ανάλυσης δεν βρέθηκε. Τρέξε pipeline ξανά.")
+        return
+
+    st.caption(f"Πηγή: {selected_file}")
+    if full_path.suffix == ".json":
+        payload = _read_json_fast(full_path)
+        _render_analysis_view(selected_analysis, payload)
+        st.download_button(
+            "Download JSON archive",
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            file_name=full_path.name,
+            mime="application/json",
+            key=f"download_{selected_analysis}",
+        )
+    elif full_path.suffix == ".csv":
+        csv_df = _read_csv_fast(full_path)
+        st.dataframe(csv_df.head(300), width="stretch")
 
 
 def show_governance_tab() -> None:
@@ -241,7 +966,7 @@ def show_governance_tab() -> None:
         options=list(reversed(files)),
         format_func=lambda p: f"{p.name}  —  {pd.Timestamp(p.stat().st_mtime, unit='s').strftime('%Y-%m-%d %H:%M')}",
     )
-    payload = read_json(selected)
+    payload = _read_json_fast(selected)
     _render_governance_payload(payload if isinstance(payload, dict) else {"gate": {}})
     _render_key_values(payload, header="Governance details")
     st.download_button(
@@ -310,7 +1035,7 @@ def show_output_tab() -> None:
         with st.expander(file_path.name, expanded=False):
             st.caption(f"Size: {file_path.stat().st_size / 1024:.1f} KB")
             if file_path.suffix == ".json":
-                payload = read_json(file_path)
+                payload = _read_json_fast(file_path)
                 _render_analysis_payload(file_path.stem, payload)
                 st.download_button(
                     "Download JSON archive",
@@ -321,7 +1046,7 @@ def show_output_tab() -> None:
                 )
             elif file_path.suffix == ".csv":
                 try:
-                    df = pd.read_csv(file_path)
+                    df = _read_csv_fast(file_path)
                     st.dataframe(df.head(100), width="stretch")
                 except Exception:
                     st.info("Could not parse CSV")

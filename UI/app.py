@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import streamlit as st
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from UI.constants import PIPELINE_STAGES, ROLE_PERMISSIONS
 from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_message, show_kpis
@@ -52,6 +60,15 @@ def _render_sidebar() -> str:
             for stage, desc in PIPELINE_STAGES:
                 st.markdown(f"**{stage}** - {desc}")
 
+        resume_mode = st.checkbox(
+            "Fast rerun mode (reuse completed stages)",
+            value=True,
+            help=(
+                "When enabled, pipeline can skip already completed Bronze/Silver/Gold "
+                "stages using checkpoints. Disable for a strict full rebuild."
+            ),
+        )
+
         if st.button(
             "🚀 Run Full Analysis",
             width="stretch",
@@ -60,7 +77,11 @@ def _render_sidebar() -> str:
         ):
             st.caption("Running pipeline in FULL mode...")
             prog = st.progress(0, text="Starting...")
-            ok, output = run_pipeline(mode="actual", progress_bar=prog)
+            ok, output = run_pipeline(
+                mode="actual",
+                progress_bar=prog,
+                resume_from_checkpoint=bool(resume_mode),
+            )
             prog.empty()
             if ok:
                 st.success("Full analysis completed successfully.")

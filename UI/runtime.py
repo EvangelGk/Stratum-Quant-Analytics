@@ -40,9 +40,14 @@ class PipelineProgressTrackingError(PipelineExecutionError):
     pass
 
 
-def run_pipeline(mode: str = "actual", progress_bar: Any = None) -> tuple[bool, str]:
+def run_pipeline(
+    mode: str = "actual",
+    progress_bar: Any = None,
+    resume_from_checkpoint: bool = False,
+) -> tuple[bool, str]:
     env = os.environ.copy()
     env["ENVIRONMENT"] = mode
+    env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
     cmd = [sys.executable, "src/main.py"]
     estimated_seconds = 420 if mode == "actual" else 150
     stages = [

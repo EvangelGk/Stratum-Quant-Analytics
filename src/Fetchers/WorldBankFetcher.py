@@ -1,3 +1,7 @@
+import hashlib
+import json
+import warnings
+
 import pandas as pd
 import wbgapi as wb
 
@@ -5,6 +9,8 @@ from .BaseFetcher import BaseFetcher
 
 
 class WorldBankFetcher(BaseFetcher):
+    CACHE_SCHEMA_VERSION = "v2"
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -12,7 +18,18 @@ class WorldBankFetcher(BaseFetcher):
     def fetch(
         self, indicator: str, country: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        key = f"worldbank_{indicator}_{country}_{start_date}_{end_date}"
+        cache_profile = {
+            "schema": self.CACHE_SCHEMA_VERSION,
+            "indicator": str(indicator),
+            "country": str(country),
+            "start": str(start_date),
+            "end": str(end_date),
+            "normalizer": "worldbank-v1",
+        }
+        cache_hash = hashlib.sha256(
+            json.dumps(cache_profile, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        key = f"worldbank_{self.CACHE_SCHEMA_VERSION}_{indicator}_{country}_{cache_hash}"
         cached = self._get_cached(key)
         if cached is not None:
             return cached
@@ -66,7 +83,14 @@ class WorldBankFetcher(BaseFetcher):
                     )
 
         if "economy" not in df.columns:
-            df["economy"] = "WLD"
+            warnings.warn(
+                "World Bank response is missing the 'economy' column — defaulting "
+                "to 'UNKNOWN'. Verify the country scope for this "
+                "indicator to avoid silent mis-labelling of regional data.",
+                UserWarning,
+                stacklevel=3,
+            )
+            df["economy"] = "UNKNOWN"
 
         if "Date" in df.columns:
             df["Date"] = df["Date"].astype(str).str.replace("YR", "", regex=False)

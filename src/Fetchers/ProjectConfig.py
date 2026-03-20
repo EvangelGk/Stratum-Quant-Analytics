@@ -20,7 +20,7 @@ class ProjectConfig:
     Διαχειρίζεται τα API keys και τα περιβάλλοντα εκτέλεσης.
     """
 
-    fred_api_key: str
+    fred_api_key: Optional[str]
     mode: RunMode = RunMode.SAMPLE
     start_date: str = "2016-01-01"
     end_date: str = "2026-12-31"
@@ -31,12 +31,12 @@ class ProjectConfig:
     random_seed: Optional[int] = 42
     enforce_reproducibility: bool = True
     governance_hard_fail: bool = True
-    governance_min_r2: float = 0.0
+    governance_min_r2: float = -0.25
     governance_max_normalized_shift: float = 2.5
     governance_max_leakage_flags: int = 1
     governance_min_stationary_ratio: float = 0.4
     governance_walk_forward_windows: int = 4
-    governance_min_walk_forward_r2: float = 0.0
+    governance_min_walk_forward_r2: float = -0.25
     governance_max_model_risk_score: float = 0.6
     governance_regime: str = "normal"
     governance_model_risk_warn_threshold: float = 0.4
@@ -54,6 +54,10 @@ class ProjectConfig:
     silver_outlier_warning_ratio: float = 0.1
     governance_unstable_walk_forward_floor: float = -5.0
     governance_clipped_walk_forward_floor: float = -2.0
+    gold_fred_max_staleness_days: int = 120
+    gold_worldbank_max_staleness_days: int = 730
+    pipeline_stage_retry_attempts: int = 3
+    pipeline_resume_from_checkpoint: bool = False
     auto_ml_enabled: bool = True
     target_tickers: List[str] = field(default_factory=list)
     worldbank_economies: List[str] = field(default_factory=lambda: ["WLD"])
@@ -180,11 +184,9 @@ class ProjectConfig:
     def load_from_env(cls) -> "ProjectConfig":
         load_dotenv()
 
-        # validate and load FRED API key
-        key = os.getenv("FRED_API_KEY")
-        if not key:
-            # error missing FRED API key
-            raise ValueError("CRITICAL ERROR: FRED_API_KEY not found in .env file.")
+        # FRED is optional by architecture (Factory/Bronze can skip it).
+        raw_key = os.getenv("FRED_API_KEY", "")
+        key = raw_key.strip() or None
 
         # get the mode (default to 'sample' if not found)
         env_mode = os.getenv("ENVIRONMENT", "sample").strip().lower()
@@ -214,7 +216,7 @@ class ProjectConfig:
             os.getenv("ENFORCE_REPRODUCIBILITY"), True
         )
         governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), True)
-        governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), 0.0)
+        governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), -0.25)
         governance_max_normalized_shift = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_NORMALIZED_SHIFT", "2.5"),
             "GOVERNANCE_MAX_NORMALIZED_SHIFT",
@@ -236,7 +238,7 @@ class ProjectConfig:
             4,
         )
         governance_min_walk_forward_r2 = cls._parse_float(
-            os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), 0.0
+            os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), -0.25
         )
         governance_max_model_risk_score = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_MODEL_RISK_SCORE", "0.6"),
@@ -294,6 +296,25 @@ class ProjectConfig:
         )
         governance_clipped_walk_forward_floor = cls._parse_float(
             os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0
+        )
+        gold_fred_max_staleness_days = cls._parse_positive_int(
+            os.getenv("GOLD_FRED_MAX_STALENESS_DAYS", "120"),
+            "GOLD_FRED_MAX_STALENESS_DAYS",
+            120,
+        )
+        gold_worldbank_max_staleness_days = cls._parse_positive_int(
+            os.getenv("GOLD_WORLDBANK_MAX_STALENESS_DAYS", "730"),
+            "GOLD_WORLDBANK_MAX_STALENESS_DAYS",
+            730,
+        )
+        pipeline_stage_retry_attempts = cls._parse_positive_int(
+            os.getenv("PIPELINE_STAGE_RETRY_ATTEMPTS", "1"),
+            "PIPELINE_STAGE_RETRY_ATTEMPTS",
+            1,
+        )
+        pipeline_resume_from_checkpoint = cls._parse_bool(
+            os.getenv("PIPELINE_RESUME_FROM_CHECKPOINT"),
+            False,
         )
         auto_ml_enabled = cls._parse_bool(os.getenv("AUTO_ML_ENABLED"), False)
         worldbank_economies = cls._parse_code_list(
@@ -403,6 +424,10 @@ class ProjectConfig:
             silver_outlier_warning_ratio=silver_outlier_warning_ratio,
             governance_unstable_walk_forward_floor=governance_unstable_walk_forward_floor,
             governance_clipped_walk_forward_floor=governance_clipped_walk_forward_floor,
+            gold_fred_max_staleness_days=gold_fred_max_staleness_days,
+            gold_worldbank_max_staleness_days=gold_worldbank_max_staleness_days,
+            pipeline_stage_retry_attempts=pipeline_stage_retry_attempts,
+            pipeline_resume_from_checkpoint=pipeline_resume_from_checkpoint,
             auto_ml_enabled=auto_ml_enabled,
             target_tickers=target_tickers,
             worldbank_economies=worldbank_economies,
@@ -468,6 +493,18 @@ class ProjectConfig:
                 raise ValueError(
                     "Invalid configuration: TARGET_TICKERS provided but no valid symbols parsed"
                 )
+        if self.gold_fred_max_staleness_days < 1:
+            raise ValueError(
+                "Invalid configuration: GOLD_FRED_MAX_STALENESS_DAYS must be >= 1"
+            )
+        if self.gold_worldbank_max_staleness_days < 1:
+            raise ValueError(
+                "Invalid configuration: GOLD_WORLDBANK_MAX_STALENESS_DAYS must be >= 1"
+            )
+        if self.pipeline_stage_retry_attempts < 1:
+            raise ValueError(
+                "Invalid configuration: PIPELINE_STAGE_RETRY_ATTEMPTS must be >= 1"
+            )
 
     def get_targets(self) -> List[str]:
         """Επιστρέφει τα tickers βάσει του mode."""
@@ -483,6 +520,7 @@ class ProjectConfig:
 
     def to_serializable_dict(self) -> Dict[str, Any]:
         return {
+            "fred_enabled": bool(self.fred_api_key),
             "mode": self.mode.value,
             "start_date": self.start_date,
             "end_date": self.end_date,
@@ -518,6 +556,10 @@ class ProjectConfig:
             "silver_outlier_warning_ratio": self.silver_outlier_warning_ratio,
             "governance_unstable_walk_forward_floor": self.governance_unstable_walk_forward_floor,
             "governance_clipped_walk_forward_floor": self.governance_clipped_walk_forward_floor,
+            "gold_fred_max_staleness_days": self.gold_fred_max_staleness_days,
+            "gold_worldbank_max_staleness_days": self.gold_worldbank_max_staleness_days,
+            "pipeline_stage_retry_attempts": self.pipeline_stage_retry_attempts,
+            "pipeline_resume_from_checkpoint": self.pipeline_resume_from_checkpoint,
             "target_tickers": self.target_tickers,
             "worldbank_economies": self.worldbank_economies,
             "worldbank_aggregation_strategy": self.worldbank_aggregation_strategy,

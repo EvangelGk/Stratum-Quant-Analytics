@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,13 +21,22 @@ def import_first(*module_names: str) -> Any:
     return None
 
 
-def read_json(path: Path) -> dict[str, Any]:
+@lru_cache(maxsize=128)
+def _read_json_cached(path_str: str, mtime_ns: int) -> dict[str, Any]:
+    _ = mtime_ns  # part of cache key for invalidation after file updates
+    path = Path(path_str)
     if not path.exists():
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return _read_json_cached(str(path), path.stat().st_mtime_ns)
 
 
 def list_session_files() -> list[Path]:
@@ -196,9 +206,15 @@ def build_explainability_lines() -> list[str]:
             lines.append(f"Out-of-sample R2: {oos:.3f} (track trend over runs).")
 
     ela = results.get("elasticity")
-    if isinstance(ela, (int, float)):
-        direction = "increases" if ela >= 0 else "decreases"
-        lines.append(f"Elasticity: {ela:.3f} (returns tend to {direction} as factor rises).")
+    if isinstance(ela, dict):
+        static_ela = ela.get("static_elasticity")
+    else:
+        static_ela = ela
+    if isinstance(static_ela, (int, float)):
+        direction = "increases" if static_ela >= 0 else "decreases"
+        lines.append(
+            f"Elasticity: {static_ela:.3f} (returns tend to {direction} as factor rises)."
+        )
 
     if not lines:
         lines.append("No explainability signals available yet.")

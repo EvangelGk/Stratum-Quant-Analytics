@@ -1,10 +1,12 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from sklearn.linear_model import Ridge
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import aggregate_source_importance, prepare_supervised_frame
 
 
 def sensitivity_reg(
@@ -12,6 +14,8 @@ def sensitivity_reg(
     target: str = "log_return",
     factors: Optional[List[str]] = None,
     model: str = "OLS",
+    ticker: Optional[str] = None,
+    macro_lag_days: int = 0,
 ) -> Any:
     """Run multivariate macro sensitivity regression on equity log-returns.
 
@@ -61,19 +65,69 @@ def sensitivity_reg(
                 f"Factor columns {missing_factors} not found in DataFrame."
             )
 
+        panel, metadata = prepare_supervised_frame(
+            df=df,
+            target=target,
+            features=factors,
+            ticker=ticker,
+            macro_lag_days=macro_lag_days,
+        )
+        if len(panel) < max(30, len(factors) * 8):
+            raise DataValidationError("Insufficient rows after stationarity transforms.")
+
+        Y = panel[target]
+        X = panel[factors]
+
         if model == "OLS":
-            Y = df[target]
-            X = sm.add_constant(df[factors])
-            fitted_model = sm.OLS(Y, X).fit()
-            return fitted_model.summary()
-        elif model == "Ridge":
-            X = df[factors]
-            Y = df[target]
-            ridge = Ridge(alpha=0.1)
-            ridge.fit(X, Y)
+            design = sm.add_constant(X)
+            fitted_model = sm.OLS(Y, design).fit()
+            coefficients = {
+                factor: float(fitted_model.params.get(factor, 0.0))
+                for factor in factors
+            }
+            raw_importance = {
+                factor: float(abs(coefficients[factor]) * X[factor].std())
+                for factor in factors
+            }
             return {
-                "coefficients": dict(zip(factors, ridge.coef_)),
-                "intercept": ridge.intercept_,
+                "model": "OLS",
+                "ticker": ticker,
+                "target": target,
+                "coefficients": coefficients,
+                "intercept": float(fitted_model.params.get("const", 0.0)),
+                "p_values": {
+                    factor: float(fitted_model.pvalues.get(factor, np.nan))
+                    for factor in factors
+                },
+                "r2": float(fitted_model.rsquared),
+                "adj_r2": float(fitted_model.rsquared_adj),
+                "n_obs": int(len(panel)),
+                "summary_text": fitted_model.summary().as_text(),
+                "feature_importance": raw_importance,
+                "source_importance": aggregate_source_importance(raw_importance),
+                "transformations": metadata,
+            }
+        elif model == "Ridge":
+            ridge = Ridge(alpha=0.5)
+            ridge.fit(X, Y)
+            coefficients = {
+                factor: float(coef) for factor, coef in zip(factors, ridge.coef_)
+            }
+            raw_importance = {
+                factor: float(abs(coefficients[factor]) * X[factor].std())
+                for factor in factors
+            }
+            return {
+                "model": "Ridge",
+                "ticker": ticker,
+                "target": target,
+                "coefficients": coefficients,
+                "intercept": float(ridge.intercept_),
+                "r2": float(ridge.score(X, Y)),
+                "n_obs": int(len(panel)),
+                "feature_importance": raw_importance,
+                "source_importance": aggregate_source_importance(raw_importance),
+                "transformations": metadata,
             }
         else:
             raise DataValidationError("Model must be 'OLS' or 'Ridge'.")

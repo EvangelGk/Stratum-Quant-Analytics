@@ -1,13 +1,19 @@
-from typing import Dict, Union
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import prepare_supervised_frame
 
 
 def lag_analysis(
-    df: pd.DataFrame, column: str, lags: int = 3
-) -> Union[Dict[str, float], None]:
+    df: pd.DataFrame,
+    column: str,
+    lags: int = 90,
+    target: str = "log_return",
+    ticker: Optional[str] = None,
+    reference_lag_days: int = 30,
+) -> Dict[str, Any]:
     """Compute autocorrelations at multiple lag periods for a time series.
 
     Autocorrelation at lag *k* measures the Pearson correlation between
@@ -39,14 +45,63 @@ def lag_analysis(
         AnalysisError: On any unexpected runtime failure.
     """
     try:
-        if column not in df.columns:
-            raise DataValidationError(f"Column {column} not found in DataFrame.")
+        if column not in df.columns or target not in df.columns:
+            raise DataValidationError(
+                f"Columns {column} or {target} not found in DataFrame."
+            )
 
         if lags < 1:
             raise DataValidationError("Lags must be at least 1.")
 
+        panel, metadata = prepare_supervised_frame(
+            df=df,
+            target=target,
+            features=[column],
+            ticker=ticker,
+            macro_lag_days=0,
+        )
+        if panel.empty or len(panel) <= max(10, reference_lag_days + 5):
+            raise DataValidationError("Insufficient aligned data for lag analysis.")
+
+        lag_table = []
+        best_row = {"lag_days": 0, "correlation": 0.0}
+        target_series = panel[target]
+        factor_series = panel[column]
+        for lag_days in range(0, lags + 1):
+            aligned = pd.concat(
+                [target_series, factor_series.shift(lag_days)], axis=1
+            ).dropna()
+            if len(aligned) < 20:
+                correlation = None
+            else:
+                correlation = float(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
+            row = {"lag_days": lag_days, "correlation": correlation}
+            lag_table.append(row)
+            if isinstance(correlation, float) and abs(correlation) > abs(
+                float(best_row.get("correlation") or 0.0)
+            ):
+                best_row = row
+
+        reference_row = next(
+            (
+                row
+                for row in lag_table
+                if int(row.get("lag_days", -1)) == int(reference_lag_days)
+            ),
+            {"lag_days": reference_lag_days, "correlation": None},
+        )
+
         return {
-            f"lag_{i}": df[column].corr(df[column].shift(i)) for i in range(1, lags + 1)
+            "target": target,
+            "macro_feature": column,
+            "ticker": ticker,
+            "best_lag_days": int(best_row["lag_days"]),
+            "best_lag_correlation": best_row["correlation"],
+            "reference_lag_days": int(reference_lag_days),
+            "reference_lag_correlation": reference_row["correlation"],
+            "lag_scan": lag_table,
+            "data_points": int(len(panel)),
+            "transformations": metadata,
         }
     except DataValidationError:
         raise

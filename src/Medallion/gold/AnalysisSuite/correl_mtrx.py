@@ -1,12 +1,19 @@
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import build_stationary_panel
 
 
-def correl_mtrx(df: pd.DataFrame) -> Union[pd.DataFrame, None]:
+def correl_mtrx(
+    df: pd.DataFrame,
+    stress_mode: bool = False,
+    stress_strength: float = 0.30,
+    stress_target_correlation: float = 0.85,
+    scenario_name: Optional[str] = None,
+) -> Union[pd.DataFrame, None]:
     """Compute the Pearson correlation matrix across all numeric features.
 
     The correlation matrix is the fundamental tool for **portfolio
@@ -38,11 +45,45 @@ def correl_mtrx(df: pd.DataFrame) -> Union[pd.DataFrame, None]:
         AnalysisError: On any unexpected runtime failure.
     """
     try:
-        numeric_df = df.select_dtypes(include=[np.number])
+        exclude_columns = {
+            "quality_score",
+            "imputed_count",
+            "outliers_clipped",
+            "initial_rows",
+            "initial_nulls",
+        }
+        numeric_columns = [
+            column
+            for column in df.select_dtypes(include=[np.number]).columns
+            if column not in exclude_columns
+        ]
+        numeric_df, _ = build_stationary_panel(
+            df=df,
+            columns=numeric_columns,
+            macro_lag_days=0,
+        )
+        numeric_df = numeric_df.drop(columns=["date"], errors="ignore")
         if numeric_df.empty:
             raise DataValidationError("No numeric columns found in DataFrame.")
 
-        return numeric_df.corr()
+        corr = numeric_df.corr(method="pearson")
+        if not stress_mode or corr.empty:
+            return corr
+
+        alpha = max(0.0, min(float(stress_strength), 1.0))
+        target = max(-1.0, min(float(stress_target_correlation), 1.0))
+        adjusted = corr.copy()
+        for i, row_name in enumerate(adjusted.index):
+            for j, col_name in enumerate(adjusted.columns):
+                if i == j:
+                    adjusted.loc[row_name, col_name] = 1.0
+                    continue
+                base = float(adjusted.loc[row_name, col_name])
+                adjusted.loc[row_name, col_name] = base + alpha * (target - base)
+        adjusted.attrs["stress_mode"] = True
+        adjusted.attrs["scenario_name"] = scenario_name or "stress"
+        adjusted.attrs["stress_strength"] = alpha
+        return adjusted
     except DataValidationError:
         raise
     except Exception as e:

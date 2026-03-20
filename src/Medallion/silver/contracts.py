@@ -101,6 +101,30 @@ SOURCE_CONTRACTS: Dict[str, SourceContract] = {
 
 EXPECTED_SOURCES = {"yfinance", "fred", "worldbank"}
 
+# ---------------------------------------------------------------------------
+# Gold-layer schema contract
+# Single source of truth for column names that GoldLayer writes and
+# Auditor validates. Both sides reference this dict rather than hard-coding
+# strings independently.
+# ---------------------------------------------------------------------------
+GOLD_COLUMN_MAP: Dict[str, str] = {
+    # yfinance-derived
+    "date": "date",
+    "ticker": "ticker",
+    "close": "close",
+    "log_return": "log_return",
+    "volume": "volume",
+    # quality / audit metadata columns always present in master_table
+    "quality_score": "quality_score",
+    "imputed_count": "imputed_count",
+    "outliers_clipped": "outliers_clipped",
+}
+
+# Columns that GoldLayer guarantees to be present regardless of macro/WB config
+GOLD_REQUIRED_COLUMNS: frozenset = frozenset(
+    GOLD_COLUMN_MAP[k] for k in ("date", "ticker", "close", "log_return", "volume")
+)
+
 
 def get_series_contract(source: str, entity_name: Optional[str] = None) -> SeriesContract:
     contract = SOURCE_CONTRACTS.get(source)

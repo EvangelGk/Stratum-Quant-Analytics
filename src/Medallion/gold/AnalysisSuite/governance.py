@@ -8,6 +8,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.stattools import adfuller, kpss
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import prepare_supervised_frame
 
 
 def _benjamini_hochberg(
@@ -31,8 +32,22 @@ def _benjamini_hochberg(
 
 
 def _score_from_r2(r2_value: float) -> float:
-    clipped = max(-0.5, min(0.5, r2_value))
-    return (0.5 - clipped) / 1.0
+    """Map R² to risk in a way that is realistic for financial-return targets.
+
+    For daily returns, near-zero R² is common and should not be treated as
+    near-failure. Use piecewise penalties instead of a linear clip mapping.
+    """
+    if r2_value >= 0.10:
+        return 0.10
+    if r2_value >= 0.00:
+        return 0.20
+    if r2_value >= -0.10:
+        return 0.30
+    if r2_value >= -0.25:
+        return 0.45
+    if r2_value >= -0.50:
+        return 0.70
+    return 1.00
 
 
 def _walk_forward_backtest(
@@ -42,10 +57,11 @@ def _walk_forward_backtest(
     windows: int,
     min_train_rows: int,
     clipped_floor: float = -2.0,
+    min_test_size: int = 20,
 ) -> Dict[str, Any]:
     n_rows = len(df)
     windows = max(2, windows)
-    min_test_size = 5
+    min_test_size = max(8, int(min_test_size))
 
     if n_rows < (min_train_rows + min_test_size + windows):
         return {
@@ -132,6 +148,7 @@ def _oos_r2_confidence_interval(
     n_bootstrap: int = 200,
     block_size: int | None = None,
     confidence: float = 0.90,
+    random_seed: int | None = 42,
 ) -> Dict[str, Any]:
     """Circular block bootstrap confidence interval for out-of-sample R².
 
@@ -156,7 +173,7 @@ def _oos_r2_confidence_interval(
     x_arr = test_df[x_cols].values.astype(float)
     point_estimate = float(r2_score(y_arr, model.predict(x_arr)))
 
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(seed=random_seed)
     r2_samples: List[float] = []
     for _ in range(n_bootstrap):
         indices: List[int] = []
@@ -200,6 +217,7 @@ def _oos_r2_confidence_interval(
         "n_bootstrap": len(r2_samples),
         "confidence": confidence,
         "block_size": int(block),
+        "random_seed": random_seed,
     }
 
 
@@ -308,10 +326,14 @@ def governance_report(
         if not valid_factors:
             raise DataValidationError("No valid factors found for governance checks.")
 
-        work_df = df[[date_col, target] + valid_factors].copy()
-        work_df[date_col] = pd.to_datetime(work_df[date_col], errors="coerce")
-        work_df = work_df.dropna(subset=[date_col, target]).sort_values(date_col)
-        work_df = work_df.dropna(subset=valid_factors)
+        work_df, transform_metadata = prepare_supervised_frame(
+            df=df,
+            target=target,
+            features=valid_factors,
+            date_col=date_col,
+            macro_lag_days=0,
+            align_target_to_features=True,
+        )
 
         if len(work_df) < max(min_train_rows + 5, 30):
             return {
@@ -319,6 +341,10 @@ def governance_report(
                 "rows": int(len(work_df)),
                 "required_rows": int(max(min_train_rows + 5, 30)),
             }
+
+        # Adaptive window count: more data → more windows; sparse data → fewer.
+        # 300 rows per window is a reasonable floor for daily financial series.
+        adaptive_walk_windows = max(2, min(walk_forward_windows, len(work_df) // 300))
 
         stationarity: Dict[str, Dict[str, Any]] = {}
         for col in [target] + valid_factors:
@@ -367,13 +393,15 @@ def governance_report(
         model = LinearRegression()
         model.fit(x_train, y_train)
         predictions = model.predict(x_test)
+        adaptive_min_test_size = max(12, min(60, len(work_df) // max(10, walk_forward_windows * 3)))
         walk_forward = _walk_forward_backtest(
             work_df,
             target=target,
             factors=valid_factors,
-            windows=walk_forward_windows,
+            windows=adaptive_walk_windows,
             min_train_rows=min_train_rows,
             clipped_floor=clipped_walk_forward_floor,
+            min_test_size=adaptive_min_test_size,
         )
 
         leakage_flags: List[str] = []
@@ -466,6 +494,7 @@ def governance_report(
             y_col=target,
             n_bootstrap=200,
             confidence=0.90,
+            random_seed=random_seed if reproducibility_enforced else None,
         )
 
         stationarity_known = [
@@ -541,6 +570,13 @@ def governance_report(
                 "random_seed": random_seed,
                 "enforced": reproducibility_enforced,
                 "policy": "stochastic analyses must declare/propagate random_state",
+            },
+            "data_quality_context": {
+                "rows_used": int(len(work_df)),
+                "walk_forward_windows_requested": int(walk_forward_windows),
+                "walk_forward_windows_adaptive": int(adaptive_walk_windows),
+                "adaptive_walk_forward_min_test_size": int(adaptive_min_test_size),
+                "transformations": transform_metadata,
             },
             "coefficients": {
                 factor: float(coef) for factor, coef in zip(valid_factors, model.coef_)

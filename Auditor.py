@@ -50,10 +50,12 @@ class ScenarioAuditor:
         self.raw_path = self.data_root / "raw"
         self.processed_path = self.data_root / "processed"
         self.gold_dir = self.data_root / "gold"
+        self.logs_dir = self.project_root / "logs"
         self.output_dir = self.project_root / "output" / self.user_id
         self.quality_report_path = self.processed_path / "quality" / "quality_report.json"
         self.quality_history_path = self.processed_path / "quality_history.jsonl"
         self.governance_dir = self.gold_dir / "governance"
+        self.gold_contract_path = self.gold_dir / "master_table_contract.json"
         self.gold_path = (
             Path(gold_path)
             if gold_path
@@ -104,6 +106,7 @@ class ScenarioAuditor:
         report["checks"]["density"] = self._check_density(df)
         report["checks"]["statistics"] = self._check_stats(df)
         report["checks"]["continuity"] = self._check_continuity(df)
+        report["checks"]["survivorship"] = self._check_survivorship(df)
         report["checks"]["outputs"] = self._check_outputs()
         report["checks"]["thresholds"] = self._check_threshold_design()
         report["checks"]["governance"] = self._check_governance()
@@ -194,8 +197,39 @@ class ScenarioAuditor:
     def _latest_governance_file(self) -> Optional[Path]:
         if not self.governance_dir.exists():
             return None
+
+        # Prefer the stable aggregated file written by _finalize_governance() at
+        # the end of every pipeline run — it consolidates the worst-case outcome
+        # across ALL tickers rather than returning an arbitrary per-ticker file.
+        agg_file = self.governance_dir / "governance_decision_current_run.json"
+        if agg_file.exists():
+            return agg_file
+
         files = sorted(self.governance_dir.glob("governance_decision_*.json"))
-        return files[-1] if files else None
+        if not files:
+            return None
+
+        latest_run_id = self._latest_run_id()
+        if latest_run_id:
+            matching: List[Path] = []
+            for file_path in files:
+                payload = self._read_json(file_path)
+                if str(payload.get("run_id", "")).strip() == latest_run_id:
+                    matching.append(file_path)
+            if matching:
+                return matching[-1]
+
+        return files[-1]
+
+    def _latest_run_id(self) -> Optional[str]:
+        if not self.logs_dir.exists():
+            return None
+        session_files = sorted(self.logs_dir.glob("session_summary_*.json"))
+        if not session_files:
+            return None
+        latest = self._read_json(session_files[-1])
+        run_id = (latest.get("session_info") or {}).get("run_id")
+        return str(run_id).strip() if run_id else None
 
     def _check_sources(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Check source integration breadth, coverage and whether all configured entities arrive."""
@@ -214,9 +248,17 @@ class ScenarioAuditor:
                     else:
                         worldbank_economies_seen.add("WLD")
 
-        yfinance_cols = [c for c in ["close", "log_return", "ticker", "volume"] if c in df.columns]
-        fred_cols = [c for c in self.expected_macro.values() if c in df.columns]
-        worldbank_cols = [c for c in self.expected_worldbank.values() if c in df.columns]
+        contract = self._read_json(self.gold_contract_path)
+        contract_expected = contract.get("expected", {}) if isinstance(contract, dict) else {}
+        contract_observed = contract.get("observed", {}) if isinstance(contract, dict) else {}
+
+        yfinance_expected = contract_expected.get("yfinance", ["close", "log_return", "ticker", "volume"])
+        fred_expected = contract_expected.get("fred", list(self.expected_macro.values()))
+        worldbank_expected = contract_expected.get("worldbank", list(self.expected_worldbank.values()))
+
+        yfinance_cols = [c for c in yfinance_expected if c in df.columns]
+        fred_cols = [c for c in fred_expected if c in df.columns]
+        worldbank_cols = [c for c in worldbank_expected if c in df.columns]
 
         source_presence: Dict[str, float] = {}
         source_cell_fill: Dict[str, float] = {}
@@ -283,11 +325,18 @@ class ScenarioAuditor:
         }
 
         issues: List[str] = []
+        missing_expected = {
+            "yfinance": sorted([c for c in yfinance_expected if c not in df.columns]),
+            "fred": sorted([c for c in fred_expected if c not in df.columns]),
+            "worldbank": sorted([c for c in worldbank_expected if c not in df.columns]),
+        }
         for source in EXPECTED_SOURCES:
             if breadth[source]["ratio"] < 0.75:
                 issues.append(f"{source}_breadth_low")
             if source_presence[source] < 70.0:
                 issues.append(f"{source}_row_coverage_low")
+            if missing_expected.get(source):
+                issues.append(f"{source}_schema_contract_mismatch")
 
         passed = len(issues) == 0
         status = "pass" if passed else ("warn" if len(issues) <= 2 else "fail")
@@ -298,6 +347,12 @@ class ScenarioAuditor:
             "cell_fill_pct": source_cell_fill,
             "overall": overall_integration,
             "breadth": breadth,
+            "schema_contract": {
+                "contract_exists": bool(contract),
+                "expected": contract_expected,
+                "observed": contract_observed,
+                "missing_expected_columns": missing_expected,
+            },
             "issues": issues,
             "interpretation": (
                 "Checks whether the system ingests all three sources and captures most configured entities, not just a narrow corner of each source."
@@ -613,6 +668,90 @@ class ScenarioAuditor:
             ),
         }
 
+    def _check_survivorship(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Flag survivorship bias risks from delisting/stale coverage and prolonged zero-volume spans."""
+        if df.empty or "ticker" not in df.columns:
+            return {
+                "passed": True,
+                "status": "warn",
+                "issues": ["survivorship_check_skipped_missing_ticker"],
+                "interpretation": [
+                    "Ticker column missing; survivorship bias cannot be assessed in this run."
+                ],
+            }
+
+        work = df.copy()
+        work["date"] = pd.to_datetime(work.get("date"), errors="coerce")
+        work = work.dropna(subset=["date", "ticker"]).sort_values(["ticker", "date"])
+        if work.empty:
+            return {
+                "passed": True,
+                "status": "warn",
+                "issues": ["survivorship_check_skipped_no_valid_rows"],
+                "interpretation": [
+                    "No valid ticker/date rows available for survivorship diagnostics."
+                ],
+            }
+
+        max_date = work["date"].max()
+        stale_tickers: List[str] = []
+        zero_volume_tickers: List[str] = []
+        zero_volume_spans: Dict[str, int] = {}
+
+        for ticker, group in work.groupby("ticker"):
+            ticker_name = str(ticker)
+            last_date = group["date"].max()
+            if pd.notna(last_date):
+                stale_gap = int(len(pd.bdate_range(last_date, max_date)) - 1)
+                if stale_gap > 20:
+                    stale_tickers.append(f"{ticker_name}:{stale_gap}bdays")
+
+            if "volume" not in group.columns:
+                continue
+            volume = pd.to_numeric(group["volume"], errors="coerce").fillna(0.0)
+            zero_mask = volume <= 0.0
+            run_lengths: List[int] = []
+            current = 0
+            for is_zero in zero_mask.tolist():
+                if is_zero:
+                    current += 1
+                elif current > 0:
+                    run_lengths.append(current)
+                    current = 0
+            if current > 0:
+                run_lengths.append(current)
+
+            max_run = max(run_lengths) if run_lengths else 0
+            if max_run > 10:
+                zero_volume_tickers.append(ticker_name)
+                zero_volume_spans[ticker_name] = int(max_run)
+
+        issues: List[str] = []
+        if stale_tickers:
+            issues.append("possible_delisting_or_stale_coverage")
+        if zero_volume_tickers:
+            issues.append("prolonged_zero_volume_detected")
+
+        severe_issue_count = len(stale_tickers) + len(zero_volume_tickers)
+        severe = severe_issue_count >= max(3, int(max(len(work["ticker"].unique()), 1) * 0.5))
+
+        return {
+            "passed": not severe,
+            "status": "fail" if severe else ("warn" if issues else "pass"),
+            "issues": issues,
+            "metrics": {
+                "stale_ticker_count": len(stale_tickers),
+                "zero_volume_ticker_count": len(zero_volume_tickers),
+                "max_zero_volume_streak_days": max(zero_volume_spans.values()) if zero_volume_spans else 0,
+            },
+            "stale_tickers": stale_tickers,
+            "zero_volume_streaks": zero_volume_spans,
+            "interpretation": [
+                "Flags survivorship risk where names disappear before dataset end-date.",
+                "Flags tickers with >10 consecutive zero-volume days that can bias return estimates.",
+            ],
+        }
+
     def _check_threshold_design(self) -> Dict[str, Any]:
         """Check whether thresholds are dynamic or fixed and whether strictness is balanced."""
         latest_governance = self._read_json(self._latest_governance_file()) if self._latest_governance_file() else {}
@@ -663,7 +802,7 @@ class ScenarioAuditor:
         }
 
     def _check_governance(self) -> Dict[str, Any]:
-        """Check whether governance blocking is justified or potentially too strict."""
+        """Check whether governance decisions are realistic for data regime and risk."""
         latest_file = self._latest_governance_file()
         if latest_file is None:
             return {
@@ -691,7 +830,32 @@ class ScenarioAuditor:
 
         likely_over_strict = False
         reasoning: List[str] = []
-        if any("walk_forward_avg_r2_below_threshold" in reason for reason in reasons):
+        publication_lag_ok = True
+        publication_lag_findings: List[str] = []
+
+        dq_context = report.get("data_quality_context", {}) if isinstance(report, dict) else {}
+        transformations = dq_context.get("transformations", {}) if isinstance(dq_context, dict) else {}
+        if isinstance(transformations, dict):
+            for feature, meta in transformations.items():
+                if not isinstance(meta, dict):
+                    continue
+                source = str(meta.get("source", "")).lower()
+                if source not in {"fred", "worldbank"}:
+                    continue
+                pub_lag = int(meta.get("publication_lag_days", meta.get("lag_days", 0)) or 0)
+                transform_method = str(meta.get("transformation", "")).lower()
+                if pub_lag < 45:
+                    publication_lag_ok = False
+                    publication_lag_findings.append(
+                        f"{feature}:publication_lag_days={pub_lag}<45"
+                    )
+                if not transform_method.startswith("release_"):
+                    publication_lag_ok = False
+                    publication_lag_findings.append(
+                        f"{feature}:transformation={transform_method or 'unknown'}(expected release_* after lag->ffill)"
+                    )
+
+        if any("r2_metric_alert_walk_forward_below_threshold" in reason for reason in reasons):
             if isinstance(clipped_avg_r2, (int, float)) and isinstance(avg_r2, (int, float)):
                 if float(avg_r2) < -5.0 and float(clipped_avg_r2) > -2.0:
                     likely_over_strict = True
@@ -714,7 +878,11 @@ class ScenarioAuditor:
         if isinstance(oos.get("r2"), (int, float)) and float(oos["r2"]) < -0.25:
             theory_notes.append("Out-of-sample explanatory power is weak, so caution is appropriate.")
         if likely_over_strict:
-            theory_notes.append("Current block may be stricter than necessary for portfolio-grade exploratory analysis.")
+            theory_notes.append("Current block may be stricter than necessary for mixed-frequency exploratory analysis.")
+        if publication_lag_ok:
+            theory_notes.append("Look-ahead bias guardrail detected: macro features carry publication lag metadata.")
+        else:
+            theory_notes.append("Look-ahead bias risk: one or more macro features do not satisfy 45-day publication lag.")
 
         passed = passed_gate or likely_over_strict
         return {
@@ -734,8 +902,10 @@ class ScenarioAuditor:
                 "walk_forward_r2_ci_lower": wf_r2_ci_lower,
                 "walk_forward_r2_ci_upper": wf_r2_ci_upper,
                 "model_risk_score": model_risk_score,
+                "publication_lag_compliant": publication_lag_ok,
             },
             "likely_over_strict": likely_over_strict,
+            "publication_lag_findings": publication_lag_findings,
             "theoretically_sound": theoretically_sound,
             "reasoning": reasoning,
             "interpretation": theory_notes,
@@ -774,7 +944,16 @@ class ScenarioAuditor:
             )
         if governance.get("likely_over_strict"):
             summary_lines.append(
-                "Governance appears methodologically valid but potentially too strict for the current data regime."
+                "Governance appears methodologically valid but may be conservative for the current mixed-frequency regime."
+            )
+        if governance.get("publication_lag_findings"):
+            summary_lines.append(
+                f"Look-ahead lag findings: {governance.get('publication_lag_findings')}"
+            )
+        survivorship = report["checks"].get("survivorship", {})
+        if survivorship.get("issues"):
+            summary_lines.append(
+                f"Survivorship flags: {survivorship.get('issues')}"
             )
         if thresholds.get("dynamic_thresholds", {}).get("silver_dynamic_null_thresholds"):
             summary_lines.append("Silver null thresholds are dynamic/history-aware.")
@@ -788,17 +967,24 @@ class ScenarioAuditor:
         }
 
     def _print_summary(self, report: Dict[str, Any]) -> None:
+        status_icon = {"PASS": "✅", "WARN": "⚠️", "CRITICAL": "❌"}
+        check_icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
         print("\n" + "=" * 60)
         print("SCENARIO PLANNER - SYSTEM AUDIT REPORT")
         print("=" * 60)
-        print(f"Status: {report.get('status', 'UNKNOWN')}")
+        overall_status = str(report.get("status", "UNKNOWN")).upper()
+        print(
+            f"Status: {status_icon.get(overall_status, 'ℹ️')} {overall_status}"
+        )
         print(f"Decision Ready: {report.get('decision_ready', False)}")
         print(f"User: {report.get('user_id', 'unknown')}")
         print(f"Rows: {report.get('row_count', 0)} | Columns: {report.get('column_count', 0)}")
         for name, result in report.get("checks", {}).items():
             mark = "PASS" if result.get("passed") else "FAIL"
             status = result.get("status", "info")
-            print(f"- {name.capitalize():<12} -> {mark} ({status})")
+            status_norm = str(status).lower()
+            icon = check_icon.get(status_norm, "ℹ️")
+            print(f"- {name.capitalize():<12} -> {icon} {mark} ({status})")
         print("=" * 60)
         for line in report.get("auditor_judgement", {}).get("summary", []):
             print(f"* {line}")

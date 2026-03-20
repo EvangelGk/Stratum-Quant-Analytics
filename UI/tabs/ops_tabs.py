@@ -9,6 +9,17 @@ import streamlit as st
 from UI.constants import ROLE_PERMISSIONS, UI_SCHEDULE_PATH
 from UI.helpers import load_session_history, read_json
 from UI.runtime import get_audit_report, run_and_cache_audit
+from UI.traffic_light import (
+    badge_html,
+    score_audit_status,
+    score_check_result,
+    score_decision_ready,
+    score_governance_gate,
+    score_model_risk,
+    score_null_pct,
+    score_oos_r2,
+    score_source_coverage,
+)
 
 
 def _fmt_number(value: object, decimals: int = 2) -> str:
@@ -38,11 +49,11 @@ def _render_kv_table(payload: dict, title: str = "Details") -> None:
 
 
 def show_auditor_tab() -> None:
-    st.subheader("🧪 System Auditor")
+    st.subheader("System Auditor")
     st.caption(
         "Independent audit judge: checks source coverage, data density, statistics, temporal continuity, output quality, threshold design and governance validity."
     )
-    if st.button("🔁 Re-run Audit", key="manual_audit_run"):
+    if st.button("Re-run Audit", key="manual_audit_run"):
         with st.spinner("Running audit..."):
             run_and_cache_audit()
         st.rerun()
@@ -53,27 +64,27 @@ def show_auditor_tab() -> None:
         return
 
     status = report.get("status", "UNKNOWN")
-    if status == "PASS":
-        st.success(f"✅ Audit Status: {status}")
-    elif status == "WARN":
-        st.warning(f"⚠️ Audit Status: {status}")
-    elif status == "CRITICAL":
-        st.error(f"❌ Audit Status: {status}")
-    else:
-        st.info(f"ℹ️ Audit Status: {status}")
+    tl_color, tl_label, tl_desc = score_audit_status(status)
+    st.markdown(
+        badge_html(tl_label, tl_color, tl_desc) + f"&nbsp; <span style='color:#555'>{tl_desc}</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
 
+    dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")))
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Rows", report.get("row_count", 0))
     c2.metric("Columns", report.get("column_count", 0))
-    c3.metric("Decision Ready", "Yes" if report.get("decision_ready") else "No")
+    c3.markdown(badge_html(dr_label, dr_color, dr_desc), unsafe_allow_html=True)
     c4.metric("Failed Checks", len(report.get("failed_checks", [])))
     c5.metric("Warning Checks", len(report.get("warning_checks", [])))
 
     label_map = {
-        "integration": "Integration",
-        "density": "Density",
-        "statistics": "Statistics",
+        "integration": "Source Integration",
+        "density": "Data Density",
+        "statistics": "Statistical Plausibility",
         "continuity": "Temporal Continuity",
+        "survivorship": "Survivorship Bias",
         "outputs": "Output Quality",
         "thresholds": "Threshold Design",
         "governance": "Governance Validity",
@@ -83,18 +94,18 @@ def show_auditor_tab() -> None:
     failed_checks = report.get("failed_checks", [])
     warning_checks = report.get("warning_checks", [])
     if failed_checks:
-        st.error(f"Failed checks: {', '.join(failed_checks)}")
+        st.error(f"Failed checks: {', '.join(label_map.get(c, c) for c in failed_checks)}")
     if warning_checks:
-        st.warning(f"Warning checks: {', '.join(warning_checks)}")
+        st.warning(f"Warnings: {', '.join(label_map.get(c, c) for c in warning_checks)}")
 
     if failed_checks or warning_checks:
-        with st.expander("🧭 Check Summary", expanded=True):
+        with st.expander("Check Summary", expanded=True):
             if failed_checks:
                 for check_name in failed_checks:
-                    st.markdown(f"- ❌ {label_map.get(check_name, check_name)}")
+                    st.markdown(f"- ❌ {badge_html('Fail', 'red')} {label_map.get(check_name, check_name)}", unsafe_allow_html=True)
             if warning_checks:
                 for check_name in warning_checks:
-                    st.markdown(f"- ⚠️ {label_map.get(check_name, check_name)}")
+                    st.markdown(f"- ⚠️ {badge_html('Warning', 'yellow')} {label_map.get(check_name, check_name)}", unsafe_allow_html=True)
 
     judgement = report.get("auditor_judgement", {})
     if isinstance(judgement, dict) and judgement:
@@ -113,9 +124,17 @@ def show_auditor_tab() -> None:
 
     for name, result in report.get("checks", {}).items():
         status_code = str(result.get("status", "warn"))
-        status_icon = icon_map.get(status_code, "ℹ️")
+        is_passed = bool(result.get("passed", False))
+        tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
         title = label_map.get(name, name.capitalize())
-        with st.expander(f"{status_icon} {title}", expanded=not result.get("passed", False)):
+        expander_label = f"{icon_map.get(status_code, 'ℹ️')} {title}"
+        with st.expander(expander_label, expanded=not is_passed):
+            # Traffic-light badge at the top of each check section
+            st.markdown(
+                badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("")
             interpretation = result.get("interpretation")
             if isinstance(interpretation, str) and interpretation:
                 st.caption(interpretation)
@@ -179,9 +198,15 @@ def show_auditor_tab() -> None:
 
             if name == "density":
                 d1, d2, d3 = st.columns(3)
-                d1.metric("Null %", _fmt_pct(result.get("null_pct")))
+                null_val = result.get("null_pct")
+                d1.metric("Null %", _fmt_pct(null_val))
                 d2.metric("Row Coverage %", _fmt_pct(result.get("row_non_null_pct")))
                 d3.metric("Zero-variance cols", _fmt_number(result.get("zero_var_count"), decimals=0))
+                null_tl_c, null_tl_l, null_tl_d = score_null_pct(null_val)
+                st.markdown(
+                    f"**Data density:** " + badge_html(null_tl_l, null_tl_c, null_tl_d),
+                    unsafe_allow_html=True,
+                )
 
             if name == "continuity":
                 cmax, cmed, callowed, cbase = st.columns(4)
@@ -224,6 +249,13 @@ def show_auditor_tab() -> None:
                         oos_display = _fmt_number(oos_r2_val, 4)
                     m1.metric(oos_label, oos_display)
 
+                    # Traffic-light badge for OOS R²
+                    r2_tl_c, r2_tl_l, r2_tl_d = score_oos_r2(oos_r2_val)
+                    st.markdown(
+                        f"**OOS R² quality:** " + badge_html(r2_tl_l, r2_tl_c, r2_tl_d),
+                        unsafe_allow_html=True,
+                    )
+
                     wf_avg = metrics.get("walk_forward_avg_r2")
                     wf_ci_lo = metrics.get("walk_forward_r2_ci_lower")
                     wf_ci_hi = metrics.get("walk_forward_r2_ci_upper")
@@ -235,8 +267,45 @@ def show_auditor_tab() -> None:
                         wf_label = "Walk-forward avg R²"
                     m2.metric(wf_label, wf_display)
                     m3.metric("Model risk", _fmt_number(metrics.get("model_risk_score"), decimals=4))
+                    # Traffic-light badge for model risk
+                    mr_c, mr_l, mr_d = score_model_risk(metrics.get("model_risk_score"))
+                    st.markdown(
+                        f"**Model risk:** " + badge_html(mr_l, mr_c, mr_d),
+                        unsafe_allow_html=True,
+                    )
+                    lag_ok = metrics.get("publication_lag_compliant")
+                    if lag_ok is True:
+                        st.success("Look-ahead protection: macro publication lag is compliant (>=45 days).")
+                    elif lag_ok is False:
+                        st.error("Look-ahead risk detected: at least one macro feature is below 45-day publication lag.")
+                lag_findings = result.get("publication_lag_findings", [])
+                if lag_findings:
+                    st.markdown("**Publication lag findings:**")
+                    for finding in lag_findings:
+                        st.markdown(f"- {finding}")
                 if result.get("likely_over_strict"):
-                    st.warning("Governance appears methodologically valid but potentially over-strict.")
+                    st.warning("Governance appears methodologically valid but conservative for this mixed-frequency data regime.")
+
+            if name == "survivorship":
+                metrics = result.get("metrics", {})
+                if isinstance(metrics, dict) and metrics:
+                    s1, s2, s3 = st.columns(3)
+                    s1.metric("Stale tickers", _fmt_number(metrics.get("stale_ticker_count"), decimals=0))
+                    s2.metric("Zero-volume tickers", _fmt_number(metrics.get("zero_volume_ticker_count"), decimals=0))
+                    s3.metric(
+                        "Max zero-volume streak",
+                        _fmt_number(metrics.get("max_zero_volume_streak_days"), decimals=0),
+                    )
+                stale = result.get("stale_tickers", [])
+                if stale:
+                    st.markdown("**Possible delisted/stale tickers:**")
+                    for item in stale:
+                        st.markdown(f"- {item}")
+                streaks = result.get("zero_volume_streaks", {})
+                if isinstance(streaks, dict) and streaks:
+                    st.markdown("**Zero-volume streaks (>10 days):**")
+                    for tkr, days in streaks.items():
+                        st.markdown(f"- {tkr}: {days} days")
 
             if name == "thresholds":
                 dynamic = result.get("dynamic_thresholds", {})
@@ -272,14 +341,17 @@ def show_auditor_tab() -> None:
                         o2.metric("Avg active source groups / row", "N/A")
                 if isinstance(metrics, dict) and metrics:
                     st.markdown("**Row coverage by source:**")
-                    coverage_rows = [
-                        {
-                            "Source": source,
-                            "Row coverage %": _fmt_pct(value),
-                            "Cell fill %": _fmt_pct(cell_fill.get(source) if isinstance(cell_fill, dict) else None),
-                        }
-                        for source, value in metrics.items()
-                    ]
+                    coverage_rows = []
+                    for source, value in metrics.items():
+                        cov_c, cov_l, _ = score_source_coverage(value)
+                        coverage_rows.append(
+                            {
+                                "Source": source,
+                                "Row coverage %": _fmt_pct(value),
+                                "Cell fill %": _fmt_pct(cell_fill.get(source) if isinstance(cell_fill, dict) else None),
+                                "Status": cov_l,
+                            }
+                        )
                     st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
 
                 breadth = result.get("breadth", {})

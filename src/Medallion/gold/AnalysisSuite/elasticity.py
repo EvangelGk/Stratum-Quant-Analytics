@@ -1,11 +1,20 @@
-from typing import cast
+from typing import Any, Dict, Optional
 
+import numpy as np
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import prepare_supervised_frame
 
 
-def elasticity(df: pd.DataFrame, asset_return: str, macro_factor: str) -> float:
+def elasticity(
+    df: pd.DataFrame,
+    asset_return: str,
+    macro_factor: str,
+    ticker: Optional[str] = None,
+    macro_lag_days: int = 0,
+    rolling_window: int = 90,
+) -> Dict[str, Any]:
     """Compute the macro-factor elasticity of an asset's returns.
 
     Elasticity measures the sensitivity of an asset's return to a
@@ -41,22 +50,52 @@ def elasticity(df: pd.DataFrame, asset_return: str, macro_factor: str) -> float:
                 f"Columns {asset_return} or {macro_factor} not found in DataFrame."
             )
 
-        cov = df[[asset_return, macro_factor]].cov().iloc[0, 1]
-        var_macro = df[macro_factor].var()
+        panel, metadata = prepare_supervised_frame(
+            df=df,
+            target=asset_return,
+            features=[macro_factor],
+            ticker=ticker,
+            macro_lag_days=macro_lag_days,
+        )
+        effective_window = max(
+            rolling_window,
+            int(metadata[macro_factor].get("native_horizon_days", 1)),
+        )
+        if len(panel) < max(effective_window, 30):
+            raise DataValidationError("Insufficient aligned data for elasticity.")
+
+        cov = panel[[asset_return, macro_factor]].cov().iloc[0, 1]
+        var_macro = panel[macro_factor].var()
         if var_macro == 0:
             raise AnalysisError(
                 "Variance of macro factor is zero, cannot compute beta."
             )
 
         beta = cov / var_macro
-        avg_macro = df[macro_factor].mean()
-        avg_asset = df[asset_return].mean()
-        if avg_asset == 0:
-            raise AnalysisError(
-                "Average asset return is zero, cannot compute elasticity."
+        rolling_cov = panel[asset_return].rolling(effective_window).cov(panel[macro_factor])
+        rolling_var = panel[macro_factor].rolling(effective_window).var()
+        rolling_beta = (rolling_cov / rolling_var).replace([np.inf, -np.inf], np.nan)
+        rolling_history = (
+            pd.DataFrame(
+                {
+                    "date": panel["date"],
+                    "elasticity": rolling_beta,
+                }
             )
+            .dropna()
+            .to_dict("records")
+        )
 
-        return cast(float, beta * (avg_macro / avg_asset))
+        return {
+            "ticker": ticker,
+            "asset_return": asset_return,
+            "macro_factor": macro_factor,
+            "static_elasticity": float(beta),
+            "rolling_window_days": int(effective_window),
+            "rolling_elasticity": rolling_history,
+            "data_points": int(len(panel)),
+            "transformations": metadata,
+        }
     except DataValidationError:
         raise  # Re-raise specific errors
     except AnalysisError:

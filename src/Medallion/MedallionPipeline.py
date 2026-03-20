@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -46,6 +47,7 @@ class MedallionPipeline:
         self.raw_path = self.data_path / "raw"
         self.processed_path = self.data_path / "processed"
         self.gold_path = self.data_path / "gold"
+        self.checkpoint_path = self.data_path / "pipeline_checkpoint.json"
 
         self.raw_path.mkdir(parents=True, exist_ok=True)
         self.processed_path.mkdir(parents=True, exist_ok=True)
@@ -79,6 +81,55 @@ class MedallionPipeline:
     def _reset_stage_tracking(self) -> None:
         self._stage_durations = {}
         self._stage_success = {}
+
+    def _load_checkpoint(self) -> Dict[str, Any]:
+        if not self.checkpoint_path.exists():
+            return {}
+        try:
+            return json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _write_checkpoint(self, stage: str, status: str, details: Optional[Dict[str, Any]] = None) -> None:
+        payload = self._load_checkpoint()
+        payload[stage] = {
+            "status": status,
+            "updated_at": time.time(),
+            "details": details or {},
+        }
+        self.checkpoint_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _is_stage_done(self, stage: str) -> bool:
+        payload = self._load_checkpoint()
+        if payload.get(stage, {}).get("status") != "success":
+            return False
+        if stage == "bronze":
+            return self.raw_path.exists() and any(self.raw_path.glob("**/*.parquet"))
+        if stage == "silver":
+            return self.processed_path.exists() and any(self.processed_path.glob("**/*.parquet"))
+        if stage == "gold":
+            return (self.gold_path / "master_table.parquet").exists()
+        return False
+
+    def _run_stage_with_retry(self, stage_name: str, stage_fn: Any) -> None:
+        attempts = max(1, int(getattr(self.config, "pipeline_stage_retry_attempts", 1)))
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                stage_fn()
+                self._write_checkpoint(stage_name, "success", {"attempt": attempt})
+                return
+            except Exception as exc:
+                last_error = exc
+                self._write_checkpoint(
+                    stage_name,
+                    "failed",
+                    {"attempt": attempt, "error": str(exc)},
+                )
+                if attempt >= attempts:
+                    raise
+        if last_error is not None:
+            raise last_error
 
     def run_bronze(self) -> None:
         print(BRONZE_START)
@@ -228,12 +279,22 @@ class MedallionPipeline:
         """
         try:
             self._reset_stage_tracking()
+            resume = bool(getattr(self.config, "pipeline_resume_from_checkpoint", False))
             with tqdm(total=4, desc="Full Pipeline") as pbar:
-                self.run_bronze()
+                if resume and self._is_stage_done("bronze"):
+                    print("[resume] Skipping Bronze stage (checkpoint valid).")
+                else:
+                    self._run_stage_with_retry("bronze", self.run_bronze)
                 pbar.update(1)
-                self.run_silver()
+                if resume and self._is_stage_done("silver"):
+                    print("[resume] Skipping Silver stage (checkpoint valid).")
+                else:
+                    self._run_stage_with_retry("silver", self.run_silver)
                 pbar.update(1)
-                self.run_gold()
+                if resume and self._is_stage_done("gold"):
+                    print("[resume] Skipping Gold stage (checkpoint valid).")
+                else:
+                    self._run_stage_with_retry("gold", self.run_gold)
                 pbar.update(1)
 
                 # Gold internal methods handle analysis parallelism.
@@ -259,19 +320,29 @@ class MedallionPipeline:
         )
         checks["gold_data_exists"] = (self.gold_path / "master_table.parquet").exists()
         checks["config_valid"] = bool(
-            hasattr(self.config, "fred_api_key") and self.config.fred_api_key
+            hasattr(self.config, "macro_series_map") and hasattr(self.config, "worldbank_indicator_map")
         )
         return checks
 
     def run_full_pipeline_sequential(self) -> Dict[str, Any]:
         print(GOLD_SEQUENTIAL_MODE)
         self._reset_stage_tracking()
+        resume = bool(getattr(self.config, "pipeline_resume_from_checkpoint", False))
         with tqdm(total=4, desc="Full Pipeline") as pbar:
-            self.run_bronze()
+            if resume and self._is_stage_done("bronze"):
+                print("[resume] Skipping Bronze stage (checkpoint valid).")
+            else:
+                self._run_stage_with_retry("bronze", self.run_bronze)
             pbar.update(1)
-            self.run_silver()
+            if resume and self._is_stage_done("silver"):
+                print("[resume] Skipping Silver stage (checkpoint valid).")
+            else:
+                self._run_stage_with_retry("silver", self.run_silver)
             pbar.update(1)
-            self.run_gold()
+            if resume and self._is_stage_done("gold"):
+                print("[resume] Skipping Gold stage (checkpoint valid).")
+            else:
+                self._run_stage_with_retry("gold", self.run_gold)
             pbar.update(1)
             results = self._get_gold_layer().run_all_analyses()
             pbar.update(1)

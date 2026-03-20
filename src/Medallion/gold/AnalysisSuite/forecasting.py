@@ -1,17 +1,22 @@
-from typing import Tuple, Union
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
 
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+from .mixed_frequency import filter_to_ticker
 
 
 def forecasting(
     df: pd.DataFrame,
     column: str,
     steps: int = 10,
-    order: Tuple[int, int, int] = (5, 1, 0),
-) -> Union[pd.Series, None]:
+    order: Tuple[int, int, int] = (2, 1, 1),
+    ticker: Optional[str] = None,
+    volatility_window: int = 30,
+) -> Dict[str, Any]:
     """Forecast a time series using an ARIMA(p, d, q) model.
 
     ARIMA (AutoRegressive Integrated Moving Average) captures short-term
@@ -51,18 +56,44 @@ def forecasting(
                 "DataFrame must have a 'date' column for time series."
             )
 
-        ts_data = df.set_index("date")[column].dropna()
-        if ts_data.empty:
-            raise DataValidationError(f"No data in column {column}.")
+        work_df = filter_to_ticker(df, ticker=ticker).copy()
+        work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
+        work_df = work_df.dropna(subset=["date"]).sort_values("date")
 
-        # Ensure DatetimeIndex for ARIMA
-        if not isinstance(ts_data.index, pd.DatetimeIndex):
-            ts_data.index = pd.to_datetime(ts_data.index)
+        if column == "log_return":
+            returns = pd.to_numeric(work_df[column], errors="coerce")
+        elif column == "close":
+            prices = pd.to_numeric(work_df[column], errors="coerce")
+            returns = np.log(prices / prices.shift(1))
+        else:
+            raw_series = pd.to_numeric(work_df[column], errors="coerce")
+            returns = raw_series.diff()
+
+        realized_vol = returns.rolling(volatility_window).std() * np.sqrt(252)
+        conditional_vol = returns.ewm(span=volatility_window, min_periods=volatility_window).std() * np.sqrt(252)
+        ts_data = (
+            0.5 * realized_vol + 0.5 * conditional_vol
+        ).dropna()
+        if ts_data.empty:
+            raise DataValidationError("No volatility series available for forecasting.")
+
+        ts_data.index = pd.to_datetime(work_df.loc[ts_data.index, "date"].values)
 
         model = ARIMA(ts_data, order=order)
         model_fit = model.fit()
-        forecast = model_fit.forecast(steps=steps)
-        return forecast
+        forecast_res = model_fit.get_forecast(steps=steps)
+        forecast = forecast_res.predicted_mean
+        conf_int = forecast_res.conf_int(alpha=0.10)
+        return {
+            "target": "annualized_volatility",
+            "ticker": ticker,
+            "current_volatility": float(ts_data.iloc[-1]),
+            "forecast": [float(x) for x in forecast.tolist()],
+            "lower_90": [float(x) for x in conf_int.iloc[:, 0].tolist()],
+            "upper_90": [float(x) for x in conf_int.iloc[:, 1].tolist()],
+            "volatility_window": int(volatility_window),
+            "method": "rolling_std_plus_ewm_garch_like",
+        }
     except DataValidationError:
         raise
     except Exception as e:

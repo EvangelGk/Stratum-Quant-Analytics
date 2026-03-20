@@ -81,24 +81,62 @@ def _to_serializable(value: Any) -> Any:
         import numpy as np
         import pandas as pd
 
+        max_df_rows = 300
+        max_series_rows = 600
+        max_array_elements = 5000
+
         if isinstance(value, pd.DataFrame):
+            numeric_cols = value.select_dtypes(include=["number"]).columns.tolist()
+            numeric_summary = {}
+            for col in numeric_cols[:20]:
+                series = pd.to_numeric(value[col], errors="coerce").dropna()
+                if not series.empty:
+                    numeric_summary[str(col)] = {
+                        "mean": float(series.mean()),
+                        "std": float(series.std()),
+                        "min": float(series.min()),
+                        "max": float(series.max()),
+                    }
             return {
                 "type": "dataframe",
                 "shape": [int(value.shape[0]), int(value.shape[1])],
                 "columns": [str(c) for c in value.columns],
-                "data": value.head(200).to_dict(orient="records"),
+                "head_rows": int(min(len(value), max_df_rows)),
+                "data": value.head(max_df_rows).to_dict(orient="records"),
+                "numeric_summary": numeric_summary,
+                "truncated": bool(len(value) > max_df_rows),
             }
         if isinstance(value, pd.Series):
+            numeric = pd.to_numeric(value, errors="coerce").dropna()
             return {
                 "type": "series",
                 "length": int(len(value)),
-                "data": value.head(500).tolist(),
+                "head_values": value.head(max_series_rows).tolist(),
+                "truncated": bool(len(value) > max_series_rows),
+                "stats": {
+                    "mean": float(numeric.mean()) if not numeric.empty else None,
+                    "std": float(numeric.std()) if not numeric.empty else None,
+                    "min": float(numeric.min()) if not numeric.empty else None,
+                    "max": float(numeric.max()) if not numeric.empty else None,
+                },
             }
         if isinstance(value, np.ndarray):
+            arr = np.asarray(value)
+            flattened = arr.reshape(-1)
+            sample = flattened[:max_array_elements]
             return {
                 "type": "ndarray",
-                "shape": [int(x) for x in value.shape],
-                "data": value.tolist(),
+                "shape": [int(x) for x in arr.shape],
+                "sample": sample.tolist(),
+                "sample_size": int(len(sample)),
+                "total_elements": int(flattened.size),
+                "truncated": bool(flattened.size > max_array_elements),
+                "stats": {
+                    "mean": float(arr.mean()) if arr.size else None,
+                    "std": float(arr.std()) if arr.size else None,
+                    "min": float(arr.min()) if arr.size else None,
+                    "max": float(arr.max()) if arr.size else None,
+                },
             }
         if isinstance(value, np.generic):
             return value.item()
