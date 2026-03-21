@@ -21,6 +21,11 @@ set SCHEDULER_SCRIPT=%PROJECT_DIR%\src\scheduler.py
 set LOG_DIR=%PROJECT_DIR%\logs
 set USER_ID=default
 
+REM Optional notifications (uncomment and configure one of the options below)
+REM set MOBILE_NOTIFY_WEBHOOK_URL=https://your-webhook-endpoint
+set TELEGRAM_BOT_TOKEN=8760909488:AAFEHi8X2TtLEq0w4hxzwTo3GKoDC0hjw7I
+set TELEGRAM_CHAT_ID=8688125073
+
 REM Create log directory
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 

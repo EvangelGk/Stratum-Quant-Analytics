@@ -2,28 +2,15 @@
 @REM Automated Task Scheduler Setup Script for Daily Optimizer
 @REM 
 @REM This script automatically creates a Windows Task Scheduler entry
-@REM that runs the optimizer daily at 2:00 AM
+@REM that runs the optimizer every 2 days at 3:00 PM (15:00)
 @REM
 @REM USAGE: 
-@REM   Right-click this file → "Run as administrator" → Press Enter
+@REM   Double-click this file (no administrator needed)
 @REM
 @REM ========================================================================
 
 @echo off
 setlocal enabledelayedexpansion
-
-REM Check if running as administrator
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] This script must be run as Administrator!
-    echo.
-    echo Please:
-    echo   1. Right-click this file (setup_scheduler.bat)
-    echo   2. Select "Run as administrator"
-    echo   3. Press Enter when prompted
-    pause
-    exit /b 1
-)
 
 echo ========================================================================
 echo SCENARIO PLANNER - AUTOMATED SCHEDULER SETUP
@@ -33,12 +20,12 @@ echo.
 REM Define paths
 set PROJECT_DIR=C:\Users\liagk\Project\scenario-planner
 set SCRIPT_PATH=%PROJECT_DIR%\run_optimizer_daily.bat
-set TASK_NAME=Scenario-Planner-Daily-Optimizer
+set TASK_NAME=Scenario-Planner-Daily-Optimizer-User
 
 echo [INFO] Creating scheduled task...
 echo        Task: %TASK_NAME%
 echo        Script: %SCRIPT_PATH%
-echo        Time: 02:00 AM (daily)
+echo        Time: 15:00 (3:00 PM, every 2 days)
 echo.
 
 REM Check if script exists
@@ -51,8 +38,8 @@ if not exist "%SCRIPT_PATH%" (
 REM Delete existing task if present
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 
-REM Create the scheduled task
-schtasks /create /tn "%TASK_NAME%" /tr "%SCRIPT_PATH%" /sc daily /st 02:00:00 /rl highest /f
+REM Create the scheduled task (every 2 days at 15:00) in current user context
+schtasks /create /tn "%TASK_NAME%" /tr "%SCRIPT_PATH%" /sc daily /mo 2 /st 15:00:00 /rl LIMITED /f
 
 if %errorlevel% equ 0 (
     echo.
@@ -62,7 +49,7 @@ if %errorlevel% equ 0 (
     echo NEXT STEPS:
     echo ========================================================================
     echo.
-    echo 1. Task is now scheduled to run DAILY at 02:00 AM (2:00 AM)
+    echo 1. Task is now scheduled to run EVERY 2 DAYS at 15:00 (3:00 PM)
     echo.
     echo 2. When the optimizer finds serious problems, it creates:
     echo    output\default\.optimizer\approval_queue.json
@@ -90,7 +77,9 @@ if %errorlevel% equ 0 (
 ) else (
     echo.
     echo [ERROR] Failed to create scheduled task!
-    echo Please ensure you are running as Administrator.
+    echo If a task with the same name exists under another account,
+    echo create it manually in Task Scheduler with this name:
+    echo   %TASK_NAME%
     pause
     exit /b 1
 )

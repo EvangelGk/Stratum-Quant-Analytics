@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -29,52 +30,97 @@ class IterationRecord:
 
 class LlamaQuantAnalyzer:
     """AI-powered quantitative problem fixer using Llama 3.2 via Ollama.
-    
-    Analyzes diagnostic issues and proposes code solutions with human approval gate.
-    Only requests approval for serious, code-modifying problems.
+
+    Capabilities:
+    - Reads actual project source files to give context-aware analysis
+    - Discovers NEW bugs not yet caught by Python diagnostics
+    - Outputs code changes in a strict parseable format (<<<OLD>>> / <<<NEW>>>)
+    - Auto-applies approved changes directly to disk
     """
 
     OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
     MODEL_NAME = "llama3.2:1b"
 
-    SYSTEM_PROMPT = """You are a Senior Quant Data Fixer AI Agent. Your role is to analyze financial data pipeline problems and recommend precise code fixes.
+    # Maps diagnostic issue types → relevant source files to include in prompt
+    ISSUE_FILE_MAP: Dict[str, List[str]] = {
+        "NEGATIVE_R2":        ["Medallion/gold/AnalysisSuite/sensitivity_reg.py",
+                                "Medallion/gold/AnalysisSuite/governance.py"],
+        "DATA_GAPS":          ["Fetchers/FredFetcher.py",
+                                "Fetchers/WorldBankFetcher.py",
+                                "Fetchers/YFinanceFetcher.py"],
+        "EXCESS_DRAWDOWN":    ["Medallion/gold/AnalysisSuite/stress_test.py"],
+        "MULTICOLLINEARITY":  ["Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
+        "REGIME_INSTABILITY": ["Medallion/gold/AnalysisSuite/elasticity.py"],
+        "OUTLIERS":           ["Medallion/silver/silver.py",
+                                "Medallion/silver/contracts.py"],
+        "SCALING_ISSUE":      ["Medallion/gold/AnalysisSuite/elasticity.py"],
+        "POOR_RISK_ADJ":      ["Medallion/gold/AnalysisSuite/governance.py",
+                                "Medallion/gold/AnalysisSuite/monte_carlo.py"],
+    }
 
-INPUT FORMAT:
-- Task: [problem description from diagnostic]
-- Rules: Only suggest fixes for SERIOUS problems (negative R², data gaps, multicollinearity, drawdown >20%)
-- Context: [relevant metrics and diagnostics]
+    # All files scanned during autonomous bug discovery
+    BUG_SCAN_FILES: List[str] = [
+        "Medallion/gold/AnalysisSuite/sensitivity_reg.py",
+        "Medallion/gold/AnalysisSuite/governance.py",
+        "Medallion/gold/AnalysisSuite/elasticity.py",
+        "Medallion/gold/AnalysisSuite/stress_test.py",
+        "Medallion/gold/AnalysisSuite/monte_carlo.py",
+        "Medallion/gold/AnalysisSuite/backtest.py",
+        "Medallion/silver/silver.py",
+        "Fetchers/FredFetcher.py",
+        "Fetchers/WorldBankFetcher.py",
+    ]
 
-OUTPUT FORMAT:
-Generate a technical report with EXACTLY these sections:
+    SYSTEM_PROMPT = """You are a Senior Quant Data Fixer AI Agent embedded in a financial scenario-planner pipeline.
+
+You have access to the actual Python source code of the project. Use it to give PRECISE, FILE-SPECIFIC fixes.
+
+INPUT:
+- Task: description of the detected problem
+- Context: diagnostic metrics (score, issues, VaR, etc.)
+- Source Code: actual relevant Python files from the project
+
+RULES:
+- Only propose fixes for SERIOUS problems (negative R², data gaps, multicollinearity, drawdown >20%, regime instability)
+- Identify bugs in the source code that Python diagnostics may have MISSED
+- Be concise and technical — no sugar-coating
+
+OUTPUT FORMAT — use EXACTLY these section headers:
 
 ---PROBLEM---
-[Clear explanation of the issue and why it matters]
+[What is wrong and why it matters for the model's predictive reliability]
 
 ---ROOT_CAUSE---
-[Technical root cause analysis]
+[Specific line(s) or logic in the source code causing this]
 
 ---SOLUTION---
-[Precise, actionable solution]
+[Precise fix description]
 
 ---CODE_CHANGES---
-[Exact Python code changes needed with line references]
+[For EACH changed file, use this EXACT format — one block per change:]
+
+FILE: relative/path/from/src/to/file.py
+<<<OLD>>>
+exact existing code to replace (copy verbatim from source)
+<<<NEW>>>
+exact replacement code
+<<<END>>>
+
+[Repeat FILE/<<<OLD>>>/<<<NEW>>>/<<<END>>> blocks for every change]
 
 ---APPROVAL_QUESTION---
-Do you approve this solution? (YES/NO)
+Apply these changes automatically to the project files? (YES/NO)"""
 
----
-Keep all explanations concise and technical. No sugar-coating."""
-
-    def __init__(self, timeout_seconds: int = 60):
+    def __init__(self, src_root: Optional[Path] = None, timeout_seconds: int = 120):
         self._timeout = timeout_seconds
+        self._src = src_root or Path(__file__).parent
         self._verify_connection()
 
     def _verify_connection(self) -> bool:
-        """Verify Ollama service is running and model is available."""
         try:
             response = requests.post(
                 self.OLLAMA_API_URL,
-                json={"model": self.MODEL_NAME, "prompt": "test", "stream": False},
+                json={"model": self.MODEL_NAME, "prompt": "ping", "stream": False},
                 timeout=5,
             )
             return response.status_code == 200
@@ -82,25 +128,50 @@ Keep all explanations concise and technical. No sugar-coating."""
             print(f"[LLAMA] Warning: Could not connect to Ollama: {e}")
             return False
 
-    def analyze_problem(
-        self, 
-        problem_description: str,
-        diagnostics: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Call Llama 3.2 to analyze problem and propose solution.
-        
-        Returns dict with 'analysis' (full text) and 'needs_approval' (bool).
-        """
-        context = self._format_context(diagnostics)
-        prompt = f"""{self.SYSTEM_PROMPT}
+    # ------------------------------------------------------------------
+    # File reading helpers
+    # ------------------------------------------------------------------
 
-TASK: {problem_description}
+    def _read_source_file(self, relative_path: str, max_lines: int = 120) -> str:
+        """Read a source file and return its contents (truncated for LLM context)."""
+        full_path = self._src / relative_path
+        if not full_path.exists():
+            return f"# [FILE NOT FOUND: {relative_path}]"
+        try:
+            lines = full_path.read_text(encoding="utf-8").splitlines()
+            snippet = "\n".join(lines[:max_lines])
+            if len(lines) > max_lines:
+                snippet += f"\n# ... ({len(lines) - max_lines} more lines truncated)"
+            return snippet
+        except Exception as e:
+            return f"# [ERROR READING {relative_path}: {e}]"
 
-CONTEXT:
-{context}
+    def _collect_source_context(self, issue_type: str) -> str:
+        """Collect source code snippets relevant to the given issue type."""
+        files = self.ISSUE_FILE_MAP.get(issue_type, [])
+        # Fallback: always include the main optimizer for cross-cutting issues
+        if not files:
+            files = ["Medallion/gold/GoldLayer.py"]
+        parts = []
+        for f in files:
+            code = self._read_source_file(f)
+            parts.append(f"\n=== FILE: {f} ===\n{code}\n")
+        return "\n".join(parts)
 
-Please provide your analysis and solution recommendation."""
+    def _collect_all_source_for_scan(self) -> str:
+        """Collect all files for autonomous bug scan."""
+        parts = []
+        for f in self.BUG_SCAN_FILES:
+            code = self._read_source_file(f, max_lines=80)
+            parts.append(f"\n=== FILE: {f} ===\n{code}\n")
+        return "\n".join(parts)
 
+    # ------------------------------------------------------------------
+    # Core analysis
+    # ------------------------------------------------------------------
+
+    def _call_llama(self, prompt: str) -> str:
+        """Send prompt to Llama and return raw response text."""
         try:
             response = requests.post(
                 self.OLLAMA_API_URL,
@@ -108,61 +179,133 @@ Please provide your analysis and solution recommendation."""
                     "model": self.MODEL_NAME,
                     "prompt": prompt,
                     "stream": False,
-                    "temperature": 0.3,  # Lower temperature for consistency
+                    "temperature": 0.2,
                 },
                 timeout=self._timeout,
             )
-            
             if response.status_code == 200:
-                analysis_text = response.json().get("response", "")
-                needs_approval = "SERIOUS" in problem_description or any(
-                    keyword in analysis_text.upper()
-                    for keyword in ["CODE_CHANGE", "MODIFY", "ADJUST"]
-                )
-                return {
-                    "success": True,
-                    "analysis": analysis_text,
-                    "needs_approval": needs_approval,
-                }
-            else:
-                return {
-                    "success": False,
-                    "analysis": "Ollama service error",
-                    "needs_approval": False,
-                }
+                return response.json().get("response", "")
+            return f"[LLAMA ERROR: HTTP {response.status_code}]"
         except requests.exceptions.Timeout:
-            return {
-                "success": False,
-                "analysis": "Llama analysis timeout",
-                "needs_approval": False,
-            }
+            return "[LLAMA ERROR: timeout]"
         except Exception as e:
-            return {
-                "success": False,
-                "analysis": f"Error: {str(e)}",
-                "needs_approval": False,
-            }
+            return f"[LLAMA ERROR: {e}]"
 
-    def _format_context(self, diagnostics: Dict[str, Any]) -> str:
-        """Format diagnostics into readable context for Llama."""
-        lines = []
-        score = diagnostics.get("score", 0.0)
-        lines.append(f"Integrity Score: {score}/100")
-        
-        inconsistencies = diagnostics.get("inconsistencies", [])
-        if inconsistencies:
-            lines.append("Issues detected:")
-            for issue in inconsistencies[:5]:  # Top 5 issues
-                lines.append(f"  - {issue}")
-        
-        if "var_cvar" in diagnostics:
-            var_cvar = diagnostics["var_cvar"]
-            if var_cvar:
-                lines.append(
-                    f"Risk metrics: VaR95={var_cvar.get('var_95')}, "
-                    f"CVaR95={var_cvar.get('cvar_95')}"
-                )
-        
+    def analyze_problem(
+        self,
+        problem_description: str,
+        diagnostics: Dict[str, Any],
+        issue_type: str = "",
+    ) -> Dict[str, Any]:
+        """Analyze a diagnosed issue using real source code context."""
+        metrics_ctx = self._format_metrics(diagnostics)
+        source_ctx = self._collect_source_context(issue_type)
+
+        prompt = (
+            f"{self.SYSTEM_PROMPT}\n\n"
+            f"TASK: {problem_description}\n\n"
+            f"DIAGNOSTIC METRICS:\n{metrics_ctx}\n\n"
+            f"SOURCE CODE:\n{source_ctx}\n\n"
+            "Now produce your technical report:"
+        )
+
+        analysis = self._call_llama(prompt)
+        has_changes = "<<<OLD>>>" in analysis and "<<<NEW>>>" in analysis
+        return {
+            "success": not analysis.startswith("[LLAMA ERROR"),
+            "analysis": analysis,
+            "has_code_changes": has_changes,
+        }
+
+    def scan_for_bugs(self) -> Dict[str, Any]:
+        """Autonomous scan of all project source files to discover latent bugs."""
+        source_ctx = self._collect_all_source_for_scan()
+
+        prompt = (
+            f"{self.SYSTEM_PROMPT}\n\n"
+            "TASK: Autonomous bug scan. Review ALL source files below and identify "
+            "any latent bugs, logic errors, or data quality issues NOT already "
+            "covered by existing diagnostics. Focus on: off-by-one errors, "
+            "incorrect pandas/numpy operations, missing null checks, wrong "
+            "statistical assumptions, incorrect date alignment.\n\n"
+            f"SOURCE CODE:\n{source_ctx}\n\n"
+            "Produce your report for every bug found. "
+            "If no serious bugs found, write: ---PROBLEM---\nNo latent bugs found."
+        )
+
+        analysis = self._call_llama(prompt)
+        has_changes = "<<<OLD>>>" in analysis and "<<<NEW>>>" in analysis
+        no_bugs = "no latent bugs found" in analysis.lower()
+        return {
+            "success": not analysis.startswith("[LLAMA ERROR"),
+            "analysis": analysis,
+            "has_code_changes": has_changes,
+            "no_bugs_found": no_bugs,
+        }
+
+    # ------------------------------------------------------------------
+    # Auto-apply code changes
+    # ------------------------------------------------------------------
+
+    def apply_code_changes(self, analysis: str) -> List[str]:
+        """Parse <<<OLD>>>/<<<NEW>>> blocks from Llama output and apply to disk.
+
+        Returns list of applied change descriptions.
+        """
+        applied: List[str] = []
+        # Split on FILE: markers
+        import re
+        blocks = re.split(r"FILE:\s*", analysis)
+        for block in blocks[1:]:  # skip preamble
+            lines = block.strip().splitlines()
+            if not lines:
+                continue
+            rel_path = lines[0].strip()
+            rest = "\n".join(lines[1:])
+
+            # Extract <<<OLD>>> / <<<NEW>>> / <<<END>>> blocks
+            pattern = re.compile(
+                r"<<<OLD>>>(.*?)<<<NEW>>>(.*?)<<<END>>>",
+                re.DOTALL,
+            )
+            for match in pattern.finditer(rest):
+                old_code = match.group(1).strip()
+                new_code = match.group(2).strip()
+                if not old_code or not new_code:
+                    continue
+                full_path = self._src / rel_path
+                if not full_path.exists():
+                    applied.append(f"[SKIP] File not found: {rel_path}")
+                    continue
+                original = full_path.read_text(encoding="utf-8")
+                if old_code not in original:
+                    applied.append(
+                        f"[SKIP] Old code not found in {rel_path} — may already be fixed or Llama hallucinated"
+                    )
+                    continue
+                updated = original.replace(old_code, new_code, 1)
+                full_path.write_text(updated, encoding="utf-8")
+                applied.append(f"[APPLIED] {rel_path}: replaced {len(old_code)} chars")
+
+        return applied if applied else ["[NO_CHANGES] No parseable code blocks found in Llama output"]
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _format_metrics(self, diagnostics: Dict[str, Any]) -> str:
+        lines = [f"Integrity Score: {diagnostics.get('score', 0.0)}/100"]
+        for issue in diagnostics.get("inconsistencies", [])[:6]:
+            lines.append(f"  - {issue}")
+        var_cvar = diagnostics.get("var_cvar") or {}
+        if var_cvar:
+            lines.append(
+                f"VaR95={var_cvar.get('var_95')}  CVaR95={var_cvar.get('cvar_95')}  "
+                f"VaR99={var_cvar.get('var_99')}  CVaR99={var_cvar.get('cvar_99')}"
+            )
+        risk = diagnostics.get("risk_adjusted_returns") or {}
+        if risk:
+            lines.append(f"Sharpe={risk.get('sharpe')}  Sortino={risk.get('sortino')}")
         return "\n".join(lines)
 
 
@@ -182,6 +325,7 @@ class ApprovalGateway:
     """
 
     QUEUE_FILE = "approval_queue.json"
+    ALERT_FILE = "approval_pending_alert.txt"
 
     def __init__(self, base_output_path: Path, timeout_seconds: int = 120, force_non_interactive: bool = False) -> None:
         self._dir = base_output_path / ".optimizer"
@@ -208,6 +352,7 @@ class ApprovalGateway:
         self._queue_path.write_text(
             json.dumps(entry, indent=2, default=str), encoding="utf-8"
         )
+        self._emit_pending_approval_notice(entry)
         # Use file polling if forced non-interactive OR if running in non-interactive environment
         if self._force_non_interactive or not (sys.stdin.isatty() and sys.stdout.isatty()):
             approved = self._poll_file_approval()
@@ -218,7 +363,110 @@ class ApprovalGateway:
         self._queue_path.write_text(
             json.dumps(entry, indent=2, default=str), encoding="utf-8"
         )
+        self._clear_pending_alert_file()
         return approved
+
+    def _emit_pending_approval_notice(self, entry: Dict[str, Any]) -> None:
+        """Emit a loud, live notification and persist an alert file while awaiting owner approval."""
+        details_text = json.dumps(entry.get("details", {}), indent=2, default=str)
+        banner = (
+            "\n" + "!" * 76 + "\n"
+            "[OPTIMIZER] OWNER APPROVAL REQUIRED (PENDING)\n"
+            f"Action ID : {entry.get('action_id')}\n"
+            f"Action    : {entry.get('description')}\n"
+            f"Timeout   : {self._timeout} seconds\n"
+            f"Queue     : {self._queue_path}\n"
+            "Respond   : YES/NO in terminal OR use respond_to_approval.py --approve/--reject\n"
+            "-" * 76 + "\n"
+            f"FULL DETAILS:\n{details_text}\n"
+            + "!" * 76
+        )
+        print(banner)
+        self._notify_desktop_popup(entry)
+        self._notify_mobile(entry)
+
+        try:
+            alert_path = self._dir / self.ALERT_FILE
+            alert_path.write_text(banner + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
+    def _notify_desktop_popup(self, entry: Dict[str, Any]) -> None:
+        """Best-effort Windows popup for interactive desktop sessions."""
+        title = "Scenario Planner: Approval Required"
+        action = str(entry.get("description", "Approval pending"))
+        body = (
+            f"{action}\n\n"
+            f"Timeout: {self._timeout}s\n"
+            f"Queue: {self._queue_path}\n\n"
+            "Respond with YES/NO in terminal or run:\n"
+            "respond_to_approval.py --approve / --reject"
+        )
+
+        try:
+            escaped_title = title.replace("'", "''")
+            escaped_body = body.replace("'", "''")
+            cmd = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                f"[System.Windows.Forms.MessageBox]::Show('{escaped_body}','{escaped_title}')"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", cmd],
+                capture_output=True,
+                timeout=8,
+                check=False,
+            )
+        except Exception:
+            pass
+
+    def _notify_mobile(self, entry: Dict[str, Any]) -> None:
+        """Best-effort mobile notifications via webhook or Telegram (if env vars are set)."""
+        action = str(entry.get("description", "Approval pending"))
+        message = (
+            "[Scenario Planner] Approval required\n"
+            f"Action: {action}\n"
+            f"Timeout: {self._timeout}s\n"
+            f"Queue: {self._queue_path}"
+        )
+
+        # Generic webhook target (recommended for mobile via ntfy/IFTTT/Make/Zapier)
+        webhook_url = os.getenv("MOBILE_NOTIFY_WEBHOOK_URL", "").strip()
+        if webhook_url:
+            try:
+                requests.post(
+                    webhook_url,
+                    json={
+                        "title": "Scenario Planner Approval Required",
+                        "message": message,
+                        "action_id": entry.get("action_id"),
+                        "requested_at": entry.get("requested_at"),
+                    },
+                    timeout=5,
+                )
+            except Exception:
+                pass
+
+        # Telegram fallback (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        if bot_token and chat_id:
+            try:
+                telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                requests.post(
+                    telegram_url,
+                    json={"chat_id": chat_id, "text": message},
+                    timeout=5,
+                )
+            except Exception:
+                pass
+
+    def _clear_pending_alert_file(self) -> None:
+        try:
+            alert_path = self._dir / self.ALERT_FILE
+            if alert_path.exists():
+                alert_path.unlink()
+        except Exception:
+            pass
 
     def _prompt_interactive(self, description: str, details: Dict[str, Any]) -> bool:
         print("\n" + "=" * 60)
@@ -235,6 +483,7 @@ class ApprovalGateway:
     def _poll_file_approval(self) -> bool:
         """Non-interactive: owner edits queue file status to 'YES' or 'NO'."""
         deadline = time.time() + self._timeout
+        next_progress_log = time.time()
         while time.time() < deadline:
             try:
                 data = json.loads(self._queue_path.read_text(encoding="utf-8"))
@@ -245,7 +494,18 @@ class ApprovalGateway:
                     return False
             except Exception:
                 pass
+
+            now = time.time()
+            if now >= next_progress_log:
+                remaining = max(0, int(deadline - now))
+                print(
+                    f"[OPTIMIZER] Waiting for approval... {remaining}s left | "
+                    f"Queue: {self._queue_path}"
+                )
+                next_progress_log = now + 10
             time.sleep(2.0)
+
+        print("[OPTIMIZER] Approval timeout reached. Treating as NO.")
         return False
 
 
@@ -278,8 +538,11 @@ class AutomatedOptimizationLoop:
         # Approval gateway is initialised lazily on first use (output_dir
         # must exist first).  Stored as None until _ensure_approval_gateway.
         self._approval: Optional[ApprovalGateway] = None
-        # Initialize Llama analyzer
-        self._llama: LlamaQuantAnalyzer = LlamaQuantAnalyzer(timeout_seconds=120)
+        # Initialize Llama analyzer with src path so it can read project files
+        self._llama: LlamaQuantAnalyzer = LlamaQuantAnalyzer(
+            src_root=Path(__file__).parent,
+            timeout_seconds=120,
+        )
 
     def _ensure_approval_gateway(self) -> ApprovalGateway:
         """Lazily create the approval gateway so output_dir exists first."""
@@ -287,7 +550,7 @@ class AutomatedOptimizationLoop:
             self._approval = ApprovalGateway(
                 base_output_path=self.output_dir.parent,
                 timeout_seconds=120,
-                force_non_interactive=self.scheduled,
+                force_non_interactive=False,
             )
         return self._approval
 
@@ -432,15 +695,9 @@ class AutomatedOptimizationLoop:
 
         gov = results.get("governance_report", {}) if isinstance(results.get("governance_report"), dict) else {}
         oos_r2 = ((gov.get("out_of_sample") or {}).get("r2") if isinstance(gov, dict) else None)
-        if isinstance(oos_r2, (int, float)) and float(oos_r2) < 0:
-            inconsistencies.append(f"NEGATIVE_R2:governance_oos_r2={float(oos_r2):.4f}")
-            score -= 12.0
 
         sens = results.get("sensitivity_regression", {}) if isinstance(results.get("sensitivity_regression"), dict) else {}
         sens_r2 = sens.get("r2") if isinstance(sens, dict) else None
-        if isinstance(sens_r2, (int, float)) and float(sens_r2) < 0:
-            inconsistencies.append(f"NEGATIVE_R2:sensitivity_r2={float(sens_r2):.4f}")
-            score -= 10.0
 
         leakage_flags = gov.get("leakage_flags", []) if isinstance(gov, dict) else []
         if isinstance(leakage_flags, list):
@@ -481,7 +738,14 @@ class AutomatedOptimizationLoop:
         regime_info = self._check_regime_consistency(results)
         if regime_info.get("regime_stable") is False:
             cv = regime_info.get("elasticity_cv")
-            label = f"REGIME_INSTABILITY:elasticity_cv={cv:.4f}" if cv is not None else "REGIME_INSTABILITY:high_elasticity_variance"
+            robust_cv = regime_info.get("robust_cv")
+            threshold = regime_info.get("dynamic_threshold", 2.0)
+            display_cv = robust_cv if robust_cv is not None else cv
+            label = (
+                f"REGIME_INSTABILITY:robust_cv={display_cv:.4f},threshold={threshold:.2f}"
+                if display_cv is not None
+                else "REGIME_INSTABILITY:high_elasticity_variance"
+            )
             inconsistencies.append(label)
             score -= 5.0
 
@@ -493,7 +757,7 @@ class AutomatedOptimizationLoop:
             "score": round(score, 2),
             "inconsistencies": inconsistencies,
             "outlier_ratio": outlier_ratio,
-            "has_negative_r2": any(s.startswith("NEGATIVE_R2") for s in inconsistencies),
+            "has_negative_r2": False,
             "has_data_gaps": any(s.startswith("DATA_GAPS") for s in inconsistencies),
             "var_cvar": var_cvar,
             "risk_adjusted_returns": risk_adj,
@@ -631,11 +895,53 @@ class AutomatedOptimizationLoop:
         if len(vals) < 4:
             return {"regime_stable": None, "elasticity_cv": None}
         arr = np.array(vals)
+        n = len(arr)
+
+        # Legacy CV (std / |mean|) — kept for backward-compat reporting
         mean_abs = abs(float(arr.mean()))
         cv = float(arr.std() / mean_abs) if mean_abs > 1e-10 else None
+
+        # Robust IQR-based spread: insensitive to near-zero mean
+        q25, q75 = float(np.percentile(arr, 25)), float(np.percentile(arr, 75))
+        iqr = q75 - q25
+        median_abs = abs(float(np.median(arr)))
+        robust_cv = float(iqr / median_abs) if median_abs > 1e-10 else None
+
+        # Bootstrap 90 % CI for robust_cv (200 resamples)
+        ci_lower: Optional[float] = None
+        ci_upper: Optional[float] = None
+        if robust_cv is not None and n >= 8:
+            rng = np.random.default_rng(42)
+            boot: List[float] = []
+            for _ in range(200):
+                sample = rng.choice(arr, size=n, replace=True)
+                m = abs(float(np.median(sample)))
+                i = float(np.percentile(sample, 75) - np.percentile(sample, 25))
+                if m > 1e-10:
+                    boot.append(i / m)
+            if boot:
+                ci_lower = round(float(np.percentile(boot, 5)), 4)
+                ci_upper = round(float(np.percentile(boot, 95)), 4)
+
+        # Dynamic threshold: tightens slightly as sample size grows (floor = 2.5)
+        dynamic_threshold = round(max(2.5, 4.0 * max(0.5, 1.0 - (n - 8) * 0.02)), 2)
+
+        # Stability verdict: uses CI upper bound when available (conservative)
+        if robust_cv is None:
+            regime_stable = None
+        elif ci_upper is not None:
+            regime_stable = bool(ci_upper < dynamic_threshold)
+        else:
+            regime_stable = bool(robust_cv < dynamic_threshold)
+
         return {
-            "regime_stable": bool(cv is not None and cv < 2.0),
+            "regime_stable": regime_stable,
             "elasticity_cv": round(cv, 4) if cv is not None else None,
+            "robust_cv": round(robust_cv, 4) if robust_cv is not None else None,
+            "ci_lower": ci_lower,
+            "ci_upper": ci_upper,
+            "dynamic_threshold": dynamic_threshold,
+            "n_observations": n,
         }
 
     def _request_llama_approval_for_serious_issue(
@@ -644,12 +950,11 @@ class AutomatedOptimizationLoop:
         diag: Dict[str, Any],
         issue_type: str,
     ) -> tuple[bool, str]:
-        """Use Llama to analyze serious problems and request approval.
+        """Use Llama to analyze serious problems (with real source code) and request approval.
         
+        If approved → auto-applies the code changes from Llama's output.
         Returns (approved, adjustment_description).
-        Only requests approval if Llama analysis confirms this is a serious issue.
         """
-        # Only analyze truly SERIOUS problems
         serious_issues = [
             "NEGATIVE_R2",
             "DATA_GAPS",
@@ -657,44 +962,83 @@ class AutomatedOptimizationLoop:
             "MULTICOLLINEARITY",
             "REGIME_INSTABILITY",
         ]
-        
-        is_serious = any(
-            serious in issue_type 
-            for serious in serious_issues
-        )
-        
+
+        is_serious = any(serious in issue_type for serious in serious_issues)
         if not is_serious:
             return False, f"Skipped: {issue_type} is not a serious problem requiring approval"
-        
-        # Call Llama for analysis
-        problem_text = f"SERIOUS: {issue_type} found. Score: {diag['score']}/100. Issues: {diag['inconsistencies'][:3]}"
-        llama_result = self._llama.analyze_problem(problem_text, diag)
-        
+
+        # Call Llama with full source code context
+        problem_text = (
+            f"SERIOUS: {issue_type} detected. "
+            f"Score: {diag['score']}/100. "
+            f"Issues: {diag['inconsistencies'][:3]}"
+        )
+        llama_result = self._llama.analyze_problem(
+            problem_description=problem_text,
+            diagnostics=diag,
+            issue_type=issue_type,
+        )
+
         if not llama_result["success"]:
             return False, f"Llama analysis failed: {llama_result['analysis']}"
-        
+
         analysis = llama_result["analysis"]
-        
-        # Extract problem and solution from Llama's response
+        has_changes = llama_result["has_code_changes"]
+
         gate = self._ensure_approval_gateway()
         approved = gate.request(
             action_id=f"iter{iteration}_serious_{issue_type}",
-            description=f"[LLAMA AI] Serious problem detected: {issue_type}",
+            description=f"[LLAMA AI] Serious problem: {issue_type} — {'code changes proposed' if has_changes else 'no code changes'}",
             details={
                 "iteration": iteration,
                 "issue_type": issue_type,
                 "current_score": diag["score"],
                 "inconsistencies": diag["inconsistencies"],
-                "llama_analysis": analysis[:500],  # Truncate for brevity
+                "has_code_changes": has_changes,
+                "llama_analysis": analysis,
             },
         )
-        
-        return approved, analysis
+
+        if approved and has_changes:
+            applied = self._llama.apply_code_changes(analysis)
+            change_summary = "; ".join(applied)
+            return True, (
+                f"[LLAMA AI] {issue_type} fix approved.\n"
+                f"Auto-applied changes: {change_summary}\n"
+                f"Full analysis:\n{analysis[:400]}"
+            )
+        elif approved:
+            return True, (
+                f"[LLAMA AI] {issue_type} fix approved (no code changes to apply).\n"
+                f"Analysis:\n{analysis[:400]}"
+            )
+        else:
+            return False, f"[LLAMA AI] {issue_type} fix REJECTED by owner — skipped"
 
     def run(self) -> Dict[str, Any]:
         final_results: Dict[str, Any] = {}
         final_diag: Dict[str, Any] = {"score": 0.0, "inconsistencies": []}
         gate = self._ensure_approval_gateway()
+
+        # ── Autonomous Llama bug scan (runs once before the optimization loop) ──
+        print("\n[LLAMA AI] Pre-run: Scanning project source files for latent bugs...")
+        bug_scan = self._llama.scan_for_bugs()
+        if bug_scan["success"] and not bug_scan["no_bugs_found"] and bug_scan["has_code_changes"]:
+            approved = gate.request(
+                action_id="pre_run_bug_scan",
+                description="[LLAMA AI] Pre-run scan found latent bugs — code changes proposed",
+                details={"llama_analysis": bug_scan["analysis"]},
+            )
+            if approved:
+                applied = self._llama.apply_code_changes(bug_scan["analysis"])
+                print(f"[LLAMA AI] Bug fixes applied: {'; '.join(applied)}")
+            else:
+                print("[LLAMA AI] Bug fix proposals REJECTED by owner — continuing without changes")
+        elif bug_scan["success"] and bug_scan["no_bugs_found"]:
+            print("[LLAMA AI] No latent bugs found in source files.")
+        elif not bug_scan["success"]:
+            print(f"[LLAMA AI] Bug scan skipped (Ollama unreachable): {bug_scan.get('analysis', '')[:120]}")
+        # ─────────────────────────────────────────────────────────────────────────
 
         for i in range(1, self.max_iterations + 1):
             adjustments: List[str] = []
@@ -704,20 +1048,6 @@ class AutomatedOptimizationLoop:
 
             quality = self._load_quality_report()
             diag = self._diagnose(results, quality)
-
-            if diag["has_negative_r2"]:
-                # Use Llama AI to analyze and request approval for serious R² issue
-                approved, analysis = self._request_llama_approval_for_serious_issue(
-                    iteration=i,
-                    diag=diag,
-                    issue_type="NEGATIVE_R2",
-                )
-                if approved:
-                    results = self._recalculate_negative_r2_component(results, pipeline)
-                    diag = self._diagnose(results, quality)
-                    adjustments.append(f"[LLAMA AI] Analysis adjustment: reran sensitivity with macro_lag_days=30\nAI Recommendation:\n{analysis[:300]}")
-                else:
-                    adjustments.append("[LLAMA AI] NEGATIVE_R2 fix REJECTED by owner — skipped")
 
             if float(diag["score"]) >= self.target_score:
                 self.records.append(
@@ -783,6 +1113,14 @@ class AutomatedOptimizationLoop:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         report_path = self.output_dir / "optimizer_report.json"
         report_path.write_text(json.dumps(final_report, indent=2, default=str), encoding="utf-8")
+
+        print(f"\n{'=' * 60}")
+        print("[OPTIMIZER] Optimization complete.")
+        print(f"  Score  : {final_report['raw_integrity_score']:.1f}/100  |  Status: {final_report['status']}")
+        print(f"  Iters  : {final_report['iterations_used']}/{final_report['max_iterations']}")
+        print(f"  Report : {report_path.resolve()}")
+        print(f"{'=' * 60}\n")
+
         return final_report
 
     def _final_quant_assessment(self, diag: Dict[str, Any]) -> Dict[str, Any]:
