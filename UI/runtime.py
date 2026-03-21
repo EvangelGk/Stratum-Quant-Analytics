@@ -23,6 +23,13 @@ from UI.constants import (
 from UI.constants import UI_SNAPSHOT_PATH, USER_DATA_DIR
 from UI.helpers import read_json
 
+# Ensure src/ is on sys.path so runtime imports of pipeline modules resolve
+# both at static-analysis time and at runtime when runtime.py is imported
+# directly (e.g. in tests) before UI.constants has been imported.
+_SRC_PATH = str(ROOT / "src")
+if _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
+
 
 class StreamlitError(Exception):
     pass
@@ -240,10 +247,10 @@ def rerun_stress_test_only(
     target: str = "log_return",
 ) -> Dict[str, Any]:
     """Run stress test directly from existing Gold data without rerunning pipeline."""
-    from Fetchers.ProjectConfig import ProjectConfig
-    from Medallion.gold.AnalysisSuite.mixed_frequency import filter_to_ticker
-    from Medallion.gold.AnalysisSuite.stress_test import stress_test
-    from Medallion.gold.GoldLayer import GoldLayer
+    from src.Fetchers.ProjectConfig import ProjectConfig
+    from src.Medallion.gold.AnalysisSuite.mixed_frequency import filter_to_ticker
+    from src.Medallion.gold.AnalysisSuite.stress_test import stress_test
+    from src.Medallion.gold.GoldLayer import GoldLayer
 
     config = ProjectConfig.load_from_env()
     gold = GoldLayer(config)

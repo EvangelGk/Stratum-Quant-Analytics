@@ -747,6 +747,9 @@ def _render_stress_rerun_controls() -> None:
         help='Example: {"inflation": 0.03, "energy_index": 0.20}',
     )
 
+    last_key = "stress_rerun_last_result"
+    meta_key = "stress_rerun_last_meta"
+
     if st.button("Run Stress Test Now", type="primary", key="stress_rerun_btn"):
         try:
             parsed = json.loads(custom_shocks_raw) if custom_shocks_raw.strip() else {}
@@ -758,16 +761,31 @@ def _render_stress_rerun_controls() -> None:
             return
 
         try:
-            rerun_stress_test_only(
+            result = rerun_stress_test_only(
                 scenario_name=scenario_choice,
                 shock_map=shock_map,
                 ticker=ticker_choice or None,
                 target="log_return",
             )
-            st.success("Stress test re-ran successfully. Output refreshed.")
-            st.rerun()
+            st.session_state[last_key] = result
+            st.session_state[meta_key] = {
+                "scenario": scenario_choice,
+                "ticker": ticker_choice or "ALL",
+            }
+            st.success("Stress test ολοκληρώθηκε. Το αποτέλεσμα αποθηκεύτηκε και εμφανίζεται ακριβώς από κάτω.")
         except Exception as exc:
             st.error(f"Stress rerun failed: {exc}")
+
+    live_payload = st.session_state.get(last_key)
+    live_meta = st.session_state.get(meta_key, {})
+    if live_payload is not None:
+        st.markdown("---")
+        st.markdown("### 🎯 Live Stress Result")
+        c1, c2 = st.columns(2)
+        c1.info(f"Scenario: {str(live_meta.get('scenario', 'custom')).replace('_', ' ').title()}")
+        c2.info(f"Ticker scope: {live_meta.get('ticker', 'ALL')}")
+        st.caption("Το παρακάτω είναι το άμεσο αποτέλεσμα του τελευταίου rerun (χωρίς νέο pipeline run).")
+        _render_stress_payload(live_payload)
 
 
 def _render_stress_payload(value: object) -> bool:

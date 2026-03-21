@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import requests
 
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig, RunMode
@@ -24,6 +25,145 @@ class IterationRecord:
     score: float
     inconsistencies: List[str]
     adjustments: List[str]
+
+
+class LlamaQuantAnalyzer:
+    """AI-powered quantitative problem fixer using Llama 3.2 via Ollama.
+    
+    Analyzes diagnostic issues and proposes code solutions with human approval gate.
+    Only requests approval for serious, code-modifying problems.
+    """
+
+    OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
+    MODEL_NAME = "llama3.2:1b"
+
+    SYSTEM_PROMPT = """You are a Senior Quant Data Fixer AI Agent. Your role is to analyze financial data pipeline problems and recommend precise code fixes.
+
+INPUT FORMAT:
+- Task: [problem description from diagnostic]
+- Rules: Only suggest fixes for SERIOUS problems (negative R², data gaps, multicollinearity, drawdown >20%)
+- Context: [relevant metrics and diagnostics]
+
+OUTPUT FORMAT:
+Generate a technical report with EXACTLY these sections:
+
+---PROBLEM---
+[Clear explanation of the issue and why it matters]
+
+---ROOT_CAUSE---
+[Technical root cause analysis]
+
+---SOLUTION---
+[Precise, actionable solution]
+
+---CODE_CHANGES---
+[Exact Python code changes needed with line references]
+
+---APPROVAL_QUESTION---
+Do you approve this solution? (YES/NO)
+
+---
+Keep all explanations concise and technical. No sugar-coating."""
+
+    def __init__(self, timeout_seconds: int = 60):
+        self._timeout = timeout_seconds
+        self._verify_connection()
+
+    def _verify_connection(self) -> bool:
+        """Verify Ollama service is running and model is available."""
+        try:
+            response = requests.post(
+                self.OLLAMA_API_URL,
+                json={"model": self.MODEL_NAME, "prompt": "test", "stream": False},
+                timeout=5,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            print(f"[LLAMA] Warning: Could not connect to Ollama: {e}")
+            return False
+
+    def analyze_problem(
+        self, 
+        problem_description: str,
+        diagnostics: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Call Llama 3.2 to analyze problem and propose solution.
+        
+        Returns dict with 'analysis' (full text) and 'needs_approval' (bool).
+        """
+        context = self._format_context(diagnostics)
+        prompt = f"""{self.SYSTEM_PROMPT}
+
+TASK: {problem_description}
+
+CONTEXT:
+{context}
+
+Please provide your analysis and solution recommendation."""
+
+        try:
+            response = requests.post(
+                self.OLLAMA_API_URL,
+                json={
+                    "model": self.MODEL_NAME,
+                    "prompt": prompt,
+                    "stream": False,
+                    "temperature": 0.3,  # Lower temperature for consistency
+                },
+                timeout=self._timeout,
+            )
+            
+            if response.status_code == 200:
+                analysis_text = response.json().get("response", "")
+                needs_approval = "SERIOUS" in problem_description or any(
+                    keyword in analysis_text.upper()
+                    for keyword in ["CODE_CHANGE", "MODIFY", "ADJUST"]
+                )
+                return {
+                    "success": True,
+                    "analysis": analysis_text,
+                    "needs_approval": needs_approval,
+                }
+            else:
+                return {
+                    "success": False,
+                    "analysis": "Ollama service error",
+                    "needs_approval": False,
+                }
+        except requests.exceptions.Timeout:
+            return {
+                "success": False,
+                "analysis": "Llama analysis timeout",
+                "needs_approval": False,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "analysis": f"Error: {str(e)}",
+                "needs_approval": False,
+            }
+
+    def _format_context(self, diagnostics: Dict[str, Any]) -> str:
+        """Format diagnostics into readable context for Llama."""
+        lines = []
+        score = diagnostics.get("score", 0.0)
+        lines.append(f"Integrity Score: {score}/100")
+        
+        inconsistencies = diagnostics.get("inconsistencies", [])
+        if inconsistencies:
+            lines.append("Issues detected:")
+            for issue in inconsistencies[:5]:  # Top 5 issues
+                lines.append(f"  - {issue}")
+        
+        if "var_cvar" in diagnostics:
+            var_cvar = diagnostics["var_cvar"]
+            if var_cvar:
+                lines.append(
+                    f"Risk metrics: VaR95={var_cvar.get('var_95')}, "
+                    f"CVaR95={var_cvar.get('cvar_95')}"
+                )
+        
+        return "\n".join(lines)
 
 
 class ApprovalGateway:
@@ -43,11 +183,12 @@ class ApprovalGateway:
 
     QUEUE_FILE = "approval_queue.json"
 
-    def __init__(self, base_output_path: Path, timeout_seconds: int = 120) -> None:
+    def __init__(self, base_output_path: Path, timeout_seconds: int = 120, force_non_interactive: bool = False) -> None:
         self._dir = base_output_path / ".optimizer"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._queue_path = self._dir / self.QUEUE_FILE
         self._timeout = timeout_seconds
+        self._force_non_interactive = force_non_interactive
 
     def request(
         self,
@@ -55,7 +196,7 @@ class ApprovalGateway:
         description: str,
         details: Dict[str, Any],
     ) -> bool:
-        """Return True if the owner approves; False if rejected or timed-out."""
+        """Return True if the owner approves (YES); False if rejected (NO) or timed-out."""
         entry: Dict[str, Any] = {
             "action_id": action_id,
             "description": description,
@@ -67,11 +208,12 @@ class ApprovalGateway:
         self._queue_path.write_text(
             json.dumps(entry, indent=2, default=str), encoding="utf-8"
         )
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            approved = self._prompt_interactive(description, details)
-        else:
+        # Use file polling if forced non-interactive OR if running in non-interactive environment
+        if self._force_non_interactive or not (sys.stdin.isatty() and sys.stdout.isatty()):
             approved = self._poll_file_approval()
-        entry["status"] = "approved" if approved else "rejected"
+        else:
+            approved = self._prompt_interactive(description, details)
+        entry["status"] = "YES" if approved else "NO"
         entry["approved_at"] = datetime.utcnow().isoformat() + "Z"
         self._queue_path.write_text(
             json.dumps(entry, indent=2, default=str), encoding="utf-8"
@@ -80,26 +222,26 @@ class ApprovalGateway:
 
     def _prompt_interactive(self, description: str, details: Dict[str, Any]) -> bool:
         print("\n" + "=" * 60)
-        print("[OPTIMIZER] \u26a0\ufe0f  APPROVAL REQUIRED BEFORE CODE MUTATION")
+        print("[OPTIMIZER] ⚠️  APPROVAL REQUIRED BEFORE CODE MUTATION")
         print(f"  Action : {description}")
         print(f"  Details: {json.dumps(details, indent=4, default=str)}")
         print("=" * 60)
         try:
-            answer = input("  Approve this change? (y/n): ").strip().lower()
+            answer = input("  Approve this change? (YES/NO): ").strip().upper()
         except EOFError:
-            answer = "n"
-        return answer.startswith("y")
+            answer = "NO"
+        return answer == "YES"
 
     def _poll_file_approval(self) -> bool:
-        """Non-interactive: owner edits queue file status to 'approved' or 'rejected'."""
+        """Non-interactive: owner edits queue file status to 'YES' or 'NO'."""
         deadline = time.time() + self._timeout
         while time.time() < deadline:
             try:
                 data = json.loads(self._queue_path.read_text(encoding="utf-8"))
                 status = data.get("status", "pending")
-                if status == "approved":
+                if status == "YES":
                     return True
-                if status == "rejected":
+                if status == "NO":
                     return False
             except Exception:
                 pass
@@ -120,12 +262,14 @@ class AutomatedOptimizationLoop:
     def __init__(
         self,
         target_score: float = 94.0,
-        max_iterations: int = 10,
+        max_iterations: int = 8,
         user_id: Optional[str] = None,
+        scheduled: bool = False,
     ) -> None:
         self.target_score = float(target_score)
         self.max_iterations = int(max_iterations)
         self.user_id = user_id or (os.getenv("DATA_USER_ID", "default").strip() or "default")
+        self.scheduled = scheduled  # True if running from scheduler (file-based approvals)
 
         self.start_date_override: Optional[str] = None
         self.force_macro_lag_30: bool = False
@@ -134,6 +278,8 @@ class AutomatedOptimizationLoop:
         # Approval gateway is initialised lazily on first use (output_dir
         # must exist first).  Stored as None until _ensure_approval_gateway.
         self._approval: Optional[ApprovalGateway] = None
+        # Initialize Llama analyzer
+        self._llama: LlamaQuantAnalyzer = LlamaQuantAnalyzer(timeout_seconds=120)
 
     def _ensure_approval_gateway(self) -> ApprovalGateway:
         """Lazily create the approval gateway so output_dir exists first."""
@@ -141,6 +287,7 @@ class AutomatedOptimizationLoop:
             self._approval = ApprovalGateway(
                 base_output_path=self.output_dir.parent,
                 timeout_seconds=120,
+                force_non_interactive=self.scheduled,
             )
         return self._approval
 
@@ -491,6 +638,59 @@ class AutomatedOptimizationLoop:
             "elasticity_cv": round(cv, 4) if cv is not None else None,
         }
 
+    def _request_llama_approval_for_serious_issue(
+        self,
+        iteration: int,
+        diag: Dict[str, Any],
+        issue_type: str,
+    ) -> tuple[bool, str]:
+        """Use Llama to analyze serious problems and request approval.
+        
+        Returns (approved, adjustment_description).
+        Only requests approval if Llama analysis confirms this is a serious issue.
+        """
+        # Only analyze truly SERIOUS problems
+        serious_issues = [
+            "NEGATIVE_R2",
+            "DATA_GAPS",
+            "EXCESS_DRAWDOWN",
+            "MULTICOLLINEARITY",
+            "REGIME_INSTABILITY",
+        ]
+        
+        is_serious = any(
+            serious in issue_type 
+            for serious in serious_issues
+        )
+        
+        if not is_serious:
+            return False, f"Skipped: {issue_type} is not a serious problem requiring approval"
+        
+        # Call Llama for analysis
+        problem_text = f"SERIOUS: {issue_type} found. Score: {diag['score']}/100. Issues: {diag['inconsistencies'][:3]}"
+        llama_result = self._llama.analyze_problem(problem_text, diag)
+        
+        if not llama_result["success"]:
+            return False, f"Llama analysis failed: {llama_result['analysis']}"
+        
+        analysis = llama_result["analysis"]
+        
+        # Extract problem and solution from Llama's response
+        gate = self._ensure_approval_gateway()
+        approved = gate.request(
+            action_id=f"iter{iteration}_serious_{issue_type}",
+            description=f"[LLAMA AI] Serious problem detected: {issue_type}",
+            details={
+                "iteration": iteration,
+                "issue_type": issue_type,
+                "current_score": diag["score"],
+                "inconsistencies": diag["inconsistencies"],
+                "llama_analysis": analysis[:500],  # Truncate for brevity
+            },
+        )
+        
+        return approved, analysis
+
     def run(self) -> Dict[str, Any]:
         final_results: Dict[str, Any] = {}
         final_diag: Dict[str, Any] = {"score": 0.0, "inconsistencies": []}
@@ -506,21 +706,18 @@ class AutomatedOptimizationLoop:
             diag = self._diagnose(results, quality)
 
             if diag["has_negative_r2"]:
-                approved = gate.request(
-                    action_id=f"iter{i}_macro_lag30",
-                    description="Rerun sensitivity regression with macro_lag_days=30 to fix negative R²",
-                    details={
-                        "iteration": i,
-                        "current_score": diag["score"],
-                        "inconsistencies": diag["inconsistencies"],
-                    },
+                # Use Llama AI to analyze and request approval for serious R² issue
+                approved, analysis = self._request_llama_approval_for_serious_issue(
+                    iteration=i,
+                    diag=diag,
+                    issue_type="NEGATIVE_R2",
                 )
                 if approved:
                     results = self._recalculate_negative_r2_component(results, pipeline)
                     diag = self._diagnose(results, quality)
-                    adjustments.append("Analysis adjustment: reran sensitivity with macro_lag_days=30")
+                    adjustments.append(f"[LLAMA AI] Analysis adjustment: reran sensitivity with macro_lag_days=30\nAI Recommendation:\n{analysis[:300]}")
                 else:
-                    adjustments.append("Analysis adjustment: macro_lag_days=30 REJECTED by owner — skipped")
+                    adjustments.append("[LLAMA AI] NEGATIVE_R2 fix REJECTED by owner — skipped")
 
             if float(diag["score"]) >= self.target_score:
                 self.records.append(
@@ -536,41 +733,29 @@ class AutomatedOptimizationLoop:
                 break
 
             if diag["has_data_gaps"]:
-                approved = gate.request(
-                    action_id=f"iter{i}_extend_start_date",
-                    description="Extend start_date by 365 days to fill missing macro data gaps",
-                    details={
-                        "iteration": i,
-                        "current_score": diag["score"],
-                        "current_start_date": config.start_date,
-                        "proposed_start_date": (
-                            datetime.strptime(config.start_date, "%Y-%m-%d")
-                            - timedelta(days=365)
-                        ).strftime("%Y-%m-%d"),
-                    },
+                # Use Llama AI to analyze and request approval for serious data gap issue
+                approved, analysis = self._request_llama_approval_for_serious_issue(
+                    iteration=i,
+                    diag=diag,
+                    issue_type="DATA_GAPS",
                 )
                 if approved:
-                    adjustments.append(self._apply_fetcher_adjustment(config))
+                    adjustments.append(f"[LLAMA AI] Fetchers adjustment: {self._apply_fetcher_adjustment(config)}\nAI Recommendation:\n{analysis[:300]}")
                 else:
-                    adjustments.append("Fetchers adjustment: start_date extension REJECTED by owner — skipped")
+                    adjustments.append("[LLAMA AI] DATA_GAPS fix REJECTED by owner — skipped")
 
             if float(diag.get("outlier_ratio", 0.0)) > 0.05:
-                approved = gate.request(
-                    action_id=f"iter{i}_relax_zscore",
-                    description="Relax Silver z-score outlier thresholds by +0.5 to reduce clipping ratio",
-                    details={
-                        "iteration": i,
-                        "current_score": diag["score"],
-                        "outlier_ratio": diag.get("outlier_ratio"),
-                        "zscore_relax_steps_so_far": self.zscore_relax_steps,
-                        "delta": 0.5,
-                    },
+                # Use Llama AI to analyze and request approval for outlier issue
+                approved, analysis = self._request_llama_approval_for_serious_issue(
+                    iteration=i,
+                    diag=diag,
+                    issue_type="OUTLIERS",
                 )
                 if approved:
                     self._apply_pipeline_outlier_relaxation(delta=0.5)
-                    adjustments.append("Pipeline adjustment: relaxed Silver z-score thresholds by +0.5")
+                    adjustments.append(f"[LLAMA AI] Pipeline adjustment: relaxed Silver z-score thresholds by +0.5\nAI Recommendation:\n{analysis[:300]}")
                 else:
-                    adjustments.append("Pipeline adjustment: z-score relaxation REJECTED by owner — skipped")
+                    adjustments.append("[LLAMA AI] Outlier relaxation REJECTED by owner — skipped")
 
             self.records.append(
                 IterationRecord(
