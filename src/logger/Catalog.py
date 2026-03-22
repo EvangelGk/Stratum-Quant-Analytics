@@ -1,4 +1,4 @@
-import json
+﻿import json
 import logging
 import threading
 import time
@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 class ApplicationCatalog:
     """
-    Comprehensive logging and metrics catalog for the entire Scenario Planner
+    Comprehensive logging and metrics catalog for the entire STRATUM QUANT ANALYTICS
     application.
     Tracks all operations, data flows, analyses, and system metrics.
 
@@ -511,3 +511,4 @@ class ApplicationCatalog:
 
 # Global catalog instance
 catalog = ApplicationCatalog()
+

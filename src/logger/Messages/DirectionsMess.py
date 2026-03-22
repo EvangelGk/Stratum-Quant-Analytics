@@ -1,9 +1,9 @@
-# Directions Messages
+﻿# Directions Messages
 # Live step-by-step guidance messages that appear during application execution
 
 APPLICATION_TITLE = """
 =====================================
-   SCENARIO PLANNER APPLICATION
+   STRATUM QUANT ANALYTICS APPLICATION
 =====================================
 A comprehensive financial data pipeline for scenario planning and risk analysis.
 """
@@ -11,7 +11,7 @@ A comprehensive financial data pipeline for scenario planning and risk analysis.
 # Live Guidance Messages - Appear in real-time during execution
 
 LIVE_STEP_0_WELCOME = """
-WELCOME TO SCENARIO PLANNER!
+WELCOME TO STRATUM QUANT ANALYTICS!
 This application will automatically:
 * Fetch financial data from multiple sources
 * Process and clean the data
@@ -165,7 +165,7 @@ EXECUTION SUMMARY:
 3. Open USER_GUIDE.md for interpretation help
 4. Run again with different parameters if needed
 
-Thank you for using Scenario Planner!
+Thank you for using STRATUM QUANT ANALYTICS!
 """
 
 # Error Guidance Messages
@@ -304,3 +304,4 @@ AVAILABLE ANALYSES:
 
 Each analysis provides specific insights for scenario planning.
 """
+

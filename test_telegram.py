@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """
-Quick verification tool — run this before your next optimizer run to confirm
+Quick verification tool β€” run this before your next optimizer run to confirm
 that Telegram notifications are working correctly.
 
 Usage:
@@ -32,7 +32,7 @@ try:
         print(f"[WARN] No .env file found at {env_file}")
         print("       Create it with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
 except ImportError:
-    print("[WARN] python-dotenv not installed — reading from system environment only")
+    print("[WARN] python-dotenv not installed β€” reading from system environment only")
 
 import requests
 
@@ -46,8 +46,8 @@ print("=" * 50)
 
 if not bot_token:
     print("[FAIL] TELEGRAM_BOT_TOKEN is empty in .env")
-    print("       → Open .env and paste the token from @BotFather on Telegram")
-    print("       → The token looks like:  123456789:ABCDEFGhijklmnopQRSTUVwxyz")
+    print("       β†’ Open .env and paste the token from @BotFather on Telegram")
+    print("       β†’ The token looks like:  123456789:ABCDEFGhijklmnopQRSTUVwxyz")
     sys.exit(1)
 else:
     masked = bot_token[:6] + "..." + bot_token[-4:]
@@ -55,7 +55,7 @@ else:
 
 if not chat_id:
     print("[FAIL] TELEGRAM_CHAT_ID is empty in .env")
-    print(f"       → Message your bot in Telegram, then open:")
+    print(f"       β†’ Message your bot in Telegram, then open:")
     print(f"         https://api.telegram.org/bot{bot_token}/getUpdates")
     print('         Find: "chat": {"id": YOUR_NUMBER}  and paste that number')
     sys.exit(1)
@@ -71,7 +71,7 @@ try:
         json={
             "chat_id": chat_id,
             "text": (
-                "✅ <b>Scenario Planner — Telegram test OK</b>\n"
+                "β… <b>STRATUM QUANT ANALYTICS β€” Telegram test OK</b>\n"
                 "Notifications are configured correctly.\n"
                 "You will receive optimizer approval requests here."
             ),
@@ -104,3 +104,4 @@ print()
 print("=" * 50)
 print("All checks passed. Notifications will work for the optimizer.")
 print("=" * 50)
+

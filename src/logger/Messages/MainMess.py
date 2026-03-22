@@ -1,13 +1,13 @@
-# Main Application Messages
+﻿# Main Application Messages
 # Messages for main script execution and user interaction
 
-APPLICATION_TITLE = "=== Scenario Planner ==="
+APPLICATION_TITLE = "=== STRATUM QUANT ANALYTICS ==="
 
 QUICK_START = (
     "Quick start: configure API keys, run the pipeline, then review output/ and logs/."
 )
 
-MAIN_START = "Starting Scenario Planner application in {mode} mode."
+MAIN_START = "Starting STRATUM QUANT ANALYTICS application in {mode} mode."
 
 MAIN_CONFIG_LOADED = "Configuration loaded successfully. Using {config_details}."
 
@@ -35,7 +35,7 @@ MAIN_COMPLETION = (
 
 # User guidance messages
 MAIN_USER_GUIDE = """
-Scenario Planner Usage Guide:
+STRATUM QUANT ANALYTICS Usage Guide:
 1. Ensure you have API keys for FRED and other data sources
 2. Run the application - it will automatically fetch, process, and analyze data
 3. Check the output/ directory for analysis results
@@ -66,7 +66,7 @@ Correlation Matrix Analysis Results:
 ANALYSIS_ELASTICITY = """
 Elasticity Analysis Results:
 - Measures how much asset returns change with macro factor changes
-- Formula: %ΔAsset / %ΔMacro Factor
+- Formula: %Ξ”Asset / %Ξ”Macro Factor
 - Values >1: Asset is elastic (volatile to macro changes)
 - Values <1: Asset is inelastic (stable despite macro changes)
 - Current elasticity: {elasticity_value}
@@ -124,3 +124,4 @@ Auto ML Regression Results:
 - Automated model comparison completed
 - Use for predictive modeling and factor analysis
 """
+

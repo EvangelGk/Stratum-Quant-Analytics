@@ -1,4 +1,4 @@
-@REM ========================================================================
+﻿@REM ========================================================================
 @REM Automated Task Scheduler Setup Script for Daily Optimizer
 @REM 
 @REM This script automatically creates a Windows Task Scheduler entry
@@ -13,14 +13,14 @@
 setlocal enabledelayedexpansion
 
 echo ========================================================================
-echo SCENARIO PLANNER - AUTOMATED SCHEDULER SETUP
+echo STRATUM QUANT ANALYTICS - AUTOMATED SCHEDULER SETUP
 echo ========================================================================
 echo.
 
 REM Define paths
-set PROJECT_DIR=C:\Users\liagk\Project\scenario-planner
+set PROJECT_DIR=C:\Users\liagk\Project\Stratum-Quant-Analytics
 set SCRIPT_PATH=%PROJECT_DIR%\run_optimizer_daily.bat
-set TASK_NAME=Scenario-Planner-Daily-Optimizer-User
+set TASK_NAME=Stratum-Quant-Analytics-Daily-Optimizer-User
 
 echo [INFO] Creating scheduled task...
 echo        Task: %TASK_NAME%
@@ -69,7 +69,7 @@ if %errorlevel% equ 0 (
     echo ========================================================================
     echo.
     echo Run in PowerShell:
-    echo   cd C:\Users\liagk\Project\scenario-planner
+    echo   cd C:\Users\liagk\Project\Stratum-Quant-Analytics
     echo   python src\scheduler.py --once
     echo.
     echo ========================================================================
@@ -87,3 +87,4 @@ if %errorlevel% equ 0 (
 :end
 echo.
 pause
+

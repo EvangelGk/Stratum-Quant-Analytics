@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import json
@@ -245,7 +245,7 @@ def build_executive_report_html() -> str:
                         oos = (report_val.get("out_of_sample") or {}).get("r2")
                         risk = report_val.get("model_risk_score")
                         if isinstance(oos, (int, float)) and isinstance(risk, (int, float)):
-                            highlight = f"OOS R²={oos:.4f}, Risk={risk:.3f}"
+                            highlight = f"OOS RΒ²={oos:.4f}, Risk={risk:.3f}"
                     elif key == "governance_gate":
                         passed = report_val.get("passed")
                         severity = report_val.get("severity")
@@ -289,7 +289,7 @@ def build_executive_report_html() -> str:
 <html>
     <head>
         <meta charset='utf-8'>
-        <title>Scenario Planner Executive Report</title>
+        <title>STRATUM QUANT ANALYTICS Executive Report</title>
         <style>
             body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
             .page {{ max-width: 980px; margin: 24px auto; padding: 0 12px; }}
@@ -308,7 +308,7 @@ def build_executive_report_html() -> str:
     <body>
         <div class='page'>
             <div class='hero'>
-                <h1>Scenario Planner Executive Report</h1>
+                <h1>STRATUM QUANT ANALYTICS Executive Report</h1>
                 <div>Generated at: <span class='mono'>{datetime.now().isoformat()}</span></div>
             </div>
 
@@ -344,7 +344,7 @@ def build_executive_report_text() -> str:
         summary = read_json(OUTPUT_DIR / "analysis_results.json")
         keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
         lines = [
-                "Scenario Planner - Human Report Snapshot",
+                "STRATUM QUANT ANALYTICS - Human Report Snapshot",
                 f"Generated: {datetime.now().isoformat()}",
                 "",
                 f"Data Health: {health['score']}/100 ({health['status']})",
@@ -432,3 +432,4 @@ def correlation_strength_from_output() -> float | None:
         return float(curr_df[numeric_cols].abs().mean().mean())
     except Exception:
         return None
+

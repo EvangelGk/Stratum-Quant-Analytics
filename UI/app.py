@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
@@ -60,11 +60,11 @@ def _render_api_keys_status() -> None:
 
     connected, missing = _status_snapshot()
 
-    st.markdown("### 🔐 API Keys Status")
+    st.markdown("### π” API Keys Status")
     if not missing:
-        st.success("🟢 Connected: όλα τα αναγκαία API keys είναι διαθέσιμα")
+        st.success("πΆ Connected: ΟΞ»Ξ± Ο„Ξ± Ξ±Ξ½Ξ±Ξ³ΞΊΞ±Ξ―Ξ± API keys ΞµΞ―Ξ½Ξ±ΞΉ Ξ΄ΞΉΞ±ΞΈΞ­ΟƒΞΉΞΌΞ±")
     else:
-        st.error("🔴 Missing: λείπει 1 ή περισσότερα αναγκαία API keys")
+        st.error("π”΄ Missing: Ξ»ΞµΞ―Ο€ΞµΞΉ 1 Ξ® Ο€ΞµΟΞΉΟƒΟƒΟΟ„ΞµΟΞ± Ξ±Ξ½Ξ±Ξ³ΞΊΞ±Ξ―Ξ± API keys")
 
     st.caption(f"Connected ({len(connected)}/2): {', '.join(connected) if connected else 'none'}")
     if missing:
@@ -90,7 +90,7 @@ def _render_sidebar() -> str:
 
         st.header(" Pipeline Execution")
 
-        with st.expander("💬 Live guidance from logger messages", expanded=False):
+        with st.expander("π’¬ Live guidance from logger messages", expanded=False):
             if DIRECTIONS_MOD is not None:
                 render_logger_message(
                     "Welcome",
@@ -115,7 +115,7 @@ def _render_sidebar() -> str:
         )
 
         if st.button(
-            "🚀 Run Full Analysis",
+            "π€ Run Full Analysis",
             width="stretch",
             type="primary",
             disabled=not perms["can_run"],
@@ -139,7 +139,7 @@ def _render_sidebar() -> str:
         st.info("Full Analysis: complete dataset and all analyses. Typical runtime: 4-10 minutes (usually around 6).")
 
         st.markdown("---")
-        st.markdown("### 🧹 History Control")
+        st.markdown("### π§Ή History Control")
         can_delete = role == "Admin"
         confirm = st.checkbox(
             "I understand this deletes generated runs, outputs, user data, and session logs",
@@ -147,7 +147,7 @@ def _render_sidebar() -> str:
             disabled=not can_delete,
         )
         if st.button(
-            "🗑️ Delete All Run History",
+            "π—‘οΈ Delete All Run History",
             type="secondary",
             width="stretch",
             disabled=not can_delete or not confirm,
@@ -165,7 +165,7 @@ def _render_sidebar() -> str:
             )
 
         # ----------------------------------------------------------------
-        # AI Copilot — always-present mini-chat in the sidebar.
+        # AI Copilot β€” always-present mini-chat in the sidebar.
         # Status is checked once per session; heavy work only on user action.
         # ----------------------------------------------------------------
         st.markdown("---")
@@ -179,7 +179,7 @@ def _render_sidebar() -> str:
         import os as _os
         if _os.getenv("OPTIMIZER_OWNER_MODE", "").strip() == "1":
             st.markdown("---")
-            st.markdown("### 🔬 Automated Optimizer")
+            st.markdown("### π”¬ Automated Optimizer")
             st.caption(
                 "Owner-only: runs the self-correcting 10-iteration optimization loop. "
                 "Each code mutation requires your approval via terminal prompt or "
@@ -206,7 +206,7 @@ def _render_sidebar() -> str:
                         st.caption("Could not parse optimizer report.")
 
             if st.button(
-                "📈 Run Optimizer",
+                "π“ Run Optimizer",
                 key="run_optimizer_btn",
                 type="secondary",
                 width="stretch",
@@ -230,8 +230,8 @@ def _render_sidebar() -> str:
 
 def main() -> None:
     st.set_page_config(
-        page_title=" Welcome to Scenario Planner!",
-        page_icon="🌟",
+        page_title=" Welcome to STRATUM QUANT ANALYTICS!",
+        page_icon="π",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -240,7 +240,7 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-            <h1>Scenario Planner User Platform</h1>
+            <h1>STRATUM QUANT ANALYTICS User Platform</h1>
             <p>Pipeline orchestration, audit controls, metrics,
             analytics and many more to discover. All in one place! </p>
         </div>
@@ -252,50 +252,50 @@ def main() -> None:
     show_kpis()
 
     pages = [
-        "🤖 Quantos Assistant",
-        "🩺 Health & Alerts",
-        "🧪 Auditor",
-        "📊 Run Comparison",
-        "🎛️ Scenario Builder",
-        "🧠 Explainability",
-        "🧾 Reports",
-        "⚙️ Ops",
-        "🗂️ Data",
-        "📈 Analytics",
-        "📦 Output",
-        "🛡️ Governance",
-        "📜 Logs",
+        "π¤– Quantos Assistant",
+        "π©Ί Health & Alerts",
+        "π§ Auditor",
+        "π“ Run Comparison",
+        "π›οΈ Scenario Builder",
+        "π§  Explainability",
+        "π§Ύ Reports",
+        "β™οΈ Ops",
+        "π—‚οΈ Data",
+        "π“ Analytics",
+        "π“¦ Output",
+        "π›΅οΈ Governance",
+        "π“ Logs",
     ]
-    selected_page = st.segmented_control("View", options=pages, default="🩺 Health & Alerts")
+    selected_page = st.segmented_control("View", options=pages, default="π©Ί Health & Alerts")
     # Track active page in session state so sidebar AI and chips know context
     if selected_page:
         st.session_state["selected_page"] = selected_page
 
-    if selected_page == "🤖 Quantos Assistant":
+    if selected_page == "π¤– Quantos Assistant":
         show_ai_assistant_tab()
-    elif selected_page == "🩺 Health & Alerts":
+    elif selected_page == "π©Ί Health & Alerts":
         show_health_alerts_tab()
-    elif selected_page == "🧪 Auditor":
+    elif selected_page == "π§ Auditor":
         show_auditor_tab()
-    elif selected_page == "📊 Run Comparison":
+    elif selected_page == "π“ Run Comparison":
         show_run_comparison_tab()
-    elif selected_page == "🎛️ Scenario Builder":
+    elif selected_page == "π›οΈ Scenario Builder":
         show_scenario_builder_tab()
-    elif selected_page == "🧠 Explainability":
+    elif selected_page == "π§  Explainability":
         show_explainability_tab()
-    elif selected_page == "🧾 Reports":
+    elif selected_page == "π§Ύ Reports":
         show_reports_tab(role)
-    elif selected_page == "⚙️ Ops":
+    elif selected_page == "β™οΈ Ops":
         show_ops_tab(role)
-    elif selected_page == "🗂️ Data":
+    elif selected_page == "π—‚οΈ Data":
         show_data_tab()
-    elif selected_page == "📈 Analytics":
+    elif selected_page == "π“ Analytics":
         show_analytics_tab()
-    elif selected_page == "📦 Output":
+    elif selected_page == "π“¦ Output":
         show_output_tab()
-    elif selected_page == "🛡️ Governance":
+    elif selected_page == "π›΅οΈ Governance":
         show_governance_tab()
-    elif selected_page == "📜 Logs":
+    elif selected_page == "π“ Logs":
         show_logs_tab()
 
     # Render footer with license attribution
@@ -323,7 +323,7 @@ def _render_footer() -> None:
         }
         </style>
         <div class="copyright-fixed">
-            CC BY-NC-ND 4.0 © 2026 EvangelGK. All Rights Reserved
+            CC BY-NC-ND 4.0 Β© 2026 EvangelGK. All Rights Reserved
         </div>
         """,
         unsafe_allow_html=True,
@@ -332,3 +332,4 @@ def _render_footer() -> None:
 
 if __name__ == "__main__":
     main()
+

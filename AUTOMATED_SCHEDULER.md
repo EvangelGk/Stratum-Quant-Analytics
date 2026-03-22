@@ -1,4 +1,4 @@
-# Automated Daily Optimizer with Scheduled Execution
+﻿# Automated Daily Optimizer with Scheduled Execution
 
 ## Overview
 
@@ -9,37 +9,37 @@ The optimizer now runs **automatically every day** without requiring you to call
 ### The Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ [DAILY 2:00 AM] Windows Task Scheduler runs               │
-│ run_optimizer_daily.bat                                      │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Python scheduler.py --once                                  │
-│ Runs optimizer with scheduled=True                          │
-├─────────────────────────────────────────────────────────────┤
-│ Iteration 1: Diagnoses problems...                         │
-│   └─ SERIOUS ISSUE FOUND!                                   │
-│      Writes to: output/default/.optimizer/approval_queue.json
-│      Status: "pending"                                      │
-│      Waits for your approval...                             │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-                   ▼
-         ┌─────────────────────┐
-         │ YOU (at your leisure)│
-         │ Edit approval file  │
-         │ Set status: "YES"   │
-         │ Submit form         │
-         └──────────┬──────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Scheduler detects change                                    │
-│ Continues optimization with approved fix                    │
-│ Next iterations proceed automatically                       │
-└─────────────────────────────────────────────────────────────┘
+β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+β”‚ [DAILY 2:00 AM] Windows Task Scheduler runs               β”‚
+β”‚ run_optimizer_daily.bat                                      β”‚
+β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+                   β”‚
+                   β–Ό
+β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+β”‚ Python scheduler.py --once                                  β”‚
+β”‚ Runs optimizer with scheduled=True                          β”‚
+β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¤
+β”‚ Iteration 1: Diagnoses problems...                         β”‚
+β”‚   β””β”€ SERIOUS ISSUE FOUND!                                   β”‚
+β”‚      Writes to: output/default/.optimizer/approval_queue.json
+β”‚      Status: "pending"                                      β”‚
+β”‚      Waits for your approval...                             β”‚
+β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+                   β”‚
+                   β–Ό
+         β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+         β”‚ YOU (at your leisure)β”‚
+         β”‚ Edit approval file  β”‚
+         β”‚ Set status: "YES"   β”‚
+         β”‚ Submit form         β”‚
+         β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+                    β”‚
+                    β–Ό
+β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+β”‚ Scheduler detects change                                    β”‚
+β”‚ Continues optimization with approved fix                    β”‚
+β”‚ Next iterations proceed automatically                       β”‚
+β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
 ```
 
 ## Installation (Windows Task Scheduler)
@@ -47,32 +47,32 @@ The optimizer now runs **automatically every day** without requiring you to call
 ### Step 1: Open Task Scheduler
 
 ```
-Windows Key + R → taskschd.msc → Enter
+Windows Key + R β†’ taskschd.msc β†’ Enter
 ```
 
 ### Step 2: Create New Task
 
-1. **Right-click** on "Task Scheduler Library" → **Create Basic Task**
+1. **Right-click** on "Task Scheduler Library" β†’ **Create Basic Task**
 2. Fill in details:
-   - **Name**: `Daily Scenario Planner Optimizer`
+   - **Name**: `Daily STRATUM QUANT ANALYTICS Optimizer`
    - **Description**: `Automated daily optimization with file-based approvals`
    - **Check**: "Run whether user is logged in or not"
    - **Check**: "Run with highest privileges" (if needed for network access)
 
 ### Step 3: Set Trigger
 
-1. Click **Triggers** tab → **New**
+1. Click **Triggers** tab β†’ **New**
 2. Choose: **Daily**
 3. Set time: **02:00 AM** (or your preferred time)
 4. Click OK
 
 ### Step 4: Set Action
 
-1. Click **Actions** tab → **New**
+1. Click **Actions** tab β†’ **New**
 2. **Action**: "Start a program"
 3. **Program/script**: 
    ```
-   C:\Users\liagk\Project\scenario-planner\run_optimizer_daily.bat
+   C:\Users\liagk\Project\Stratum-Quant-Analytics\run_optimizer_daily.bat
    ```
 4. **Start in**: (leave empty)
 5. Click OK
@@ -81,8 +81,8 @@ Windows Key + R → taskschd.msc → Enter
 
 1. Click **Conditions** tab
 2. **Power**: 
-   - ✓ "Start the task only if the computer is on AC power" (uncheck if laptop)
-   - ✓ "Stop if the computer switches to battery power" (uncheck if laptop)
+   - β“ "Start the task only if the computer is on AC power" (uncheck if laptop)
+   - β“ "Stop if the computer switches to battery power" (uncheck if laptop)
 3. Click OK
 
 ### Step 6: Save
@@ -107,7 +107,7 @@ The scheduler will write approval requests like this:
     "iteration": 1,
     "issue_type": "NEGATIVE_R2",
     "current_score": 82.5,
-    "llama_analysis": "---PROBLEM---\nThe out-of-sample R² is negative..."
+    "llama_analysis": "---PROBLEM---\nThe out-of-sample RΒ² is negative..."
   },
   "status": "pending",
   "requested_at": "2026-03-21T02:15:30.123456Z",
@@ -118,7 +118,7 @@ The scheduler will write approval requests like this:
 ### To Approve (or Reject)
 
 #### Option A: Edit File Directly (Recommended)
-1. Open: `C:\Users\liagk\Project\scenario-planner\output\default\.optimizer\approval_queue.json`
+1. Open: `C:\Users\liagk\Project\Stratum-Quant-Analytics\output\default\.optimizer\approval_queue.json`
 2. Change line: `"status": "pending"` to `"status": "YES"` or `"status": "NO"`
 3. **Save file** (Ctrl+S)
 4. Scheduler detects change immediately (polls every 2 seconds)
@@ -141,12 +141,12 @@ If you want to run the optimizer immediately (without waiting for scheduled time
 
 ### Interactive Mode (Manual with Terminal Prompts)
 ```bash
-cd C:\Users\liagk\Project\scenario-planner
+cd C:\Users\liagk\Project\Stratum-Quant-Analytics
 python src/optimizer.py --target-score 94.0
 ```
 When issues are found, the system prompts you in terminal:
 ```
-[OPTIMIZER] ⚠️  APPROVAL REQUIRED BEFORE CODE MUTATION
+[OPTIMIZER] β οΈ  APPROVAL REQUIRED BEFORE CODE MUTATION
   Approve this change? (YES/NO): YES
 ```
 
@@ -217,8 +217,8 @@ REM "%PYTHON_EXE%" "%SCHEDULER_SCRIPT%" --interval 24 --user-id "%USER_ID%"
 ### Change Scheduled Time
 
 1. Open Task Scheduler
-2. Find "Daily Scenario Planner Optimizer"
-3. Right-click → **Edit**
+2. Find "Daily STRATUM QUANT ANALYTICS Optimizer"
+3. Right-click β†’ **Edit**
 4. Click **Triggers** tab
 5. Double-click the trigger
 6. Change **Start time** to your preferred hour
@@ -226,7 +226,7 @@ REM "%PYTHON_EXE%" "%SCHEDULER_SCRIPT%" --interval 24 --user-id "%USER_ID%"
 ### Run at Startup Instead of Daily
 
 1. In Task Scheduler, edit the task
-2. Click **Triggers** → **Edit**
+2. Click **Triggers** β†’ **Edit**
 3. Change from **Daily** to **At startup**
 4. Click OK
 
@@ -293,9 +293,10 @@ else:
 
 ## Next Steps
 
-1. ✓ IP address changed to `127.0.0.1:11434`
-2. ✓ Scheduler created and tested
+1. β“ IP address changed to `127.0.0.1:11434`
+2. β“ Scheduler created and tested
 3. **Install task in Windows Task Scheduler** (see steps above)
 4. Monitor logs daily
 5. Respond to approvals as needed
+
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
@@ -57,7 +57,7 @@ class LlamaQuantAnalyzer:
         "Medallion/MedallionPipeline.py",
     ]
 
-    # Maps diagnostic issue types → relevant source files to include in prompt
+    # Maps diagnostic issue types β†’ relevant source files to include in prompt
     ISSUE_FILE_MAP: Dict[str, List[str]] = {
         "NEGATIVE_R2":        ["Medallion/gold/AnalysisSuite/sensitivity_reg.py",
                                 "Medallion/gold/AnalysisSuite/governance.py"],
@@ -115,7 +115,7 @@ class LlamaQuantAnalyzer:
         "Fetchers/WorldBankFetcher.py",
     ]
 
-    SYSTEM_PROMPT = """You are Quantos, a Senior Quant Data Fixer agent embedded in a financial scenario-planner pipeline.
+    SYSTEM_PROMPT = """You are Quantos, a Senior Quant Data Fixer agent embedded in a financial Stratum-Quant-Analytics pipeline.
 
 You have access to the actual Python source code of the project. Use it to give PRECISE, FILE-SPECIFIC fixes.
 
@@ -133,9 +133,9 @@ RULES:
 - Validate interval calibration (90 % realized coverage), SHAP/feature-importance stability,
     and coefficient confidence-interval overlap in rolling windows when data is available
 - Identify bugs in the source code that Python diagnostics may have MISSED
-- Be concise and technical — no sugar-coating
+- Be concise and technical β€” no sugar-coating
 
-OUTPUT FORMAT — use EXACTLY these section headers:
+OUTPUT FORMAT β€” use EXACTLY these section headers:
 
 ---PROBLEM---
 [What is wrong and why it matters for the model's predictive reliability]
@@ -147,7 +147,7 @@ OUTPUT FORMAT — use EXACTLY these section headers:
 [Precise fix description]
 
 ---CODE_CHANGES---
-[For EACH changed file, use this EXACT format — one block per change:]
+[For EACH changed file, use this EXACT format β€” one block per change:]
 
 FILE: relative/path/from/src/to/file.py
 <<<OLD>>>
@@ -162,7 +162,7 @@ exact replacement code
 Apply these changes automatically to the project files? (YES/NO)"""
 
     def __init__(self, src_root: Optional[Path] = None, timeout_seconds: int | None = None):
-        # Default 300s — llama3.2:1b on CPU can be slow; override with OLLAMA_TIMEOUT env var
+        # Default 300s β€” llama3.2:1b on CPU can be slow; override with OLLAMA_TIMEOUT env var
         default_timeout = int(os.getenv("OLLAMA_TIMEOUT", "300"))
         self._timeout = timeout_seconds if timeout_seconds is not None else default_timeout
         self._src = src_root or Path(__file__).parent
@@ -176,7 +176,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
         return url.rsplit("/api/", 1)[0] if "/api/" in url else url
 
     def _verify_connection(self) -> bool:
-        """Check Ollama availability via /api/tags — no model loading, instant."""
+        """Check Ollama availability via /api/tags β€” no model loading, instant."""
         try:
             response = requests.get(
                 f"{self._ollama_base_url()}/api/tags",
@@ -355,7 +355,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
                 original = full_path.read_text(encoding="utf-8")
                 if old_code not in original:
                     applied.append(
-                        f"[SKIP] Old code not found in {rel_path} — may already be fixed or Llama hallucinated"
+                        f"[SKIP] Old code not found in {rel_path} β€” may already be fixed or Llama hallucinated"
                     )
                     continue
                 updated = original.replace(old_code, new_code, 1)
@@ -437,8 +437,8 @@ class ApprovalGateway:
     Approval flow:
       1. Optimizer calls ``request(action_id, description, details)``.
       2. Request is written to ``output/.optimizer/approval_queue.json``.
-      3. Interactive terminal → blocks on stdin ``y/n`` prompt.
-      4. Non-interactive process → polls the queue file for the owner to
+      3. Interactive terminal β†’ blocks on stdin ``y/n`` prompt.
+      4. Non-interactive process β†’ polls the queue file for the owner to
          manually set ``"status": "approved"`` or ``"status": "rejected"``.
          Times out after *timeout_seconds* and treats timeout as rejection.
     """
@@ -512,7 +512,7 @@ class ApprovalGateway:
 
     def _notify_desktop_popup(self, entry: Dict[str, Any]) -> None:
         """Best-effort Windows popup for interactive desktop sessions."""
-        title = "Scenario Planner: Approval Required"
+        title = "STRATUM QUANT ANALYTICS: Approval Required"
         action = str(entry.get("description", "Approval pending"))
         body = (
             f"{action}\n\n"
@@ -610,7 +610,7 @@ class ApprovalGateway:
                 llama_snippet = "\n\n" + "\n\n".join(snippets)
 
         message = (
-            "\U0001F6A8 <b>Scenario Planner — Approval Required</b>\n"
+            "\U0001F6A8 <b>STRATUM QUANT ANALYTICS β€” Approval Required</b>\n"
             f"<b>Action:</b> {action}\n"
             f"<b>Timeout:</b> {self._timeout}s\n"
             f"<b>Queue:</b> {self._queue_path}\n"
@@ -622,9 +622,9 @@ class ApprovalGateway:
         ok, detail = self._send_telegram(message)
         self._log_notification("Telegram", ok, detail)
         if not ok:
-            print(f"[NOTIFY] ⚠️  Telegram notification FAILED: {detail}")
+            print(f"[NOTIFY] β οΈ  Telegram notification FAILED: {detail}")
         else:
-            print(f"[NOTIFY] ✅ Telegram notification sent ({detail})")
+            print(f"[NOTIFY] β… Telegram notification sent ({detail})")
 
         # --- Generic webhook (optional) ---
         self._load_env_once()
@@ -634,7 +634,7 @@ class ApprovalGateway:
                 resp = requests.post(
                     webhook_url,
                     json={
-                        "title": "Scenario Planner Approval Required",
+                        "title": "STRATUM QUANT ANALYTICS Approval Required",
                         "message": action,
                         "action_id": entry.get("action_id"),
                         "requested_at": entry.get("requested_at"),
@@ -660,9 +660,9 @@ class ApprovalGateway:
         ok, detail = self._send_telegram(text)
         self._log_notification("Telegram/run_start", ok, detail)
         if not ok:
-            print(f"[NOTIFY] ⚠️  Run-start Telegram notification FAILED: {detail}")
+            print(f"[NOTIFY] β οΈ  Run-start Telegram notification FAILED: {detail}")
         else:
-            print(f"[NOTIFY] ✅ Run-start Telegram notification sent ({detail})")
+            print(f"[NOTIFY] β… Run-start Telegram notification sent ({detail})")
 
     def notify_run_finished(self, score: float, status: str, issues: List[str]) -> None:
         """Send a completion notification with final score."""
@@ -670,7 +670,7 @@ class ApprovalGateway:
         issue_list = "\n".join(f"  \u2022 {i}" for i in issues[:6])
         verdict = "\u2705 Target reached!" if "optimized" in status else f"\u26A0\uFE0F {status} (score {score:.0f}/100)"
         text = (
-            f"\U0001F916 <b>Optimizer finished</b> — {verdict}\n"
+            f"\U0001F916 <b>Optimizer finished</b> β€” {verdict}\n"
             + (f"Remaining issues:\n{issue_list}" if issues else "No outstanding issues.")
         )
         ok, detail = self._send_telegram(text)
@@ -686,7 +686,7 @@ class ApprovalGateway:
 
     def _prompt_interactive(self, description: str, details: Dict[str, Any]) -> bool:
         print("\n" + "=" * 60)
-        print("[OPTIMIZER] ⚠️  APPROVAL REQUIRED BEFORE CODE MUTATION")
+        print("[OPTIMIZER] β οΈ  APPROVAL REQUIRED BEFORE CODE MUTATION")
         print(f"  Action : {description}")
         print(f"  Details: {json.dumps(details, indent=4, default=str)}")
         print("=" * 60)
@@ -931,7 +931,7 @@ class AutomatedOptimizationLoop:
             inconsistencies.append(f"OUTLIERS:ratio_gt_5pct={outlier_ratio:.3f}")
             score -= min(12.0, outlier_ratio * 100.0)
 
-        # ── Senior Quant additions ──────────────────────────────────────
+        # β”€β”€ Senior Quant additions β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€
         risk_adj = self._check_risk_adjusted_return(results)
         sharpe = risk_adj.get("sharpe")
         if isinstance(sharpe, float) and sharpe < -0.5:
@@ -1042,7 +1042,7 @@ class AutomatedOptimizationLoop:
             score -= 4.0
 
         var_cvar = self._compute_var_cvar(results)
-        # ───────────────────────────────────────────────────────────────
+        # β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€
 
         score = max(0.0, min(100.0, score))
         return {
@@ -1204,7 +1204,7 @@ class AutomatedOptimizationLoop:
         arr = np.array(vals)
         n = len(arr)
 
-        # Legacy CV (std / |mean|) — kept for backward-compat reporting
+        # Legacy CV (std / |mean|) β€” kept for backward-compat reporting
         mean_abs = abs(float(arr.mean()))
         cv = float(arr.std() / mean_abs) if mean_abs > 1e-10 else None
 
@@ -1782,7 +1782,7 @@ class AutomatedOptimizationLoop:
     ) -> tuple[bool, str]:
         """Use Llama to analyze serious problems (with real source code) and request approval.
         
-        If approved → auto-applies the code changes from Llama's output.
+        If approved β†’ auto-applies the code changes from Llama's output.
         Returns (approved, adjustment_description).
         """
         serious_issues = [
@@ -1834,7 +1834,7 @@ class AutomatedOptimizationLoop:
         gate = self._ensure_approval_gateway()
         approved = gate.request(
             action_id=f"iter{iteration}_serious_{issue_type}",
-            description=f"[QUANTOS] Serious problem: {issue_type} — {'code changes proposed' if has_changes else 'no code changes'}",
+            description=f"[QUANTOS] Serious problem: {issue_type} β€” {'code changes proposed' if has_changes else 'no code changes'}",
             details={
                 "iteration": iteration,
                 "issue_type": issue_type,
@@ -1861,7 +1861,7 @@ class AutomatedOptimizationLoop:
         else:
             # Still include the full Llama analysis so the owner can review what was proposed
             return False, (
-                f"[QUANTOS] {issue_type} REJECTED by owner — skipped.\n"
+                f"[QUANTOS] {issue_type} REJECTED by owner β€” skipped.\n"
                 f"AI proposed the following (not applied):\n{analysis[:1200]}"
             )
 
@@ -1870,27 +1870,27 @@ class AutomatedOptimizationLoop:
         final_diag: Dict[str, Any] = {"score": 0.0, "inconsistencies": []}
         gate = self._ensure_approval_gateway()
 
-        # ── Autonomous Llama bug scan (runs once before the optimization loop) ──
+        # β”€β”€ Autonomous Llama bug scan (runs once before the optimization loop) β”€β”€
         print("\n[QUANTOS] Pre-run: Scanning project source files for latent bugs...")
         bug_scan = self._llama.scan_for_bugs()
         if bug_scan["success"] and not bug_scan["no_bugs_found"] and bug_scan["has_code_changes"]:
             approved = gate.request(
                 action_id="pre_run_bug_scan",
-                description="[QUANTOS] Pre-run scan found latent bugs — code changes proposed",
+                description="[QUANTOS] Pre-run scan found latent bugs β€” code changes proposed",
                 details={"llama_analysis": bug_scan["analysis"]},
             )
             if approved:
                 applied = self._llama.apply_code_changes(bug_scan["analysis"])
                 print(f"[QUANTOS] Bug fixes applied: {'; '.join(applied)}")
             else:
-                print("[QUANTOS] Bug fix proposals REJECTED by owner — continuing without changes")
+                print("[QUANTOS] Bug fix proposals REJECTED by owner β€” continuing without changes")
         elif bug_scan["success"] and bug_scan["no_bugs_found"]:
             print("[QUANTOS] No latent bugs found in source files.")
         elif not bug_scan["success"]:
             print(f"[QUANTOS] Bug scan skipped (Ollama unreachable): {bug_scan.get('analysis', '')[:120]}")
-        # ─────────────────────────────────────────────────────────────────────────
+        # β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€
 
-        # ── Run-start notification ─────────────────────────────────────────────
+        # β”€β”€ Run-start notification β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€
         # Run one pipeline pass to discover issues, then notify before the loop.
         _pre_config = self._build_config()
         _pre_results, _ = self._run_pipeline(_pre_config)
@@ -1899,7 +1899,7 @@ class AutomatedOptimizationLoop:
         _startup_issues = list(_pre_diag.get("inconsistencies", []))
         if _startup_issues:
             gate.notify_run_started(_startup_issues)
-        # ──────────────────────────────────────────────────────────────────────
+        # β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€
 
         for i in range(1, self.max_iterations + 1):
             adjustments: List[str] = []
@@ -1963,7 +1963,7 @@ class AutomatedOptimizationLoop:
                     )
                 else:
                     adjustments.append(
-                        f"[LLAMA AI] {selected_issue} remediation REJECTED by owner — skipped"
+                        f"[LLAMA AI] {selected_issue} remediation REJECTED by owner β€” skipped"
                     )
 
             if float(diag["score"]) >= self.target_score:
@@ -2069,7 +2069,7 @@ class AutomatedOptimizationLoop:
             if item.startswith("POOR_RISK_ADJ"):
                 structural_limits.append("OOS residuals driven by noise: annualised Sharpe below -0.5.")
             if item.startswith("EXCESS_DRAWDOWN"):
-                structural_limits.append("Stress scenario produces >20 % drawdown — tail risk above tolerable threshold.")
+                structural_limits.append("Stress scenario produces >20 % drawdown β€” tail risk above tolerable threshold.")
             if item.startswith("MULTICOLLINEARITY"):
                 structural_limits.append("High VIF (>5) among macro factors inflates coefficient uncertainty.")
             if item.startswith("REGIME_INSTABILITY"):
@@ -2096,7 +2096,7 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Automated Quant Optimization Loop — owner-only tool."
+        description="Automated Quant Optimization Loop β€” owner-only tool."
     )
     parser.add_argument(
         "--target-score",
@@ -2122,3 +2122,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

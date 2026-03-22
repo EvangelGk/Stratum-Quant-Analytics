@@ -1,8 +1,8 @@
-# Scenario Planner - Complete User Guide
+﻿# STRATUM QUANT ANALYTICS - Complete User Guide
 
 ## Application Overview
 
-The Scenario Planner is a comprehensive financial data pipeline that implements the Medallion Architecture for scenario planning and risk analysis. It automatically fetches data from multiple sources, processes it through bronze/silver/gold layers, and performs advanced financial analyses.
+The STRATUM QUANT ANALYTICS is a comprehensive financial data pipeline that implements the Medallion Architecture for scenario planning and risk analysis. It automatically fetches data from multiple sources, processes it through bronze/silver/gold layers, and performs advanced financial analyses.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ The Scenario Planner is a comprehensive financial data pipeline that implements 
 2. **Setup**
    ```bash
    # Clone or download the project
-   cd scenario-planner
+   cd Stratum-Quant-Analytics
 
    # Install dependencies
    poetry install
@@ -96,7 +96,7 @@ Shows relationships between financial assets and macro factors.
 
 ### 2. Elasticity Analysis
 Measures how much asset returns change with economic changes.
-- Formula: % Change in Asset ÷ % Change in Economic Factor
+- Formula: % Change in Asset Γ· % Change in Economic Factor
 - Values >1: Asset is very sensitive to economic changes
 - Values <1: Asset is relatively stable
 - Helps assess pricing power and market sensitivity

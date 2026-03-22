@@ -1,4 +1,4 @@
-import importlib
+﻿import importlib
 import json
 import logging
 import os
@@ -34,7 +34,7 @@ SOURCE_CONTRACTS = _load_project_symbol(
 
 
 class ScenarioAuditor:
-    """Independent but integrated audit judge for the full Scenario Planner system."""
+    """Independent but integrated audit judge for the full STRATUM QUANT ANALYTICS system."""
 
     def __init__(
         self,
@@ -199,7 +199,7 @@ class ScenarioAuditor:
             return None
 
         # Prefer the stable aggregated file written by _finalize_governance() at
-        # the end of every pipeline run — it consolidates the worst-case outcome
+        # the end of every pipeline run β€” it consolidates the worst-case outcome
         # across ALL tickers rather than returning an arbitrary per-ticker file.
         agg_file = self.governance_dir / "governance_decision_current_run.json"
         if agg_file.exists():
@@ -967,14 +967,14 @@ class ScenarioAuditor:
         }
 
     def _print_summary(self, report: Dict[str, Any]) -> None:
-        status_icon = {"PASS": "✅", "WARN": "⚠️", "CRITICAL": "❌"}
-        check_icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
+        status_icon = {"PASS": "β…", "WARN": "β οΈ", "CRITICAL": "β"}
+        check_icon = {"pass": "β…", "warn": "β οΈ", "fail": "β"}
         print("\n" + "=" * 60)
-        print("SCENARIO PLANNER - SYSTEM AUDIT REPORT")
+        print("STRATUM QUANT ANALYTICS - SYSTEM AUDIT REPORT")
         print("=" * 60)
         overall_status = str(report.get("status", "UNKNOWN")).upper()
         print(
-            f"Status: {status_icon.get(overall_status, 'ℹ️')} {overall_status}"
+            f"Status: {status_icon.get(overall_status, 'β„ΉοΈ')} {overall_status}"
         )
         print(f"Decision Ready: {report.get('decision_ready', False)}")
         print(f"User: {report.get('user_id', 'unknown')}")
@@ -983,7 +983,7 @@ class ScenarioAuditor:
             mark = "PASS" if result.get("passed") else "FAIL"
             status = result.get("status", "info")
             status_norm = str(status).lower()
-            icon = check_icon.get(status_norm, "ℹ️")
+            icon = check_icon.get(status_norm, "β„ΉοΈ")
             print(f"- {name.capitalize():<12} -> {icon} {mark} ({status})")
         print("=" * 60)
         for line in report.get("auditor_judgement", {}).get("summary", []):
@@ -994,3 +994,4 @@ class ScenarioAuditor:
 if __name__ == "__main__":
     auditor = ScenarioAuditor()
     auditor.run_audit()
+

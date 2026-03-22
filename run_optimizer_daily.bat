@@ -1,4 +1,4 @@
-@REM ========================================================================
+﻿@REM ========================================================================
 @REM Windows Task Scheduler Script for Daily Optimizer
 @REM 
 @REM Installation:
@@ -6,7 +6,7 @@
 @REM   2. Create Basic Task
 @REM   3. Set trigger to every 2 days at 15:00 (or your preferred time)
 @REM   4. Set action: Start a program
-@REM   5. Program: C:\Users\liagk\Project\scenario-planner\run_optimizer_daily.bat
+@REM   5. Program: C:\Users\liagk\Project\Stratum-Quant-Analytics\run_optimizer_daily.bat
 @REM   6. Advanced: Check "Run whether user is logged in or not"
 @REM
 @REM ========================================================================
@@ -15,7 +15,7 @@
 setlocal enabledelayedexpansion
 
 REM Set paths
-set PROJECT_DIR=C:\Users\liagk\Project\scenario-planner
+set PROJECT_DIR=C:\Users\liagk\Project\Stratum-Quant-Analytics
 set PYTHON_EXE=%PROJECT_DIR%\.venv\Scripts\python.exe
 set SCHEDULER_SCRIPT=%PROJECT_DIR%\src\scheduler.py
 set LOG_DIR=%PROJECT_DIR%\logs
@@ -58,3 +58,4 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 endlocal
+
