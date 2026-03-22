@@ -3,11 +3,14 @@ from __future__ import annotations
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
 import os
+import time
 from typing import Any
 
+import requests
 import streamlit as st
 
 from src.ai_agent import PAGE_CONTEXT_QUESTIONS, QuantosAgent
+from src.secret_store import get_secret
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -32,17 +35,37 @@ def _check_ready(force: bool = False) -> bool:
     Pass force=True to discard the cached result and re-check (used by the
     Retry button so the user doesn't have to reload the whole browser tab).
     """
-    if force or "ai_ready" not in st.session_state:
-        # Drop the cached agent instance so a fresh QuantosAgent is created
-        # (ensures any module reload is picked up instead of using a stale object).
+    now = time.time()
+    # Keep status checks lightweight and avoid repeated network probes.
+    last_check = float(st.session_state.get("ai_ready_checked_at", 0.0))
+    should_refresh = force or "ai_ready" not in st.session_state or (now - last_check > 90)
+    if should_refresh:
         st.session_state.pop("_ai_agent_instance", None)
-        try:
-            _agent = _get_agent()
-            ok, reason = _agent.ping()
-        except Exception as exc:
-            ok, reason = False, str(exc)
+        ok, reason = False, "no backend configured"
+
+        # Fast path: if a Gemini key is configured, mark online immediately.
+        gkey = (get_secret("GEMINI_API_KEY") or "").strip()
+        if gkey:
+            ok, reason = True, "gemini configured"
+        else:
+            # Fallback: very short Ollama probe to avoid UI stalls.
+            try:
+                r = requests.get("http://127.0.0.1:11434/api/tags", timeout=(1.0, 1.5))
+                if r.status_code == 200:
+                    models = [m.get("name", "") for m in r.json().get("models", [])]
+                    found = any("llama3.2" in m for m in models)
+                    if found:
+                        ok, reason = True, "ollama connected"
+                    else:
+                        ok, reason = False, "ollama up but llama3.2:1b not found"
+                else:
+                    ok, reason = False, f"ollama HTTP {r.status_code}"
+            except Exception as exc:
+                ok, reason = False, str(exc)
+
         st.session_state["ai_ready"] = ok
         st.session_state["ai_offline_reason"] = "" if ok else reason
+        st.session_state["ai_ready_checked_at"] = now
     return bool(st.session_state.get("ai_ready", False))
 
 

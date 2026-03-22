@@ -40,20 +40,25 @@ from UI.tabs import (
 
 def _render_api_keys_status() -> None:
     """Render required API key connectivity status in the sidebar."""
-    fred_key = (get_secret("FRED_API_KEY") or "").strip()
-    gemini_key = (get_secret("GEMINI_API_KEY") or "").strip()
+    @st.cache_data(show_spinner=False, ttl=60)
+    def _status_snapshot() -> tuple[list[str], list[str]]:
+        fred_key = (get_secret("FRED_API_KEY") or "").strip()
+        gemini_key = (get_secret("GEMINI_API_KEY") or "").strip()
 
-    connected = []
-    missing = []
-    if fred_key:
-        connected.append("FRED_API_KEY")
-    else:
-        missing.append("FRED_API_KEY")
+        connected_local: list[str] = []
+        missing_local: list[str] = []
+        if fred_key:
+            connected_local.append("FRED_API_KEY")
+        else:
+            missing_local.append("FRED_API_KEY")
 
-    if gemini_key:
-        connected.append("GEMINI_API_KEY")
-    else:
-        missing.append("GEMINI_API_KEY")
+        if gemini_key:
+            connected_local.append("GEMINI_API_KEY")
+        else:
+            missing_local.append("GEMINI_API_KEY")
+        return connected_local, missing_local
+
+    connected, missing = _status_snapshot()
 
     st.markdown("### 🔐 API Keys Status")
     if not missing:
@@ -219,7 +224,6 @@ def _render_sidebar() -> str:
                     st.error("Optimizer failed.")
                     with st.expander("Optimizer output", expanded=False):
                         st.text(opt_out[-3000:] if len(opt_out) > 3000 else opt_out)
-            st.rerun()
 
     return role
 

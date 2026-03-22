@@ -121,16 +121,23 @@ def inject_styles() -> None:
 
 
 def show_kpis() -> None:
+    @st.cache_data(show_spinner=False, ttl=60)
+    def _kpi_counts() -> dict[str, int]:
+        return {
+            "raw": count_files(RAW_DIR, "**/*.parquet"),
+            "processed": count_files(PROCESSED_DIR, "**/*.parquet"),
+            "gold_runs": count_files(GOLD_DIR / "governance", "governance_decision_*.json"),
+            "artifacts": count_files(OUTPUT_DIR, "**/*"),
+        }
+
+    k = _kpi_counts()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Raw Files", count_files(RAW_DIR, "**/*.parquet"))
-    c2.metric("Processed Files", count_files(PROCESSED_DIR, "**/*.parquet"))
+    c1.metric("Raw Files", k["raw"])
+    c2.metric("Processed Files", k["processed"])
     # master_table.parquet is intentionally overwritten each run, so run progress
     # is better represented by governance decision artifacts.
-    c3.metric(
-        "Gold Runs",
-        count_files(GOLD_DIR / "governance", "governance_decision_*.json"),
-    )
-    c4.metric("Output Artifacts", count_files(OUTPUT_DIR, "**/*"))
+    c3.metric("Gold Runs", k["gold_runs"])
+    c4.metric("Output Artifacts", k["artifacts"])
 
 
 __all__ = [

@@ -163,10 +163,10 @@ putting real secrets in source-controlled files.
 ### 3. Run
 
 ```bash
-# Sample mode (2 tickers, fast)
+# Default mode is ACTUAL (5 tickers)
 poetry run python src/main.py
 
-# Full mode (set ENVIRONMENT=actual in .env)
+# Optional: set ENVIRONMENT=sample only if you explicitly want a lightweight run
 
 # Streamlit command center
 poetry run streamlit run UI/streamlit_app.py
@@ -238,7 +238,7 @@ All configuration is driven by environment variables (see `.env.example`):
 | Variable | Default | Description |
 |---|---|---|
 | `FRED_API_KEY` | *(required)* | FRED API key |
-| `ENVIRONMENT` | `sample` | `sample` (2 tickers) or `actual` (5 tickers) |
+| `ENVIRONMENT` | `actual` | `actual` (5 tickers) by default; set `sample` (2 tickers) only if explicitly needed |
 | `START_DATE` | `2016-01-01` | Historical data start |
 | `END_DATE` | `2026-12-31` | Historical data end |
 | `MAX_WORKERS` | `10` | Thread pool size for parallel fetching |

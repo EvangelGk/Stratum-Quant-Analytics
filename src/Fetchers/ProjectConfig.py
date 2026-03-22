@@ -26,7 +26,7 @@ class ProjectConfig:
     """
 
     fred_api_key: Optional[str]
-    mode: RunMode = RunMode.SAMPLE
+    mode: RunMode = RunMode.ACTUAL
     start_date: str = "2016-01-01"
     end_date: str = "2026-12-31"
     max_workers: int = 10
@@ -194,8 +194,8 @@ class ProjectConfig:
         raw_key = os.getenv("FRED_API_KEY", "")
         key = raw_key.strip() or None
 
-        # get the mode (default to 'sample' if not found)
-        env_mode = os.getenv("ENVIRONMENT", "sample").strip().lower()
+        # get the mode (default to 'actual' if not found)
+        env_mode = os.getenv("ENVIRONMENT", "actual").strip().lower()
         mode = RunMode.ACTUAL if env_mode == "actual" else RunMode.SAMPLE
 
         # get dates and other configs
