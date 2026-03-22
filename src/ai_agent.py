@@ -132,8 +132,8 @@ class QuantosAgent:
     def __init__(self, root: Path | None = None, timeout_seconds: int | None = None, backend: str | None = None) -> None:
         bootstrap_env_from_secrets(override=False)
         self._root = root or Path(__file__).resolve().parent.parent
-        # Default 90s for UI responsiveness; override with OLLAMA_TIMEOUT env var
-        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "90") or "90")
+        # Default 200s; override with OLLAMA_TIMEOUT env var
+        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "200") or "200")
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else default_timeout
         
         # Detect backend if not specified
@@ -222,7 +222,7 @@ class QuantosAgent:
                     ],
                     "generationConfig": {
                         "temperature": temperature,
-                        "maxOutputTokens": 1024,
+                        "maxOutputTokens": 4096,
                     }
                 },
                 timeout=self.timeout_seconds,
@@ -425,9 +425,10 @@ class QuantosAgent:
         quality = bundle.get("quality_report", {}) or {}
         analysis = bundle.get("analysis_results", {}) or {}
 
-        # Only failed audit checks (up to 5)
+        # All failed audit checks + summary of passed ones count
         all_checks = audit.get("checks") or []
-        failed_checks = [{"name": c.get("name"), "reason": c.get("reason")} for c in all_checks if not c.get("passed", True)][:5]
+        failed_checks = [{"name": c.get("name"), "reason": c.get("reason"), "severity": c.get("severity")} for c in all_checks if not c.get("passed", True)]
+        passed_count = sum(1 for c in all_checks if c.get("passed", True))
 
         # Quality: only summary block
         q_summary = (quality.get("summary") or {}) if isinstance(quality, dict) else {}
@@ -447,7 +448,14 @@ class QuantosAgent:
             "generated_at": bundle.get("generated_at"),
             "result_keys": bundle.get("result_keys", []),
             "quick_signals": bundle.get("quick_signals", {}),
-            "audit": {"status": audit.get("status"), "model_risk_score": audit.get("model_risk_score"), "failed_checks": failed_checks},
+            "audit": {
+                "status": audit.get("status"),
+                "model_risk_score": audit.get("model_risk_score"),
+                "overall_score": audit.get("overall_score"),
+                "failed_checks": failed_checks,
+                "passed_checks_count": passed_count,
+                "total_checks": len(all_checks),
+            },
             "governance": gov_slim,
             "quality_summary": q_summary,
             "session": session_slim,
@@ -535,9 +543,9 @@ class QuantosAgent:
         )
         prompt = (
             "You are Quantos, the in-app quantitative copilot for Scenario Planner. "
-            "Answer in clear Greek with short sections and practical next steps. "
-            "Use ONLY the provided context. "
-            "If evidence is missing, say so.\n"
+            "Answer in detailed, structured English by default. Use sections with headers (##) and bullet points where appropriate. "
+            "Give complete, practical explanations and concrete next steps — never truncate or summarise without evidence. "
+            "Use ONLY the provided context. If data for a specific question is missing from the context, say so clearly but still answer what you can.\n"
             f"{page_hint}"
             f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}\n"
             f"QUESTION:{question}"
@@ -558,13 +566,13 @@ class QuantosAgent:
         snapshot: dict[str, Any],
         user_id: str = "default",
     ) -> dict[str, Any]:
-        """Generate a fast focused 2-3 sentence inline insight in Greek for a given topic."""
+        """Generate a contextual inline insight in English for a given topic."""
         prompt = (
-            "Είσαι ο Quantos, ο ποσοτικός AI βοηθός του Scenario Planner. "
-            "Δώσε ΣΥΝΟΠΤΙΚΗ ερμηνεία 2-3 προτάσεων στα Ελληνικά. "
-            "Να είσαι άμεσος και τεκμηριωμένος, χωρίς εισαγωγές.\n\n"
-            f"ΘΕΜΑ: {topic}\n\n"
-            f"ΔΕΔΟΜΕΝΑ:\n{json.dumps(snapshot, ensure_ascii=False)[:1800]}"
+            "You are Quantos, the quantitative AI copilot of Scenario Planner. "
+            "Provide a complete, practical interpretation in English with bullet points and concrete actions. "
+            "Rely only on the provided data.\n"
+            f"TOPIC: {topic}\n"
+            f"DATA:{json.dumps(snapshot, ensure_ascii=False)[:3000]}"
         )
         try:
             answer = self._generate(prompt, temperature=0.1)
