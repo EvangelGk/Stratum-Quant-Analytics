@@ -30,43 +30,50 @@ def _ensure_messages() -> list[dict[str, str]]:
 
 
 def _check_ready(force: bool = False) -> bool:
-    """Ping Quantos backend once per session, cache result in session state.
+    """Resolve Quantos readiness with zero-cost defaults.
 
-    Pass force=True to discard the cached result and re-check (used by the
-    Retry button so the user doesn't have to reload the whole browser tab).
+    Performance policy:
+    - No network probe on normal reruns/clicks.
+    - Network probe only when force=True (Retry button).
     """
-    now = time.time()
-    # Keep status checks lightweight and avoid repeated network probes.
-    last_check = float(st.session_state.get("ai_ready_checked_at", 0.0))
-    should_refresh = force or "ai_ready" not in st.session_state or (now - last_check > 90)
-    if should_refresh:
-        st.session_state.pop("_ai_agent_instance", None)
-        ok, reason = False, "no backend configured"
+    if not force and "ai_ready" in st.session_state:
+        return bool(st.session_state.get("ai_ready", False))
 
-        # Fast path: if a Gemini key is configured, mark online immediately.
-        gkey = (get_secret("GEMINI_API_KEY") or "").strip()
-        if gkey:
-            ok, reason = True, "gemini configured"
+    # Always accept configured Gemini instantly without network calls.
+    gkey = (get_secret("GEMINI_API_KEY") or "").strip()
+    if gkey:
+        st.session_state["ai_ready"] = True
+        st.session_state["ai_offline_reason"] = "gemini configured"
+        return True
+
+    # Keep the UI responsive: do not auto-probe Ollama unless user requests it.
+    if not force:
+        st.session_state["ai_ready"] = bool(st.session_state.get("ai_last_ollama_ok", False))
+        if not st.session_state["ai_ready"]:
+            st.session_state["ai_offline_reason"] = (
+                "Ollama probe paused for performance. Press Retry to check local backend."
+            )
+        return bool(st.session_state.get("ai_ready", False))
+
+    # Explicit probe path (user action).
+    st.session_state.pop("_ai_agent_instance", None)
+    try:
+        r = requests.get("http://127.0.0.1:11434/api/tags", timeout=(0.6, 1.0))
+        if r.status_code == 200:
+            models = [m.get("name", "") for m in r.json().get("models", [])]
+            found = any("llama3.2" in m for m in models)
+            ok = bool(found)
+            reason = "ollama connected" if ok else "ollama up but llama3.2:1b not found"
         else:
-            # Fallback: very short Ollama probe to avoid UI stalls.
-            try:
-                r = requests.get("http://127.0.0.1:11434/api/tags", timeout=(1.0, 1.5))
-                if r.status_code == 200:
-                    models = [m.get("name", "") for m in r.json().get("models", [])]
-                    found = any("llama3.2" in m for m in models)
-                    if found:
-                        ok, reason = True, "ollama connected"
-                    else:
-                        ok, reason = False, "ollama up but llama3.2:1b not found"
-                else:
-                    ok, reason = False, f"ollama HTTP {r.status_code}"
-            except Exception as exc:
-                ok, reason = False, str(exc)
+            ok, reason = False, f"ollama HTTP {r.status_code}"
+    except Exception as exc:
+        ok, reason = False, str(exc)
 
-        st.session_state["ai_ready"] = ok
-        st.session_state["ai_offline_reason"] = "" if ok else reason
-        st.session_state["ai_ready_checked_at"] = now
-    return bool(st.session_state.get("ai_ready", False))
+    st.session_state["ai_last_ollama_ok"] = ok
+    st.session_state["ai_ready"] = ok
+    st.session_state["ai_offline_reason"] = "" if ok else reason
+    st.session_state["ai_ready_checked_at"] = time.time()
+    return ok
 
 
 def _submit_question(

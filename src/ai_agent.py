@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 import os
+import time as _time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 import requests
+
+# ── Module-level TTL caches (survive across Streamlit reruns in same process) ──
+# Avoids re-reading large JSON files and re-globbing logs on every question.
+_context_bundle_cache: dict[str, dict[str, Any]] = {}
+_CONTEXT_BUNDLE_TTL: float = 30.0  # seconds
+_session_summary_cache: dict[str, Any] = {"data": None, "ts": 0.0}
+_SESSION_SUMMARY_TTL: float = 60.0  # seconds
 
 try:
     from src.secret_store import bootstrap_env_from_secrets, get_secret
@@ -124,8 +132,8 @@ class QuantosAgent:
     def __init__(self, root: Path | None = None, timeout_seconds: int | None = None, backend: str | None = None) -> None:
         bootstrap_env_from_secrets(override=False)
         self._root = root or Path(__file__).resolve().parent.parent
-        # Default 300s — llama3.2:1b can be slow on CPU; override with OLLAMA_TIMEOUT env var
-        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "300") or "300")
+        # Default 90s for UI responsiveness; override with OLLAMA_TIMEOUT env var
+        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "90") or "90")
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else default_timeout
         
         # Detect backend if not specified
@@ -140,23 +148,26 @@ class QuantosAgent:
             )
 
     def _detect_backend(self) -> str:
-        """Detect which backend is available: 'local' (Ollama) or 'online' (Gemini)."""
-        # Try to check if Ollama is accessible
+        """Detect which backend is available: 'local' (Ollama) or 'online' (Gemini).
+
+        Performance: checks Gemini API key first (O(1)) to avoid blocking
+        network probes. Ollama probe is only done when no Gemini key is present.
+        """
+        # Fast path: Gemini key present → go online immediately, no network probe
+        if self._get_gemini_api_key():
+            return "online"
+
+        # Ollama probe — very short timeout so UI never blocks > ~1s
         try:
             response = requests.get(
                 f"{self._base_url()}/api/tags",
-                timeout=(2, 5),  # Fast check: 2s connect, 5s read
+                timeout=(1.0, 1.5),
             )
             if response.status_code == 200:
                 return "local"
         except Exception:
-            pass  # Ollama not available, fall through to Gemini
-        
-        # Check if Gemini is configured
-        if self._get_gemini_api_key():
-            return "online"
-        
-        # No backend available
+            pass
+
         raise BackendSelectionError(
             "No AI backend available. Either:\n"
             "1) Ensure Ollama is running at 127.0.0.1:11434, OR\n"
@@ -268,13 +279,27 @@ class QuantosAgent:
         return self._root / "data" / "users" / self._safe_user_id(user_id)
 
     def _latest_session_summary(self) -> dict[str, Any]:
+        """Return latest session summary, cached for _SESSION_SUMMARY_TTL seconds."""
+        now = _time.monotonic()
+        if (
+            _session_summary_cache["data"] is not None
+            and (now - _session_summary_cache["ts"]) < _SESSION_SUMMARY_TTL
+        ):
+            return _session_summary_cache["data"]  # type: ignore[return-value]
+
         logs_dir = self._root / "logs"
-        if not logs_dir.exists():
-            return {}
-        files = sorted(logs_dir.glob("session_summary_*.json"), key=lambda p: p.stat().st_mtime)
-        if not files:
-            return {}
-        return self._read_json(files[-1])
+        result: dict[str, Any] = {}
+        if logs_dir.exists():
+            files = sorted(
+                logs_dir.glob("session_summary_*.json"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            if files:
+                result = self._read_json(files[-1])
+
+        _session_summary_cache["data"] = result
+        _session_summary_cache["ts"] = now
+        return result
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -344,6 +369,13 @@ class QuantosAgent:
             return False, LLMConnectionError(str(exc)).args[0]
 
     def build_context_bundle(self, user_id: str = "default") -> dict[str, Any]:
+        """Build full context bundle, cached per-user for _CONTEXT_BUNDLE_TTL seconds."""
+        safe_uid = self._safe_user_id(user_id)
+        now = _time.monotonic()
+        cached = _context_bundle_cache.get(safe_uid)
+        if cached and (now - cached.get("_cached_at", 0.0)) < _CONTEXT_BUNDLE_TTL:
+            return cached
+
         output_dir = self._output_dir(user_id)
         user_data_dir = self._user_data_dir(user_id)
         analysis = self._read_json(output_dir / "analysis_results.json")
@@ -357,7 +389,7 @@ class QuantosAgent:
         oos = (gov.get("out_of_sample") or {}).get("r2") if isinstance(gov, dict) else None
         risk = gov.get("model_risk_score") if isinstance(gov, dict) else None
 
-        return {
+        bundle: dict[str, Any] = {
             "generated_at": datetime.now().isoformat(),
             "user_id": self._safe_user_id(user_id),
             "result_keys": analysis.get("result_keys", []),
@@ -376,6 +408,50 @@ class QuantosAgent:
                     else []
                 ),
             },
+            "_cached_at": now,
+        }
+        _context_bundle_cache[safe_uid] = bundle
+        return bundle
+
+    def _lean_prompt_context(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Build a compact context dict for LLM prompts.
+
+        Strips full JSON files and keeps only the fields the LLM needs.
+        Reduces LLM input from potentially megabytes to a few KB.
+        """
+        audit = bundle.get("audit_report", {}) or {}
+        latest = bundle.get("latest_session_summary", {}) or {}
+        optimizer = bundle.get("optimizer_report", {}) or {}
+        quality = bundle.get("quality_report", {}) or {}
+        analysis = bundle.get("analysis_results", {}) or {}
+
+        # Only failed audit checks (up to 5)
+        all_checks = audit.get("checks") or []
+        failed_checks = [{"name": c.get("name"), "reason": c.get("reason")} for c in all_checks if not c.get("passed", True)][:5]
+
+        # Quality: only summary block
+        q_summary = (quality.get("summary") or {}) if isinstance(quality, dict) else {}
+
+        # Session: only lightweight status keys
+        session_slim = {k: latest[k] for k in ("status", "duration_seconds", "errors", "warnings", "stages_completed") if k in latest}
+
+        # Optimizer: only final score/status
+        opt_slim = {k: optimizer[k] for k in ("final_score", "status", "iterations", "best_iteration") if k in optimizer} if isinstance(optimizer, dict) else {}
+
+        # Analysis: only governance top-level and result_keys (omit raw arrays)
+        results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
+        gov_report = (results.get("governance_report") or {}) if isinstance(results, dict) else {}
+        gov_slim = {k: gov_report[k] for k in ("decision", "passed", "severity", "model_risk_score", "out_of_sample") if k in gov_report}
+
+        return {
+            "generated_at": bundle.get("generated_at"),
+            "result_keys": bundle.get("result_keys", []),
+            "quick_signals": bundle.get("quick_signals", {}),
+            "audit": {"status": audit.get("status"), "model_risk_score": audit.get("model_risk_score"), "failed_checks": failed_checks},
+            "governance": gov_slim,
+            "quality_summary": q_summary,
+            "session": session_slim,
+            "optimizer": opt_slim,
         }
 
     def _llama_generate(self, prompt: str, temperature: float = 0.2) -> str:
@@ -447,26 +523,24 @@ class QuantosAgent:
         current_page: str = "",
     ) -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
+        # Use lean context: removes full JSON files, keeps only key signals.
+        # This cuts LLM input from megabytes to ~2-4 KB → much faster generation.
+        lean = self._lean_prompt_context(context_bundle)
         if current_page:
-            context_bundle["user_current_page"] = current_page
+            lean["user_current_page"] = current_page
         page_hint = (
-            f"The user is currently viewing the '{current_page}' section of the app.\n\n"
+            f"The user is viewing the '{current_page}' section.\n"
             if current_page
             else ""
         )
         prompt = (
             "You are Quantos, the in-app quantitative copilot for Scenario Planner. "
             "Answer in clear Greek with short sections and practical next steps. "
-            "Use ONLY the provided project context. "
-            "If evidence is missing from the context, say so explicitly.\n\n"
+            "Use ONLY the provided context. "
+            "If evidence is missing, say so.\n"
             f"{page_hint}"
-            "Focus areas:\n"
-            "1) Pipeline and data quality\n"
-            "2) Analyses and governance\n"
-            "3) Optimizer and Llama workflow\n"
-            "4) Concrete action items\n\n"
-            f"CONTEXT_JSON:\n{json.dumps(context_bundle, ensure_ascii=False, indent=2)}\n\n"
-            f"USER_QUESTION:\n{question}\n"
+            f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}\n"
+            f"QUESTION:{question}"
         )
         try:
             answer = self._generate(prompt, temperature=0.15)
@@ -500,6 +574,7 @@ class QuantosAgent:
 
     def create_pipeline_brief(self, user_id: str = "default") -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
+        lean = self._lean_prompt_context(context_bundle)
         prompt = (
             "You are a senior quant reviewer. Generate a concise execution brief after a pipeline run.\n"
             "Return exactly these sections:\n"
@@ -507,8 +582,8 @@ class QuantosAgent:
             "2) Key Signals\n"
             "3) Risks & Gaps\n"
             "4) Recommended Next Actions\n"
-            "Keep each section short and evidence-based.\n\n"
-            f"CONTEXT_JSON:\n{json.dumps(context_bundle, ensure_ascii=False, indent=2)}"
+            "Keep each section short and evidence-based.\n"
+            f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}"
         )
         try:
             brief_text = self._generate(prompt, temperature=0.1)
