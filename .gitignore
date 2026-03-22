@@ -3,6 +3,7 @@ data/
 .env
 *.env.*
 !.env.example
+.streamlit/secrets.toml
 
 # --- Python cache & compiled ---
 __pycache__/

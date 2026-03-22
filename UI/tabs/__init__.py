@@ -5,6 +5,11 @@ from UI.tabs.analysis_tabs import (
     show_run_comparison_tab,
     show_scenario_builder_tab,
 )
+from UI.tabs.assistant_tab import (
+    render_inline_ai_section,
+    render_sidebar_ai_widget,
+    show_ai_assistant_tab,
+)
 from UI.tabs.data_tabs import (
     show_analytics_tab,
     show_data_tab,
@@ -15,7 +20,10 @@ from UI.tabs.data_tabs import (
 from UI.tabs.ops_tabs import show_auditor_tab, show_ops_tab
 
 __all__ = [
+    "render_inline_ai_section",
+    "render_sidebar_ai_widget",
     "show_analytics_tab",
+    "show_ai_assistant_tab",
     "show_auditor_tab",
     "show_data_tab",
     "show_explainability_tab",

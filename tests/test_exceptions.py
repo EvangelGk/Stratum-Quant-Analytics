@@ -8,6 +8,120 @@ import inspect
 import pytest
 
 # ============================================================================
+# AI AGENT EXCEPTIONS TESTS
+# ============================================================================
+
+
+def test_ai_agent_error_is_base_exception():
+    """Test AIAgentError is a proper Exception subclass."""
+    from src.exceptions.AIAgentExceptions import AIAgentError
+
+    assert issubclass(AIAgentError, Exception)
+    exc = AIAgentError("ai error message")
+    assert "ai error message" in str(exc)
+
+
+def test_llm_connection_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentError, LLMConnectionError
+
+    assert issubclass(LLMConnectionError, AIAgentError)
+
+
+def test_llm_timeout_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentError, LLMTimeoutError
+
+    assert issubclass(LLMTimeoutError, AIAgentError)
+
+
+def test_llm_unavailable_error_inherits_from_llm_connection_error():
+    from src.exceptions.AIAgentExceptions import LLMConnectionError, LLMUnavailableError
+
+    assert issubclass(LLMUnavailableError, LLMConnectionError)
+
+
+def test_ai_agent_config_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentConfigError, AIAgentError
+
+    assert issubclass(AIAgentConfigError, AIAgentError)
+
+
+def test_llm_authentication_error_inherits_from_ai_agent_config_error():
+    from src.exceptions.AIAgentExceptions import AIAgentConfigError, LLMAuthenticationError
+
+    assert issubclass(LLMAuthenticationError, AIAgentConfigError)
+
+
+def test_model_not_found_error_inherits_from_ai_agent_config_error():
+    from src.exceptions.AIAgentExceptions import AIAgentConfigError, ModelNotFoundError
+
+    assert issubclass(ModelNotFoundError, AIAgentConfigError)
+
+
+def test_llm_response_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentError, LLMResponseError
+
+    assert issubclass(LLMResponseError, AIAgentError)
+
+
+def test_ai_response_parse_error_inherits_from_llm_response_error():
+    from src.exceptions.AIAgentExceptions import AIResponseParseError, LLMResponseError
+
+    assert issubclass(AIResponseParseError, LLMResponseError)
+
+
+def test_context_window_error_inherits_from_llm_response_error():
+    from src.exceptions.AIAgentExceptions import ContextWindowError, LLMResponseError
+
+    assert issubclass(ContextWindowError, LLMResponseError)
+
+
+def test_ai_context_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentError, AIContextError
+
+    assert issubclass(AIContextError, AIAgentError)
+
+
+def test_missing_context_error_inherits_from_ai_context_error():
+    from src.exceptions.AIAgentExceptions import AIContextError, MissingContextError
+
+    assert issubclass(MissingContextError, AIContextError)
+
+
+def test_context_serialization_error_inherits_from_ai_context_error():
+    from src.exceptions.AIAgentExceptions import AIContextError, ContextSerializationError
+
+    assert issubclass(ContextSerializationError, AIContextError)
+
+
+def test_ai_output_error_inherits_from_ai_agent_error():
+    from src.exceptions.AIAgentExceptions import AIAgentError, AIOutputError
+
+    assert issubclass(AIOutputError, AIAgentError)
+
+
+def test_ai_agent_exceptions_all_carry_messages():
+    """All exception classes must correctly propagate their message."""
+    from src.exceptions.AIAgentExceptions import (
+        AIAgentError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError,
+        AIAgentConfigError, LLMAuthenticationError, ModelNotFoundError,
+        LLMResponseError, AIResponseParseError, ContextWindowError,
+        AIContextError, MissingContextError, ContextSerializationError,
+        AIOutputError,
+    )
+
+    classes = [
+        AIAgentError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError,
+        AIAgentConfigError, LLMAuthenticationError, ModelNotFoundError,
+        LLMResponseError, AIResponseParseError, ContextWindowError,
+        AIContextError, MissingContextError, ContextSerializationError,
+        AIOutputError,
+    ]
+    for cls in classes:
+        exc = cls("test msg")
+        assert "test msg" in str(exc), f"{cls.__name__} did not propagate message"
+
+
+# ============================================================================
 # FETCHERS EXCEPTIONS TESTS
 # ============================================================================
 

@@ -35,6 +35,7 @@ from logger.Messages.MainMess import (
     QUICK_START,
 )
 from Medallion import MedallionPipeline
+from ai_agent import generate_ai_pipeline_brief
 
 # Setup logging
 logging.basicConfig(
@@ -370,6 +371,19 @@ def main() -> None:
         output_artifacts = _write_output_artifacts(
             results, user_id=getattr(config, "data_user_id", "default")
         )
+        ai_brief = generate_ai_pipeline_brief(
+            user_id=getattr(config, "data_user_id", "default")
+        )
+        if ai_brief.get("success"):
+            output_artifacts["ai_pipeline_briefing_json"] = str(
+                ai_brief.get("json_path", "")
+            )
+            output_artifacts["ai_pipeline_briefing_md"] = str(
+                ai_brief.get("md_path", "")
+            )
+        else:
+            output_artifacts["ai_pipeline_briefing_status"] = (
+                f"skipped: {ai_brief.get('error', 'unknown')}")
 
         pipeline_duration = time.time() - pipeline_start
         data_catalog_hash = _hash_file_if_exists(pipeline.raw_path / "catalog.json")

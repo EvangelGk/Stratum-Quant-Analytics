@@ -15,6 +15,8 @@ from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_
 from UI.runtime import clear_all_run_history, run_and_cache_audit, run_pipeline, show_pipeline_failure
 from UI.runtime import run_optimizer_background
 from UI.tabs import (
+    render_sidebar_ai_widget,
+    show_ai_assistant_tab,
     show_analytics_tab,
     show_auditor_tab,
     show_data_tab,
@@ -121,6 +123,13 @@ def _render_sidebar() -> str:
             )
 
         # ----------------------------------------------------------------
+        # AI Copilot — always-present mini-chat in the sidebar.
+        # Status is checked once per session; heavy work only on user action.
+        # ----------------------------------------------------------------
+        st.markdown("---")
+        render_sidebar_ai_widget()
+
+        # ----------------------------------------------------------------
         # Owner-only: Automated Optimizer
         # Only visible when OPTIMIZER_OWNER_MODE=1 is set in the environment.
         # Never surfaced to regular users or shown in public deployments.
@@ -202,6 +211,7 @@ def main() -> None:
     show_kpis()
 
     pages = [
+        "🤖 AI Assistant",
         "🩺 Health & Alerts",
         "🧪 Auditor",
         "📊 Run Comparison",
@@ -216,8 +226,13 @@ def main() -> None:
         "📜 Logs",
     ]
     selected_page = st.segmented_control("View", options=pages, default="🩺 Health & Alerts")
+    # Track active page in session state so sidebar AI and chips know context
+    if selected_page:
+        st.session_state["selected_page"] = selected_page
 
-    if selected_page == "🩺 Health & Alerts":
+    if selected_page == "🤖 AI Assistant":
+        show_ai_assistant_tab()
+    elif selected_page == "🩺 Health & Alerts":
         show_health_alerts_tab()
     elif selected_page == "🧪 Auditor":
         show_auditor_tab()
@@ -241,6 +256,24 @@ def main() -> None:
         show_governance_tab()
     elif selected_page == "📜 Logs":
         show_logs_tab()
+
+    # Render footer with license attribution
+    _render_footer()
+
+
+def _render_footer() -> None:
+    """Render footer with copyright and license attribution."""
+    st.divider()
+    col_left, col_right = st.columns([1, 1])
+    
+    with col_left:
+        st.caption(
+            "© 2026 EvangelGK. All Rights Reserved. | "
+            "[License (CC BY-NC-ND)](https://creativecommons.org/licenses/by-nc-nd/4.0/)"
+        )
+    
+    with col_right:
+        st.caption("🔒 This project is protected under CC BY-NC-ND 4.0")
 
 
 if __name__ == "__main__":

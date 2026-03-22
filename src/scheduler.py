@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Automated Daily Optimizer Scheduler
+Automated Optimizer Scheduler
 Runs the optimization loop periodically and polls for approvals via file.
 
 Usage:
@@ -87,7 +87,7 @@ def run_optimizer_once(target_score: float = 94.0, user_id: str = "default"):
 
 def scheduler_loop(interval_hours: int = 24, user_id: str = "default"):
     """Run optimizer repeatedly at specified intervals."""
-    print(f"\n[SCHEDULER] Starting daily optimizer scheduler")
+    print(f"\n[SCHEDULER] Starting periodic optimizer scheduler")
     print(f"[SCHEDULER] Interval: {interval_hours} hour(s)")
     print(f"[SCHEDULER] User: {user_id}")
     print(f"[SCHEDULER] Approval method: FILE-BASED POLLING")
@@ -127,7 +127,7 @@ def scheduler_loop(interval_hours: int = 24, user_id: str = "default"):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Automated daily optimizer scheduler with file-based approval polling."
+        description="Automated periodic optimizer scheduler with file-based approval polling."
     )
     parser.add_argument(
         "--interval",

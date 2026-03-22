@@ -9,6 +9,7 @@ import streamlit as st
 from UI.constants import ROLE_PERMISSIONS, UI_SCHEDULE_PATH
 from UI.helpers import load_session_history, read_json
 from UI.runtime import get_audit_report, run_and_cache_audit
+from UI.tabs.assistant_tab import render_inline_ai_section
 from UI.traffic_light import (
     badge_html,
     score_audit_status,
@@ -389,6 +390,20 @@ def show_auditor_tab() -> None:
                     mime="application/json",
                     key=f"audit_download_{name}",
                 )
+
+    # Inline AI interpretation of the full audit report
+    _ai_snap = {
+        "audit_status": report.get("status"),
+        "failed_checks": report.get("failed_checks", []),
+        "warning_checks": report.get("warning_checks", []),
+        "decision_ready": report.get("decision_ready"),
+        "auditor_judgement": report.get("auditor_judgement", {}),
+    }
+    render_inline_ai_section(
+        topic="Audit Results",
+        snapshot=_ai_snap,
+        key_suffix="auditor",
+    )
 
 
 def show_ops_tab(role: str) -> None:

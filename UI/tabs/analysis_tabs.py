@@ -14,6 +14,7 @@ from UI.helpers import (
     persist_human_report_files,
     read_json,
 )
+from UI.tabs.assistant_tab import render_inline_ai_section
 
 
 def show_health_alerts_tab() -> None:
@@ -38,13 +39,23 @@ def show_health_alerts_tab() -> None:
     alerts = build_smart_alerts()
     if not alerts:
         st.success("No active alerts.")
-        return
-    for alert in alerts:
-        msg = f"**{alert['title']}** — {alert['message']}"
-        if alert.get("severity") == "critical":
-            st.error(msg)
-        else:
-            st.warning(msg)
+    else:
+        for alert in alerts:
+            msg = f"**{alert['title']}** — {alert['message']}"
+            if alert.get("severity") == "critical":
+                st.error(msg)
+            else:
+                st.warning(msg)
+
+    # Inline AI insight contextualised to current health snapshot
+    render_inline_ai_section(
+        topic="Data Health & Alerts",
+        snapshot={
+            "health": health,
+            "alerts": [a.get("title", "") + ": " + a.get("message", "") for a in (alerts or [])],
+        },
+        key_suffix="health",
+    )
 
 
 def show_run_comparison_tab() -> None:

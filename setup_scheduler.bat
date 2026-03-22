@@ -65,7 +65,7 @@ if %errorlevel% equ 0 (
     echo 5. View results in: output\default\optimizer_report.json
     echo.
     echo ========================================================================
-    echo MANUAL EXECUTION (without waiting for 2:00 AM):
+    echo MANUAL EXECUTION (without waiting for the scheduled time):
     echo ========================================================================
     echo.
     echo Run in PowerShell:
