@@ -66,7 +66,7 @@ Correlation Matrix Analysis Results:
 ANALYSIS_ELASTICITY = """
 Elasticity Analysis Results:
 - Measures how much asset returns change with macro factor changes
-- Formula: %Ξ”Asset / %Ξ”Macro Factor
+- Formula: %ΔAsset / %ΔMacro Factor
 - Values >1: Asset is elastic (volatile to macro changes)
 - Values <1: Asset is inelastic (stable despite macro changes)
 - Current elasticity: {elasticity_value}
@@ -124,4 +124,5 @@ Auto ML Regression Results:
 - Automated model comparison completed
 - Use for predictive modeling and factor analysis
 """
+
 

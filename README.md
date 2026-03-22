@@ -1,6 +1,6 @@
 ﻿# STRATUM QUANT ANALYTICS
 
-> **Macro-Driven Equity Risk Platform** β€” A production-grade financial analytics pipeline that ingests multi-source market data, processes it through a Medallion Architecture, and delivers quantitative risk insights via Monte Carlo simulation, sensitivity regression, and stress testing.
+> **Macro-Driven Equity Risk Platform** — A production-grade financial analytics pipeline that ingests multi-source market data, processes it through a Medallion Architecture, and delivers quantitative risk insights via Monte Carlo simulation, sensitivity regression, and stress testing.
 
 ---
 
@@ -24,65 +24,65 @@ The platform follows a structured quantitative methodology aligned with professi
 
 Two key quantitative choices underpin every calculation:
 
-### Log Returns β€” The Senior Standard
+### Log Returns — The Senior Standard
 Raw price differences are non-stationary and scale-dependent. **Log returns** `ln(P_t / P_{t-1})` are:
-- **Additive over time** β€” portfolio aggregation is algebraically clean
-- **Approximately normally distributed** β€” satisfying the assumptions of OLS regression
-- **Scale-invariant** β€” comparable across AAPL at $180 and XOM at $110
+- **Additive over time** — portfolio aggregation is algebraically clean
+- **Approximately normally distributed** — satisfying the assumptions of OLS regression
+- **Scale-invariant** — comparable across AAPL at $180 and XOM at $110
 
 ### Monte Carlo via Geometric Brownian Motion
 The simulation follows the GBM stochastic differential equation:
 
 ```
-dS = SΒ·ΞΌΒ·dt + SΒ·ΟƒΒ·dW
+dS = S·μ·dt + S·σ·dW
 ```
 
-Where `ΞΌ` is the drift (mean log-return), `Οƒ` is historical volatility, and `dW` is a Wiener process increment. With 10,000 paths, the output is a full probability distribution of future prices β€” not a single point estimate. This is the industry standard used by quant desks at major institutions.
+Where `μ` is the drift (mean log-return), `σ` is historical volatility, and `dW` is a Wiener process increment. With 10,000 paths, the output is a full probability distribution of future prices — not a single point estimate. This is the industry standard used by quant desks at major institutions.
 
 ---
 
 ## Architecture: Medallion Pipeline
 
 ```
-β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-β”‚                        DATA SOURCES                             β”‚
-β”‚   Yahoo Finance (Equities)  β”‚  FRED (Macro)  β”‚  World Bank      β”‚
-β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”΄β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”΄β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-               β”‚                       β”‚               β”‚
-               β–Ό                       β–Ό               β–Ό
-β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-β”‚  π¥‰ BRONZE LAYER  (data/users/<user_id>/raw/)                   β”‚
-β”‚  β€Ά Parallel fetch via ThreadPoolExecutor                        β”‚
-β”‚  β€Ά Retry logic (exponential back-off, max 4 retries)            β”‚
-β”‚  β€Ά Raw Parquet storage with full metadata catalog               β”‚
-β”‚  β€Ά Zero transformation β€” immutable audit trail                  β”‚
-β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-                               β”‚
-                               β–Ό
-β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-β”‚  π¥ SILVER LAYER  (data/users/<user_id>/processed/)             β”‚
-β”‚  β€Ά Pandera schema validation (type, range, null enforcement)    β”‚
-β”‚  β€Ά Winsorization at 1st/99th percentile (outlier dampening)     β”‚
-β”‚  β€Ά Z-score standardization (ΞΌ=0, Οƒ=1)                          β”‚
-β”‚  β€Ά Forward-fill imputation for missing macro data               β”‚
-β”‚  β€Ά ZSTD-compressed Parquet output                               β”‚
-β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”¬β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-                               β”‚
-                               β–Ό
-β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
-β”‚  π¥‡ GOLD LAYER  (data/users/<user_id>/gold/)                    β”‚
-β”‚  β€Ά Master Feature Table: time-aligned join across all sources   β”‚
-β”‚  β€Ά Log-return engineering per ticker                            β”‚
-β”‚  β€Ά Parallel AnalysisSuite execution                             β”‚
-β”‚                                                                 β”‚
-β”‚  β”β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”   β”‚
-β”‚  β”‚                    ANALYSIS SUITE                        β”‚   β”‚
-β”‚  β”‚  Monte Carlo GBM    β”‚  ARIMA Forecasting                 β”‚   β”‚
-β”‚  β”‚  Sensitivity OLS    β”‚  Elasticity Coefficient            β”‚   β”‚
-β”‚  β”‚  Correlation Matrix β”‚  Lag Analysis                      β”‚   β”‚
-β”‚  β”‚  Stress Testing     β”‚  Auto-ML (PyCaret, optional)       β”‚   β”‚
-β”‚  β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”   β”‚
-β””β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”€β”
+┌─────────────────────────────────────────────────────────────────┐
+│                        DATA SOURCES                             │
+│   Yahoo Finance (Equities)  │  FRED (Macro)  │  World Bank      │
+└──────────────┬──────────────┴────────┬────────┴──────┬──────────┘
+               │                       │               │
+               ▼                       ▼               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  🥉 BRONZE LAYER  (data/users/<user_id>/raw/)                   │
+│  • Parallel fetch via ThreadPoolExecutor                        │
+│  • Retry logic (exponential back-off, max 4 retries)            │
+│  • Raw Parquet storage with full metadata catalog               │
+│  • Zero transformation — immutable audit trail                  │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  🥈 SILVER LAYER  (data/users/<user_id>/processed/)             │
+│  • Pandera schema validation (type, range, null enforcement)    │
+│  • Winsorization at 1st/99th percentile (outlier dampening)     │
+│  • Z-score standardization (μ=0, σ=1)                          │
+│  • Forward-fill imputation for missing macro data               │
+│  • ZSTD-compressed Parquet output                               │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  🥇 GOLD LAYER  (data/users/<user_id>/gold/)                    │
+│  • Master Feature Table: time-aligned join across all sources   │
+│  • Log-return engineering per ticker                            │
+│  • Parallel AnalysisSuite execution                             │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                    ANALYSIS SUITE                        │   │
+│  │  Monte Carlo GBM    │  ARIMA Forecasting                 │   │
+│  │  Sensitivity OLS    │  Elasticity Coefficient            │   │
+│  │  Correlation Matrix │  Lag Analysis                      │   │
+│  │  Stress Testing     │  Auto-ML (PyCaret, optional)       │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -91,45 +91,45 @@ Where `ΞΌ` is the drift (mean log-return), `Οƒ` is historical volatility, an
 
 ```
 Stratum-Quant-Analytics/
-β”β”€β”€ UI/
-β”‚   β”β”€β”€ streamlit_app.py        # Main Streamlit entrypoint
-β”‚   β”β”€β”€ constants.py            # Shared UI paths, roles, and stage metadata
-β”‚   β””β”€β”€ helpers.py              # Shared UI utilities
-β”β”€β”€ Auditor.py                  # Independent system auditor
-β”β”€β”€ src/
-β”‚   β”β”€β”€ main.py                  # Entry point
-β”‚   β”β”€β”€ Fetchers/
-β”‚   β”‚   β”β”€β”€ ProjectConfig.py     # Environment-based configuration
-β”‚   β”‚   β”β”€β”€ Factory.py           # Fetcher factory (Strategy pattern)
-β”‚   β”‚   β”β”€β”€ FredFetcher.py       # FRED API client
-β”‚   β”‚   β”β”€β”€ YFinanceFetcher.py   # Yahoo Finance client
-β”‚   β”‚   β””β”€β”€ WorldBankFetcher.py  # World Bank API client
-β”‚   β”β”€β”€ Medallion/
-β”‚   β”‚   β”β”€β”€ MedallionPipeline.py # Pipeline orchestrator
-β”‚   β”‚   β”β”€β”€ bronze.py            # Bronze ingestion layer
-β”‚   β”‚   β”β”€β”€ silver/
-β”‚   β”‚   β”‚   β”β”€β”€ silver.py        # Silver transformation layer
-β”‚   β”‚   β”‚   β””β”€β”€ schema.py        # Pandera schemas
-β”‚   β”‚   β””β”€β”€ gold/
-β”‚   β”‚       β”β”€β”€ GoldLayer.py     # Master table builder + analysis runner
-β”‚   β”‚       β””β”€β”€ AnalysisSuite/
-β”‚   β”‚           β”β”€β”€ monte_carlo.py
-β”‚   β”‚           β”β”€β”€ forecasting.py
-β”‚   β”‚           β”β”€β”€ sensitivity_reg.py
-β”‚   β”‚           β”β”€β”€ elasticity.py
-β”‚   β”‚           β”β”€β”€ correl_mtrx.py
-β”‚   β”‚           β”β”€β”€ lag.py
-β”‚   β”‚           β”β”€β”€ stress_test.py
-β”‚   β”‚           β””β”€β”€ auto_ml.py   # Optional: requires pycaret
-β”‚   β”β”€β”€ logger/                  # Structured logging & catalog
-β”‚   β””β”€β”€ exceptions/              # Domain-specific exceptions
-β”β”€β”€ tests/                       # 32-test suite (pytest)
-β”β”€β”€ notebooks/
-β”‚   β””β”€β”€ demo_analysis.ipynb      # Interactive results demo
-β”β”€β”€ data/                        # Ignored by Git β€” generated at runtime
-β”β”€β”€ .env.example                 # Template for required secrets
-β”β”€β”€ pyproject.toml               # Poetry dependency management
-β””β”€β”€ .github/workflows/ci.yml     # Automated CI (ruff + pytest)
+├── UI/
+│   ├── streamlit_app.py        # Main Streamlit entrypoint
+│   ├── constants.py            # Shared UI paths, roles, and stage metadata
+│   └── helpers.py              # Shared UI utilities
+├── Auditor.py                  # Independent system auditor
+├── src/
+│   ├── main.py                  # Entry point
+│   ├── Fetchers/
+│   │   ├── ProjectConfig.py     # Environment-based configuration
+│   │   ├── Factory.py           # Fetcher factory (Strategy pattern)
+│   │   ├── FredFetcher.py       # FRED API client
+│   │   ├── YFinanceFetcher.py   # Yahoo Finance client
+│   │   └── WorldBankFetcher.py  # World Bank API client
+│   ├── Medallion/
+│   │   ├── MedallionPipeline.py # Pipeline orchestrator
+│   │   ├── bronze.py            # Bronze ingestion layer
+│   │   ├── silver/
+│   │   │   ├── silver.py        # Silver transformation layer
+│   │   │   └── schema.py        # Pandera schemas
+│   │   └── gold/
+│   │       ├── GoldLayer.py     # Master table builder + analysis runner
+│   │       └── AnalysisSuite/
+│   │           ├── monte_carlo.py
+│   │           ├── forecasting.py
+│   │           ├── sensitivity_reg.py
+│   │           ├── elasticity.py
+│   │           ├── correl_mtrx.py
+│   │           ├── lag.py
+│   │           ├── stress_test.py
+│   │           └── auto_ml.py   # Optional: requires pycaret
+│   ├── logger/                  # Structured logging & catalog
+│   └── exceptions/              # Domain-specific exceptions
+├── tests/                       # 32-test suite (pytest)
+├── notebooks/
+│   └── demo_analysis.ipynb      # Interactive results demo
+├── data/                        # Ignored by Git — generated at runtime
+├── .env.example                 # Template for required secrets
+├── pyproject.toml               # Poetry dependency management
+└── .github/workflows/ci.yml     # Automated CI (ruff + pytest)
 ```
 
 ---
@@ -312,5 +312,6 @@ All configuration is driven by environment variables (see `.env.example`):
 
 ## License
 
-CC BY-NC-ND 4.0 Β© 2026 EvangelGK. All Rights Reserved. See [LICENSE](LICENSE).
+CC BY-NC-ND 4.0 © 2026 EvangelGK. All Rights Reserved. See [LICENSE](LICENSE).
+
 

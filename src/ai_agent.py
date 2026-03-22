@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 
 import requests
 
-# β”€β”€ Module-level TTL caches (survive across Streamlit reruns in same process) β”€β”€
+# ── Module-level TTL caches (survive across Streamlit reruns in same process) ──
 # Avoids re-reading large JSON files and re-globbing logs on every question.
 _context_bundle_cache: dict[str, dict[str, Any]] = {}
 _CONTEXT_BUNDLE_TTL: float = 30.0  # seconds
@@ -53,63 +53,63 @@ except ModuleNotFoundError:
 
 # Suggested questions per UI section, shown as one-click chips
 PAGE_CONTEXT_QUESTIONS: dict[str, list[str]] = {
-    "π¤– Quantos Assistant": [
-        "Ξ ΞΏΞΉΞ± ΞµΞ―Ξ½Ξ±ΞΉ Ξ· ΟƒΟ…Ξ½ΞΏΞ»ΞΉΞΊΞ® ΞΊΞ±Ο„Ξ¬ΟƒΟ„Ξ±ΟƒΞ· Ο„ΞΏΟ… Ο„ΞµΞ»ΞµΟ…Ο„Ξ±Ξ―ΞΏΟ… run;",
-        "Ξ ΞΏΞΉΞµΟ‚ Ξ±Ξ½Ξ±Ξ»ΟΟƒΞµΞΉΟ‚ Ο‡ΟΞµΞΉΞ¬Ξ¶ΞΏΞ½Ο„Ξ±ΞΉ Ξ¬ΞΌΞµΟƒΞ· Ο€ΟΞΏΟƒΞΏΟ‡Ξ®;",
-        "Ξ•ΞΎΞ®Ξ³Ξ·ΟƒΞµ Ο„Ξ·Ξ½ governance Ξ±Ο€ΟΟ†Ξ±ΟƒΞ· ΞΊΞ±ΞΉ Ο„ΞΏ risk score.",
-        "Ξ ΞΏΞΉΞµΟ‚ ΞµΞ―Ξ½Ξ±ΞΉ ΞΏΞΉ 3 ΞµΞ½Ξ­ΟΞ³ΞµΞΉΞµΟ‚ Ξ²ΞµΞ»Ο„Ξ―Ο‰ΟƒΞ·Ο‚ Ξ±ΞΎΞΉΞΏΟ€ΞΉΟƒΟ„Ξ―Ξ±Ο‚;",
+    "🤖 Quantos Assistant": [
+        "Ποια είναι η συνολική κατάσταση του τελευταίου run;",
+        "Ποιες αναλύσεις χρειάζονται άμεση προσοχή;",
+        "Εξήγησε την governance απόφαση και το risk score.",
+        "Ποιες είναι οι 3 ενέργειες βελτίωσης αξιοπιστίας;",
     ],
-    "π©Ί Health & Alerts": [
-        "Ξ“ΞΉΞ±Ο„Ξ― Ο„ΞΏ data health score ΞµΞ―Ξ½Ξ±ΞΉ ΟƒΟ„ΞΏ Ο„ΟΞ­Ο‡ΞΏΞ½ ΞµΟ€Ξ―Ο€ΞµΞ΄ΞΏ;",
-        "Ξ ΞΏΞΉΞµΟ‚ ΞµΞ»Ξ»ΞµΞ―Ο€ΞΏΟ…ΟƒΞµΟ‚ Ο€Ξ·Ξ³Ξ­Ο‚ ΞµΟ€Ξ·ΟΞµΞ¬Ξ¶ΞΏΟ…Ξ½ Ο„Ξ± Ξ±Ο€ΞΏΟ„ΞµΞ»Ξ­ΟƒΞΌΞ±Ο„Ξ±;",
-        "Ξ ΟΟƒΞΏ ΞΊΟΞ―ΟƒΞΉΞΌΞ± Ο„Ξ± alerts ΞΊΞ±ΞΉ Ο„ΞΉ Ο€ΟΞ­Ο€ΞµΞΉ Ξ½Ξ± Ξ³Ξ―Ξ½ΞµΞΉ;",
-        "Ξ ΞΏΞΉΞΏ penalty ΞΌΞµΞΉΟΞ½ΞµΞΉ Ο€ΞµΟΞΉΟƒΟƒΟΟ„ΞµΟΞΏ Ο„ΞΏ health score;",
+    "🩺 Health & Alerts": [
+        "Γιατί το data health score είναι στο τρέχον επίπεδο;",
+        "Ποιες ελλείπουσες πηγές επηρεάζουν τα αποτελέσματα;",
+        "Πόσο κρίσιμα τα alerts και τι πρέπει να γίνει;",
+        "Ποιο penalty μειώνει περισσότερο το health score;",
     ],
-    "π§ Auditor": [
-        "Ξ¤ΞΉ ΟƒΞ·ΞΌΞ±Ξ―Ξ½ΞΏΟ…Ξ½ ΟƒΟ„Ξ·Ξ½ Ο€ΟΞ¬ΞΎΞ· Ο„Ξ± failed audit checks;",
-        "Ξ•Ξ―Ξ½Ξ±ΞΉ Ξ±Ο€ΞΏΞ΄ΞµΞΊΟ„Ο Ο„ΞΏ OOS RΒ² Ξ³ΞΉΞ± production Ο‡ΟΞ®ΟƒΞ·;",
-        "Ξ•ΞΎΞ®Ξ³Ξ·ΟƒΞµ Ο„ΞΏ model risk score ΞΊΞ±ΞΉ Ο„ΞΉΟ‚ Ο€ΟΞΏΞµΞΊΟ„Ξ¬ΟƒΞµΞΉΟ‚ Ο„ΞΏΟ….",
-        "Ξ¤ΞΉ Ο€ΟΞ­Ο€ΞµΞΉ Ξ½Ξ± Ξ΄ΞΉΞΏΟΞΈΟΟƒΟ‰ Ξ³ΞΉΞ± Ξ½Ξ± Ο€ΞµΟΞ¬ΟƒΞµΞΉ Ο„ΞΏ audit;",
+    "🧪 Auditor": [
+        "Τι σημαίνουν στην πράξη τα failed audit checks;",
+        "Είναι αποδεκτό το OOS R² για production χρήση;",
+        "Εξήγησε το model risk score και τις προεκτάσεις του.",
+        "Τι πρέπει να διορθώσω για να περάσει το audit;",
     ],
-    "π›΅οΈ Governance": [
-        "Ξ Ξ­ΟΞ±ΟƒΞµ Ξ® Ξ±Ο€Ξ­Ο„Ο…Ο‡Ξµ Ο„ΞΏ governance ΞΊΞ±ΞΉ Ξ³ΞΉΞ±Ο„Ξ―;",
-        "Ξ ΞΏΞΉΞΏΟ‚ ΞµΞ―Ξ½Ξ±ΞΉ ΞΏ ΞΊΞ―Ξ½Ξ΄Ο…Ξ½ΞΏΟ‚ publication lag;",
-        "Ξ ΟΞ­Ο€ΞµΞΉ Ξ½Ξ± ΞµΞΌΟ€ΞΉΟƒΟ„ΞµΟ…ΞΈΟ Ο„Ξ± walk-forward Ξ±Ο€ΞΏΟ„ΞµΞ»Ξ­ΟƒΞΌΞ±Ο„Ξ±;",
-        "Ξ¤ΞΉ ΟƒΞ·ΞΌΞ±Ξ―Ξ½ΞµΞΉ Ο„ΞΏ severity level Ο„ΞΏΟ… governance gate;",
+    "🛡️ Governance": [
+        "Πέρασε ή απέτυχε το governance και γιατί;",
+        "Ποιος είναι ο κίνδυνος publication lag;",
+        "Πρέπει να εμπιστευθώ τα walk-forward αποτελέσματα;",
+        "Τι σημαίνει το severity level του governance gate;",
     ],
-    "π“ Analytics": [
-        "Ξ¤ΞΉ ΞΌΞ±Ο‚ Ξ»Ξ­ΞµΞΉ Ο„ΞΏ Ο„ΟΞ­Ο‡ΞΏΞ½ elasticity Ξ²;",
-        "Ξ ΟΟ‚ Ξ½Ξ± ΞµΟΞΌΞ·Ξ½ΞµΟΟƒΟ‰ Ο„Ξ± Monte Carlo risk metrics;",
-        "Ξ ΞΏΞΉΞΏΞΉ stress factors Ξ­Ο‡ΞΏΟ…Ξ½ Ο„ΞΏΞ½ ΞΌΞµΞ³Ξ±Ξ»ΟΟ„ΞµΟΞΏ Ξ±Ξ½Ο„Ξ―ΞΊΟ„Ο…Ο€ΞΏ;",
-        "Ξ ΟΟƒΞΏ Ξ±ΞΎΞΉΟΟ€ΞΉΟƒΟ„ΞΏ ΞµΞ―Ξ½Ξ±ΞΉ Ο„ΞΏ volatility forecast;",
+    "📈 Analytics": [
+        "Τι μας λέει το τρέχον elasticity β;",
+        "Πώς να ερμηνεύσω τα Monte Carlo risk metrics;",
+        "Ποιοι stress factors έχουν τον μεγαλύτερο αντίκτυπο;",
+        "Πόσο αξιόπιστο είναι το volatility forecast;",
     ],
-    "π›οΈ Scenario Builder": [
-        "Ξ•Ξ―Ξ½Ξ±ΞΉ ΟΞµΞ±Ξ»ΞΉΟƒΟ„ΞΉΞΊΞ¬ Ο„Ξ± scenario shocks;",
-        "Ξ ΟΟƒΞΏ Ξ±ΞΎΞΉΟΟ€ΞΉΟƒΟ„Ξ· ΞµΞ―Ξ½Ξ±ΞΉ Ξ· ΞµΞΊΟ„Ξ―ΞΌΞ·ΟƒΞ· impact;",
-        "Ξ ΞΏΞΉΞΏ scenario ΞµΞ―Ξ½Ξ±ΞΉ Ο€ΞΉΞΏ ΞµΟ€ΞΉΞΊΞ―Ξ½Ξ΄Ο…Ξ½ΞΏ Ξ³ΞΉΞ± Ο„ΞΏ Ο‡Ξ±ΟΟ„ΞΏΟ†Ο…Ξ»Ξ¬ΞΊΞΉΞΏ;",
+    "🎛️ Scenario Builder": [
+        "Είναι ρεαλιστικά τα scenario shocks;",
+        "Πόσο αξιόπιστη είναι η εκτίμηση impact;",
+        "Ποιο scenario είναι πιο επικίνδυνο για το χαρτοφυλάκιο;",
     ],
-    "π“ Run Comparison": [
-        "Ξ•Ξ―Ξ½Ξ±ΞΉ ΟƒΞ·ΞΌΞ±Ξ½Ο„ΞΉΞΊΞ® Ξ· Ξ±Ξ»Ξ»Ξ±Ξ³Ξ® runtime ΞΌΞµΟ„Ξ±ΞΎΟ runs;",
-        "Ξ¤ΞΉ Ο€ΟΞΏΞΊΞ¬Ξ»ΞµΟƒΞµ Ο„Ξ·Ξ½ Ξ±Ξ»Ξ»Ξ±Ξ³Ξ® ΟƒΟ„ΞΏΞ½ Ξ±ΟΞΉΞΈΞΌΟ operations;",
+    "📊 Run Comparison": [
+        "Είναι σημαντική η αλλαγή runtime μεταξύ runs;",
+        "Τι προκάλεσε την αλλαγή στον αριθμό operations;",
     ],
-    "β™οΈ Ops": [
-        "Ξ¥Ο€Ξ¬ΟΟ‡ΞΏΟ…Ξ½ operational ΞΊΞ―Ξ½Ξ΄Ο…Ξ½ΞΏΞΉ;",
-        "Ξ¤ΞΉ ΟƒΞ·ΞΌΞ±Ξ―Ξ½ΞΏΟ…Ξ½ Ο„Ξ± source coverage issues;",
-        "Ξ ΞΏΞΉΞ± ΞµΞ―Ξ½Ξ±ΞΉ Ξ· Ο…Ξ³ΞµΞ―Ξ± Ο„ΞΏΟ… pipeline scheduler;",
+    "⚙️ Ops": [
+        "Υπάρχουν operational κίνδυνοι;",
+        "Τι σημαίνουν τα source coverage issues;",
+        "Ποια είναι η υγεία του pipeline scheduler;",
     ],
-    "π—‚οΈ Data": [
-        "Ξ ΞΏΞΉΞΏ layer Ξ­Ο‡ΞµΞΉ Ο„Ξ± Ο€ΞµΟΞΉΟƒΟƒΟΟ„ΞµΟΞ± Ο€ΟΞΏΞ²Ξ»Ξ®ΞΌΞ±Ο„Ξ± Ο€ΞΏΞΉΟΟ„Ξ·Ο„Ξ±Ο‚;",
-        "Ξ“ΞΉΞ±Ο„Ξ― Ο…Ο€Ξ¬ΟΟ‡ΞΏΟ…Ξ½ ΞΊΞµΞ½Ξ¬ ΟƒΟ„Ξ± raw Ξ΄ΞµΞ΄ΞΏΞΌΞ­Ξ½Ξ±;",
-        "Ξ ΞΏΞΉΞΏΟ‚ Ξ­Ξ»ΞµΞ³Ο‡ΞΏΟ‚ silver Ξ±Ο€ΞΏΟ„Ο…Ο‡Ξ±Ξ―Ξ½ΞµΞΉ ΟƒΟ…Ο‡Ξ½ΟΟ„ΞµΟΞ±;",
+    "🗂️ Data": [
+        "Ποιο layer έχει τα περισσότερα προβλήματα ποιότητας;",
+        "Γιατί υπάρχουν κενά στα raw δεδομένα;",
+        "Ποιος έλεγχος silver αποτυχαίνει συχνότερα;",
     ],
-    "π§  Explainability": [
-        "Ξ“ΞΉΞ±Ο„Ξ― Ξ¬Ξ»Ξ»Ξ±ΞΎΞ±Ξ½ Ο„Ξ± Ξ±Ο€ΞΏΟ„ΞµΞ»Ξ­ΟƒΞΌΞ±Ο„Ξ± ΟƒΞµ ΟƒΟ‡Ξ­ΟƒΞ· ΞΌΞµ Ο„ΞΏ Ο€ΟΞΏΞ·Ξ³ΞΏΟΞΌΞµΞ½ΞΏ run;",
-        "Ξ ΞΏΞΉΞΏΟ‚ Ο€Ξ±ΟΞ¬Ξ³ΞΏΞ½Ο„Ξ±Ο‚ ΞµΟ€Ξ·ΟΞµΞ¬Ξ¶ΞµΞΉ Ο€ΞµΟΞΉΟƒΟƒΟΟ„ΞµΟΞΏ Ο„ΞΉΟ‚ Ξ±Ο€ΞΏΞ΄ΟΟƒΞµΞΉΟ‚;",
-        "Ξ•ΞΎΞ®Ξ³Ξ·ΟƒΞµ Ο„Ξ·Ξ½ Ξ±Ξ»Ξ»Ξ±Ξ³Ξ® ΟƒΟ„ΞΏ elasticity ΟƒΞµ Ξ±Ο€Ξ»Ξ® Ξ³Ξ»ΟΟƒΟƒΞ±.",
+    "🧠 Explainability": [
+        "Γιατί άλλαξαν τα αποτελέσματα σε σχέση με το προηγούμενο run;",
+        "Ποιος παράγοντας επηρεάζει περισσότερο τις αποδόσεις;",
+        "Εξήγησε την αλλαγή στο elasticity σε απλή γλώσσα.",
     ],
-    "π§Ύ Reports": [
-        "Ξ ΞΏΞΉΞ± ΞµΞ―Ξ½Ξ±ΞΉ Ο„Ξ± Ξ²Ξ±ΟƒΞΉΞΊΞ¬ ΞµΟ…ΟΞ®ΞΌΞ±Ο„Ξ± Ξ³ΞΉΞ± Ο„Ξ· Ξ΄ΞΉΞΏΞ―ΞΊΞ·ΟƒΞ·;",
-        "Ξ£Ξµ Ο€ΞΏΞΉΞΏ ΟƒΞ·ΞΌΞµΞ―ΞΏ Ο…Ο€Ξ¬ΟΟ‡ΞµΞΉ ΞΏ ΞΌΞµΞ³Ξ±Ξ»ΟΟ„ΞµΟΞΏΟ‚ ΞΊΞ―Ξ½Ξ΄Ο…Ξ½ΞΏΟ‚;",
+    "🧾 Reports": [
+        "Ποια είναι τα βασικά ευρήματα για τη διοίκηση;",
+        "Σε ποιο σημείο υπάρχει ο μεγαλύτερος κίνδυνος;",
     ],
 }
 
@@ -153,11 +153,11 @@ class QuantosAgent:
         Performance: checks Gemini API key first (O(1)) to avoid blocking
         network probes. Ollama probe is only done when no Gemini key is present.
         """
-        # Fast path: Gemini key present β†’ go online immediately, no network probe
+        # Fast path: Gemini key present → go online immediately, no network probe
         if self._get_gemini_api_key():
             return "online"
 
-        # Ollama probe β€” very short timeout so UI never blocks > ~1s
+        # Ollama probe — very short timeout so UI never blocks > ~1s
         try:
             response = requests.get(
                 f"{self._base_url()}/api/tags",
@@ -532,7 +532,7 @@ class QuantosAgent:
     ) -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
         # Use lean context: removes full JSON files, keeps only key signals.
-        # This cuts LLM input from megabytes to ~2-4 KB β†’ much faster generation.
+        # This cuts LLM input from megabytes to ~2-4 KB → much faster generation.
         lean = self._lean_prompt_context(context_bundle)
         if current_page:
             lean["user_current_page"] = current_page
@@ -544,7 +544,7 @@ class QuantosAgent:
         prompt = (
             "You are Quantos, the in-app quantitative copilot for STRATUM QUANT ANALYTICS. "
             "Answer in detailed, structured English by default. Use sections with headers (##) and bullet points where appropriate. "
-            "Give complete, practical explanations and concrete next steps β€” never truncate or summarise without evidence. "
+            "Give complete, practical explanations and concrete next steps — never truncate or summarise without evidence. "
             "Use ONLY the provided context. If data for a specific question is missing from the context, say so clearly but still answer what you can.\n"
             f"{page_hint}"
             f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}\n"
@@ -646,4 +646,5 @@ def generate_ai_pipeline_brief(user_id: str = "default") -> dict[str, Any]:
 
 # Backward-compatible alias for existing imports/tests.
 ScenarioAIAgent = QuantosAgent
+
 

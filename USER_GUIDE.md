@@ -96,7 +96,7 @@ Shows relationships between financial assets and macro factors.
 
 ### 2. Elasticity Analysis
 Measures how much asset returns change with economic changes.
-- Formula: % Change in Asset Γ· % Change in Economic Factor
+- Formula: % Change in Asset ÷ % Change in Economic Factor
 - Values >1: Asset is very sensitive to economic changes
 - Values <1: Asset is relatively stable
 - Helps assess pricing power and market sensitivity
@@ -270,3 +270,4 @@ Edit `src/Fetchers/ProjectConfig.py` for:
 **Version**: 1.0
 **Last Updated**: March 2026
 **Contact**: Developer documentation for technical support
+

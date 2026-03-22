@@ -512,3 +512,4 @@ class ApplicationCatalog:
 # Global catalog instance
 catalog = ApplicationCatalog()
 
+

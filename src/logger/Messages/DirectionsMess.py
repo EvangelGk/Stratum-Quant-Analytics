@@ -305,3 +305,4 @@ AVAILABLE ANALYSES:
 Each analysis provides specific insights for scenario planning.
 """
 
+

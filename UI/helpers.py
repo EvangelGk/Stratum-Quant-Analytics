@@ -245,7 +245,7 @@ def build_executive_report_html() -> str:
                         oos = (report_val.get("out_of_sample") or {}).get("r2")
                         risk = report_val.get("model_risk_score")
                         if isinstance(oos, (int, float)) and isinstance(risk, (int, float)):
-                            highlight = f"OOS RΒ²={oos:.4f}, Risk={risk:.3f}"
+                            highlight = f"OOS R²={oos:.4f}, Risk={risk:.3f}"
                     elif key == "governance_gate":
                         passed = report_val.get("passed")
                         severity = report_val.get("severity")
@@ -432,4 +432,5 @@ def correlation_strength_from_output() -> float | None:
         return float(curr_df[numeric_cols].abs().mean().mean())
     except Exception:
         return None
+
 
