@@ -303,20 +303,31 @@ def main() -> None:
 
 
 def _render_footer() -> None:
-    """Render footer with copyright and license attribution."""
-    st.divider()
-    col_left, col_right = st.columns([1, 1])
-    
-    with col_left:
-        st.caption(
-            "© 2026 EvangelGK. All Rights Reserved. | "
-            "[License (CC BY-NC-ND)](https://creativecommons.org/licenses/by-nc-nd/4.0/)"
-        )
-    
-    with col_right:
-        st.caption("🔒 This project is protected under CC BY-NC-ND 4.0")
-
-    st.caption("Copyright (c) 2026 EvangelGK. All Rights Reserved.")
+    """Render fixed bottom-right copyright badge."""
+    st.markdown(
+        """
+        <style>
+        .copyright-fixed {
+            position: fixed;
+            right: 16px;
+            bottom: 10px;
+            z-index: 9999;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            border-radius: 10px;
+            padding: 6px 10px;
+            font-size: 12px;
+            color: #111111;
+            backdrop-filter: blur(2px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        }
+        </style>
+        <div class="copyright-fixed">
+            CC BY-NC-ND 4.0 © 2026 EvangelGK. All Rights Reserved
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
