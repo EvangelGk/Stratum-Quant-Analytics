@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
+
 import json
 import os
 import subprocess
@@ -13,11 +15,18 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import requests
 
+try:
+    from src.secret_store import bootstrap_env_from_secrets
+except ModuleNotFoundError:
+    from secret_store import bootstrap_env_from_secrets
+
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig, RunMode
 from Medallion.MedallionPipeline import MedallionPipeline
 from Medallion.gold.AnalysisSuite.sensitivity_reg import sensitivity_reg
 from Medallion.silver import contracts as silver_contracts
+
+bootstrap_env_from_secrets(override=False)
 
 
 @dataclass
@@ -106,7 +115,7 @@ class LlamaQuantAnalyzer:
         "Fetchers/WorldBankFetcher.py",
     ]
 
-    SYSTEM_PROMPT = """You are a Senior Quant Data Fixer AI Agent embedded in a financial scenario-planner pipeline.
+    SYSTEM_PROMPT = """You are Quantos, a Senior Quant Data Fixer agent embedded in a financial scenario-planner pipeline.
 
 You have access to the actual Python source code of the project. Use it to give PRECISE, FILE-SPECIFIC fixes.
 
@@ -558,7 +567,7 @@ class ApprovalGateway:
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
         chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
         if not bot_token or not chat_id:
-            return False, "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in environment or .env"
+            return False, "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in secrets.toml or environment"
         try:
             resp = requests.post(
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
@@ -576,14 +585,29 @@ class ApprovalGateway:
         self._load_env_once()
         action = str(entry.get("description", "Approval pending"))
         details = entry.get("details", {})
-        # Include a short Llama analysis snippet if present
+        # Include problem + proposed solution from Llama output when available.
         llama_snippet = ""
         if isinstance(details, dict) and details.get("llama_analysis"):
             raw = str(details["llama_analysis"])
-            # Extract ---PROBLEM--- section for the notification
-            if "---PROBLEM---" in raw:
-                prob = raw.split("---PROBLEM---", 1)[1].split("---", 1)[0].strip()
-                llama_snippet = f"\n\n<b>AI found:</b>\n{prob[:300]}"
+
+            def _extract_section(text: str, section: str) -> str:
+                marker = f"---{section}---"
+                if marker not in text:
+                    return ""
+                tail = text.split(marker, 1)[1]
+                next_marker_idx = tail.find("---")
+                value = tail[:next_marker_idx] if next_marker_idx != -1 else tail
+                return value.strip()
+
+            prob = _extract_section(raw, "PROBLEM")
+            solution = _extract_section(raw, "SOLUTION")
+            snippets: List[str] = []
+            if prob:
+                snippets.append(f"<b>AI found:</b>\n{prob[:350]}")
+            if solution:
+                snippets.append(f"<b>AI proposed fix:</b>\n{solution[:350]}")
+            if snippets:
+                llama_snippet = "\n\n" + "\n\n".join(snippets)
 
         message = (
             "\U0001F6A8 <b>Scenario Planner — Approval Required</b>\n"
@@ -1810,7 +1834,7 @@ class AutomatedOptimizationLoop:
         gate = self._ensure_approval_gateway()
         approved = gate.request(
             action_id=f"iter{iteration}_serious_{issue_type}",
-            description=f"[LLAMA AI] Serious problem: {issue_type} — {'code changes proposed' if has_changes else 'no code changes'}",
+            description=f"[QUANTOS] Serious problem: {issue_type} — {'code changes proposed' if has_changes else 'no code changes'}",
             details={
                 "iteration": iteration,
                 "issue_type": issue_type,
@@ -1825,19 +1849,19 @@ class AutomatedOptimizationLoop:
             applied = self._llama.apply_code_changes(analysis)
             change_summary = "; ".join(applied)
             return True, (
-                f"[LLAMA AI] {issue_type} fix approved.\n"
+                f"[QUANTOS] {issue_type} fix approved.\n"
                 f"Auto-applied changes: {change_summary}\n"
                 f"Full analysis:\n{analysis[:800]}"
             )
         elif approved:
             return True, (
-                f"[LLAMA AI] {issue_type} fix approved (no code changes to apply).\n"
+                f"[QUANTOS] {issue_type} fix approved (no code changes to apply).\n"
                 f"Analysis:\n{analysis[:800]}"
             )
         else:
             # Still include the full Llama analysis so the owner can review what was proposed
             return False, (
-                f"[LLAMA AI] {issue_type} REJECTED by owner — skipped.\n"
+                f"[QUANTOS] {issue_type} REJECTED by owner — skipped.\n"
                 f"AI proposed the following (not applied):\n{analysis[:1200]}"
             )
 
@@ -1847,23 +1871,23 @@ class AutomatedOptimizationLoop:
         gate = self._ensure_approval_gateway()
 
         # ── Autonomous Llama bug scan (runs once before the optimization loop) ──
-        print("\n[LLAMA AI] Pre-run: Scanning project source files for latent bugs...")
+        print("\n[QUANTOS] Pre-run: Scanning project source files for latent bugs...")
         bug_scan = self._llama.scan_for_bugs()
         if bug_scan["success"] and not bug_scan["no_bugs_found"] and bug_scan["has_code_changes"]:
             approved = gate.request(
                 action_id="pre_run_bug_scan",
-                description="[LLAMA AI] Pre-run scan found latent bugs — code changes proposed",
+                description="[QUANTOS] Pre-run scan found latent bugs — code changes proposed",
                 details={"llama_analysis": bug_scan["analysis"]},
             )
             if approved:
                 applied = self._llama.apply_code_changes(bug_scan["analysis"])
-                print(f"[LLAMA AI] Bug fixes applied: {'; '.join(applied)}")
+                print(f"[QUANTOS] Bug fixes applied: {'; '.join(applied)}")
             else:
-                print("[LLAMA AI] Bug fix proposals REJECTED by owner — continuing without changes")
+                print("[QUANTOS] Bug fix proposals REJECTED by owner — continuing without changes")
         elif bug_scan["success"] and bug_scan["no_bugs_found"]:
-            print("[LLAMA AI] No latent bugs found in source files.")
+            print("[QUANTOS] No latent bugs found in source files.")
         elif not bug_scan["success"]:
-            print(f"[LLAMA AI] Bug scan skipped (Ollama unreachable): {bug_scan.get('analysis', '')[:120]}")
+            print(f"[QUANTOS] Bug scan skipped (Ollama unreachable): {bug_scan.get('analysis', '')[:120]}")
         # ─────────────────────────────────────────────────────────────────────────
 
         # ── Run-start notification ─────────────────────────────────────────────

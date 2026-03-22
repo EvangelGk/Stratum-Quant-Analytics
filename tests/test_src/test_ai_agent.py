@@ -148,7 +148,7 @@ def test_page_context_questions_all_values_are_lists():
 
 
 def test_page_context_questions_has_ai_assistant_key():
-    assert "🤖 AI Assistant" in PAGE_CONTEXT_QUESTIONS
+    assert "🤖 Quantos Assistant" in PAGE_CONTEXT_QUESTIONS
 
 
 # ── ping() ────────────────────────────────────────────────────────────────────

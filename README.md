@@ -10,7 +10,19 @@ Traditional investment analysis treats equities and macro factors in silos. This
 
 > *"If inflation spikes 10% or energy prices surge 20%, what happens to my portfolio returns?"*
 
-Two key methodological choices underpin every calculation:
+Methodological discipline is the core design principle: explicit assumptions, reproducible transforms, and auditable outputs at every layer.
+
+## Methodology
+
+The platform follows a structured quantitative methodology aligned with professional risk workflows:
+
+1. Data provenance first: all raw ingestion is preserved in Bronze with immutable artifacts.
+2. Contract-driven validation: Silver enforces schema, null, and outlier guardrails before analysis.
+3. Econometric integrity checks: governance gates evaluate leakage risk, shift, walk-forward stability, and model-risk scoring.
+4. Risk in distributions, not points: Monte Carlo and stress outputs are interpreted as uncertainty bands.
+5. Human-in-the-loop remediation: Quantos can propose code changes, but application is approval-gated.
+
+Two key quantitative choices underpin every calculation:
 
 ### Log Returns — The Senior Standard
 Raw price differences are non-stationary and scale-dependent. **Log returns** `ln(P_t / P_{t-1})` are:
@@ -144,6 +156,10 @@ cp .env.example .env
 # Edit .env and fill in your FRED_API_KEY
 ```
 
+For hosted/secure deployments, prefer `.streamlit/secrets.toml` for all API/access keys
+(`FRED_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) and avoid
+putting real secrets in source-controlled files.
+
 ### 3. Run
 
 ```bash
@@ -167,6 +183,33 @@ poetry run jupyter notebook notebooks/demo_analysis.ipynb
 The Streamlit UI now includes an `Auditor` tab. After every successful pipeline run,
 the system automatically executes `Auditor.py`, stores the result under
 `output/<user_id>/audit_report.json`, and surfaces the report in the UI.
+
+---
+
+## Public Release & Streamlit Deploy Checklist
+
+Before switching the repository to public and deploying on Streamlit Cloud:
+
+1. Confirm secrets are not tracked:
+    - `.env` and `.streamlit/secrets.toml` must stay gitignored.
+2. Add production secrets in Streamlit Cloud only:
+    - `FRED_API_KEY`
+    - `GEMINI_API_KEY`
+    - optional: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+3. Ensure dependency manifests are present:
+    - `requirements.txt` (Python dependencies)
+    - `packages.txt` (system packages for Linux deployment)
+4. Verify CI is green on your default branch before publishing.
+5. If any key was ever exposed locally, rotate it before making repo public.
+
+### Streamlit Cloud
+
+1. Create app on Streamlit Cloud from this GitHub repo.
+2. Set entrypoint to `UI/streamlit_app.py`.
+3. Add secrets via App Settings -> Secrets.
+4. Deploy and validate:
+    - Sidebar API status is green for required keys.
+    - Quantos Assistant loads without backend errors.
 
 ---
 
@@ -269,4 +312,4 @@ All configuration is driven by environment variables (see `.env.example`):
 
 ## License
 
-MIT © 2026 EvangelGK — see [LICENSE](LICENSE).
+CC BY-NC-ND 4.0 © 2026 EvangelGK. All Rights Reserved. See [LICENSE](LICENSE).

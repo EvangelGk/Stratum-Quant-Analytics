@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
+
 import sys
 from pathlib import Path
 
@@ -14,6 +16,10 @@ from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS
 from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_message, show_kpis
 from UI.runtime import clear_all_run_history, run_and_cache_audit, run_pipeline, show_pipeline_failure
 from UI.runtime import run_optimizer_background
+try:
+    from src.secret_store import get_secret
+except ModuleNotFoundError:
+    from src.secret_store import get_secret
 from UI.tabs import (
     render_sidebar_ai_widget,
     show_ai_assistant_tab,
@@ -32,10 +38,41 @@ from UI.tabs import (
 )
 
 
+def _render_api_keys_status() -> None:
+    """Render required API key connectivity status in the sidebar."""
+    fred_key = (get_secret("FRED_API_KEY") or "").strip()
+    gemini_key = (get_secret("GEMINI_API_KEY") or "").strip()
+
+    connected = []
+    missing = []
+    if fred_key:
+        connected.append("FRED_API_KEY")
+    else:
+        missing.append("FRED_API_KEY")
+
+    if gemini_key:
+        connected.append("GEMINI_API_KEY")
+    else:
+        missing.append("GEMINI_API_KEY")
+
+    st.markdown("### 🔐 API Keys Status")
+    if not missing:
+        st.success("🟢 Connected: όλα τα αναγκαία API keys είναι διαθέσιμα")
+    else:
+        st.error("🔴 Missing: λείπει 1 ή περισσότερα αναγκαία API keys")
+
+    st.caption(f"Connected ({len(connected)}/2): {', '.join(connected) if connected else 'none'}")
+    if missing:
+        st.caption(f"Missing: {', '.join(missing)}")
+
+
 def _render_sidebar() -> str:
     with st.sidebar:
         role = st.selectbox("Role", options=["Viewer", "Analyst", "Admin"], index=1)
         perms = ROLE_PERMISSIONS[role]
+
+        _render_api_keys_status()
+        st.markdown("---")
 
         with st.expander("Role meaning", expanded=False):
             st.markdown("- Viewer: read-only access to dashboards and artifacts.")
@@ -211,7 +248,7 @@ def main() -> None:
     show_kpis()
 
     pages = [
-        "🤖 AI Assistant",
+        "🤖 Quantos Assistant",
         "🩺 Health & Alerts",
         "🧪 Auditor",
         "📊 Run Comparison",
@@ -230,7 +267,7 @@ def main() -> None:
     if selected_page:
         st.session_state["selected_page"] = selected_page
 
-    if selected_page == "🤖 AI Assistant":
+    if selected_page == "🤖 Quantos Assistant":
         show_ai_assistant_tab()
     elif selected_page == "🩺 Health & Alerts":
         show_health_alerts_tab()
@@ -274,6 +311,8 @@ def _render_footer() -> None:
     
     with col_right:
         st.caption("🔒 This project is protected under CC BY-NC-ND 4.0")
+
+    st.caption("Copyright (c) 2026 EvangelGK. All Rights Reserved.")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+try:
+    from src.secret_store import bootstrap_env_from_secrets
+except ModuleNotFoundError:
+    from secret_store import bootstrap_env_from_secrets
+
 
 class RunMode(Enum):
     SAMPLE = "sample"
@@ -183,6 +188,7 @@ class ProjectConfig:
     @classmethod
     def load_from_env(cls) -> "ProjectConfig":
         load_dotenv()
+        bootstrap_env_from_secrets(override=False)
 
         # FRED is optional by architecture (Factory/Bronze can skip it).
         raw_key = os.getenv("FRED_API_KEY", "")

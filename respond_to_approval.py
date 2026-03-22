@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
 """
 Approval Queue Manager - Simple CLI tool to approve/reject pending optimizer requests
 

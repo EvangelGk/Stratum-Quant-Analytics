@@ -1,4 +1,4 @@
-from src.exceptions.AIAgentExceptions import (
+from .AIAgentExceptions import (
     AIAgentError,
     AIAgentConfigError,
     AIContextError,
@@ -15,7 +15,7 @@ from src.exceptions.AIAgentExceptions import (
     MissingContextError,
     ModelNotFoundError,
 )
-from src.exceptions.FetchersExceptions import (
+from .FetchersExceptions import (
     APIError,
     APIUnavailableError,
     AuthenticationError,
@@ -41,7 +41,7 @@ from src.exceptions.FetchersExceptions import (
     TimeoutError,
     UnexpectedFetcherError,
 )
-from src.exceptions.LoggerExceptions import (
+from .LoggerExceptions import (
     CloudLoggerError,
     DiskFullError,
     ExternalLoggerError,
@@ -65,7 +65,7 @@ from src.exceptions.LoggerExceptions import (
     StreamHandlerError,
     UnexpectedLoggerError,
 )
-from src.exceptions.MedallionExceptions import (
+from .MedallionExceptions import (
     AnalysisError,
     CatalogNotFoundError,
     CloudDownloadError,
@@ -87,7 +87,7 @@ from src.exceptions.MedallionExceptions import (
     ThreadPoolError,
     TransformationError,
 )
-from src.exceptions.StreamlitExceptions import (
+from .StreamlitExceptions import (
     AlertGenerationError,
     ChartRenderError,
     ComponentRenderError,

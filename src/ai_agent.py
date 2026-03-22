@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
+
 import json
 import os
 from datetime import datetime
@@ -8,23 +10,42 @@ from typing import Any, Dict, List
 
 import requests
 
-from src.exceptions.AIAgentExceptions import (
-    AIAgentConfigError,
-    AIOutputError,
-    BackendSelectionError,
-    ContextSerializationError,
-    LLMAuthenticationError,
-    LLMConnectionError,
-    LLMResponseError,
-    LLMTimeoutError,
-    LLMUnavailableError,
-    ModelNotFoundError,
-)
+try:
+    from src.secret_store import bootstrap_env_from_secrets, get_secret
+except ModuleNotFoundError:
+    from secret_store import bootstrap_env_from_secrets, get_secret
+
+try:
+    from src.exceptions.AIAgentExceptions import (
+        AIAgentConfigError,
+        AIOutputError,
+        BackendSelectionError,
+        ContextSerializationError,
+        LLMAuthenticationError,
+        LLMConnectionError,
+        LLMResponseError,
+        LLMTimeoutError,
+        LLMUnavailableError,
+        ModelNotFoundError,
+    )
+except ModuleNotFoundError:
+    from exceptions.AIAgentExceptions import (
+        AIAgentConfigError,
+        AIOutputError,
+        BackendSelectionError,
+        ContextSerializationError,
+        LLMAuthenticationError,
+        LLMConnectionError,
+        LLMResponseError,
+        LLMTimeoutError,
+        LLMUnavailableError,
+        ModelNotFoundError,
+    )
 
 
 # Suggested questions per UI section, shown as one-click chips
 PAGE_CONTEXT_QUESTIONS: dict[str, list[str]] = {
-    "🤖 AI Assistant": [
+    "🤖 Quantos Assistant": [
         "Ποια είναι η συνολική κατάσταση του τελευταίου run;",
         "Ποιες αναλύσεις χρειάζονται άμεση προσοχή;",
         "Εξήγησε την governance απόφαση και το risk score.",
@@ -85,24 +106,26 @@ PAGE_CONTEXT_QUESTIONS: dict[str, list[str]] = {
 }
 
 
-class ScenarioAIAgent:
-    """Context-aware AI assistant for UI Q&A and pipeline briefings.
+class QuantosAgent:
+    """Context-aware Quantos assistant for UI Q&A and pipeline briefings.
     
     Supports both local (Ollama/Llama) and online (Google Gemini) backends.
     Detects availability and uses appropriate backend automatically.
     """
 
     # Local backend (Ollama)
-    OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://127.0.0.1:11434/api/generate")
-    MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+    OLLAMA_API_URL = get_secret("OLLAMA_API_URL", "http://127.0.0.1:11434/api/generate") or "http://127.0.0.1:11434/api/generate"
+    MODEL_NAME = get_secret("OLLAMA_MODEL", "llama3.2:1b") or "llama3.2:1b"
     
     # Online backend (Google Gemini)
     GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    RESTING_MESSAGE = "Quantos is currently resting, please try again later."
 
     def __init__(self, root: Path | None = None, timeout_seconds: int | None = None, backend: str | None = None) -> None:
+        bootstrap_env_from_secrets(override=False)
         self._root = root or Path(__file__).resolve().parent.parent
         # Default 300s — llama3.2:1b can be slow on CPU; override with OLLAMA_TIMEOUT env var
-        default_timeout = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "300") or "300")
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else default_timeout
         
         # Detect backend if not specified
@@ -149,17 +172,14 @@ class ScenarioAIAgent:
         return url.rsplit("/api/", 1)[0] if "/api/" in url else url
 
     def _get_gemini_api_key(self) -> str | None:
-        """Get Gemini API key from Streamlit secrets or environment."""
-        # Try Streamlit secrets first (when running in Streamlit)
-        try:
-            import streamlit as st
-            if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
-                return st.secrets["GEMINI_API_KEY"]
-        except (ImportError, AttributeError):
-            pass
-        
-        # Fall back to environment variable
-        return os.getenv("GEMINI_API_KEY")
+        """Get Gemini API key from the unified secret store."""
+        return get_secret("GEMINI_API_KEY")
+
+    def _friendly_user_error(self, exc: Exception) -> str:
+        txt = str(exc).lower()
+        if any(token in txt for token in ("quota", "resource_exhausted", "rate limit", "429")):
+            return self.RESTING_MESSAGE
+        return f"Quantos is temporarily unavailable: {type(exc).__name__}. Please try again later."
 
     def _gemini_generate(self, prompt: str, temperature: float = 0.2) -> str:
         """Send prompt to Google Gemini and return the response text.
@@ -207,7 +227,12 @@ class ScenarioAIAgent:
         except requests.exceptions.RequestException as exc:
             raise LLMConnectionError(f"Gemini request failed: {exc}") from exc
 
+        if response.status_code == 429:
+            raise LLMUnavailableError(self.RESTING_MESSAGE)
         if response.status_code != 200:
+            body = response.text[:200].lower()
+            if "quota" in body or "resource_exhausted" in body:
+                raise LLMUnavailableError(self.RESTING_MESSAGE)
             raise LLMUnavailableError(
                 f"Gemini returned HTTP {response.status_code}: {response.text[:200]}"
             )
@@ -430,7 +455,7 @@ class ScenarioAIAgent:
             else ""
         )
         prompt = (
-            "You are the Scenario Planner in-app AI Copilot. "
+            "You are Quantos, the in-app quantitative copilot for Scenario Planner. "
             "Answer in clear Greek with short sections and practical next steps. "
             "Use ONLY the provided project context. "
             "If evidence is missing from the context, say so explicitly.\n\n"
@@ -451,7 +476,7 @@ class ScenarioAIAgent:
                 "context_generated_at": context_bundle.get("generated_at"),
             }
         except (LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
-            return {"success": False, "answer": f"[AI ERROR] {type(exc).__name__}: {exc}"}
+            return {"success": False, "answer": self._friendly_user_error(exc)}
 
     def quick_insight(
         self,
@@ -461,7 +486,7 @@ class ScenarioAIAgent:
     ) -> dict[str, Any]:
         """Generate a fast focused 2-3 sentence inline insight in Greek for a given topic."""
         prompt = (
-            "Είσαι ο AI Copilot του Scenario Planner. "
+            "Είσαι ο Quantos, ο ποσοτικός AI βοηθός του Scenario Planner. "
             "Δώσε ΣΥΝΟΠΤΙΚΗ ερμηνεία 2-3 προτάσεων στα Ελληνικά. "
             "Να είσαι άμεσος και τεκμηριωμένος, χωρίς εισαγωγές.\n\n"
             f"ΘΕΜΑ: {topic}\n\n"
@@ -471,7 +496,7 @@ class ScenarioAIAgent:
             answer = self._generate(prompt, temperature=0.1)
             return {"success": True, "insight": answer}
         except (LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
-            return {"success": False, "insight": f"[AI ERROR] {type(exc).__name__}: {exc}"}
+            return {"success": False, "insight": self._friendly_user_error(exc)}
 
     def create_pipeline_brief(self, user_id: str = "default") -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
@@ -526,7 +551,7 @@ class ScenarioAIAgent:
 def generate_ai_pipeline_brief(user_id: str = "default") -> dict[str, Any]:
     """Generate a pipeline brief using the automatically detected AI backend."""
     try:
-        agent = ScenarioAIAgent()
+        agent = QuantosAgent()
     except BackendSelectionError as exc:
         return {"success": False, "error": str(exc)}
     
@@ -534,3 +559,7 @@ def generate_ai_pipeline_brief(user_id: str = "default") -> dict[str, Any]:
     if not ok:
         return {"success": False, "error": f"AI backend not available: {reason}"}
     return agent.create_pipeline_brief(user_id=user_id)
+
+
+# Backward-compatible alias for existing imports/tests.
+ScenarioAIAgent = QuantosAgent

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
 import gzip
 import hashlib
 import json

@@ -5,6 +5,10 @@ data/
 !.env.example
 .streamlit/secrets.toml
 
+# --- Local LLM runtime artifacts ---
+.ollama/
+ollama/
+
 # --- Python cache & compiled ---
 __pycache__/
 *.py[cod]

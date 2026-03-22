@@ -32,6 +32,7 @@ def test_main_handles_missing_api_key(monkeypatch, capsys):
     assert (
         "Unexpected Application Error" in captured.out
         or "CRITICAL ERROR" in captured.out
+        or "Configuration error: missing FRED API key." in captured.out
     )
 
 

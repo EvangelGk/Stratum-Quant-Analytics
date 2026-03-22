@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+# Copyright (c) 2026 EvangelGK. All Rights Reserved.
 """
 Automated Optimizer Scheduler
 Runs the optimization loop periodically and polls for approvals via file.
 
 Usage:
+    python src/scheduler.py --interval=48  # Run every 48 hours (2 days)
     python src/scheduler.py --interval=24  # Run every 24 hours
-    python src/scheduler.py --interval=12  # Run every 12 hours  
     python src/scheduler.py --once         # Run once (useful for cron/task scheduler)
 """
 
@@ -45,11 +46,16 @@ def log_scheduled_event(user_id: str, event: str, details: dict = None):
 
 
 def run_optimizer_once(target_score: float = 94.0, user_id: str = "default"):
-    """Execute the optimizer in non-interactive mode (file-based approvals only)."""
+    """Execute one optimizer cycle with approval-gated mutations.
+
+    In scheduled/server contexts, approvals are handled through the queue file and
+    mobile notifications. If no approval arrives before timeout, the run continues
+    without applying code changes.
+    """
     print(f"\n[SCHEDULER] Starting optimization loop at {datetime.now()}")
     print(f"[SCHEDULER] Target score: {target_score}")
     print(f"[SCHEDULER] User: {user_id}")
-    print(f"[SCHEDULER] Mode: NON-INTERACTIVE (approvals via file polling)")
+    print(f"[SCHEDULER] Mode: APPROVAL-GATED (queue polling + optional mobile notifications)")
     
     log_scheduled_event(user_id, "optimizer_start", {"target_score": target_score})
     
@@ -90,9 +96,9 @@ def scheduler_loop(interval_hours: int = 24, user_id: str = "default"):
     print(f"\n[SCHEDULER] Starting periodic optimizer scheduler")
     print(f"[SCHEDULER] Interval: {interval_hours} hour(s)")
     print(f"[SCHEDULER] User: {user_id}")
-    print(f"[SCHEDULER] Approval method: FILE-BASED POLLING")
-    print(f"[SCHEDULER] To approve/reject, edit: output/{user_id}/.optimizer/approval_queue.json")
-    print(f"[SCHEDULER] Change 'status': 'pending' to 'status': 'YES' or 'NO'")
+    print(f"[SCHEDULER] Approval method: FILE-BASED POLLING (mobile alerts if Telegram is configured)")
+    print(f"[SCHEDULER] To approve/reject quickly: python respond_to_approval.py --user-id {user_id} --approve|--reject")
+    print(f"[SCHEDULER] Fallback manual path: output/{user_id}/.optimizer/approval_queue.json")
     
     log_scheduled_event(user_id, "scheduler_start", {"interval_hours": interval_hours})
     
@@ -132,8 +138,8 @@ def main():
     parser.add_argument(
         "--interval",
         type=int,
-        default=24,
-        help="Run optimizer every N hours (default: 24 = daily)",
+        default=48,
+        help="Run optimizer every N hours (default: 48 = every 2 days)",
     )
     parser.add_argument(
         "--once",
