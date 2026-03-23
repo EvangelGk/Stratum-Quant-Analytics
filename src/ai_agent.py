@@ -127,6 +127,11 @@ class QuantosAgent:
     
     # Online backend (Google Gemini)
     GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+
+    # Online backend fallback (Groq — OpenAI-compatible)
+    GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+    GROQ_MODEL_NAME = get_secret("GROQ_MODEL", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile"
+
     RESTING_MESSAGE = "Quantos is currently resting, please try again later."
 
     def __init__(self, root: Path | None = None, timeout_seconds: int | None = None, backend: str | None = None) -> None:
@@ -148,13 +153,13 @@ class QuantosAgent:
             )
 
     def _detect_backend(self) -> str:
-        """Detect which backend is available: 'local' (Ollama) or 'online' (Gemini).
+        """Detect which backend is available: 'local' (Ollama) or 'online' (Gemini/Groq).
 
-        Performance: checks Gemini API key first (O(1)) to avoid blocking
-        network probes. Ollama probe is only done when no Gemini key is present.
+        Performance: checks online API keys first (O(1)) to avoid blocking
+        network probes. Ollama probe is only done when no online key is present.
         """
-        # Fast path: Gemini key present → go online immediately, no network probe
-        if self._get_gemini_api_key():
+        # Fast path: any online key present → go online immediately, no network probe
+        if self._get_gemini_api_key() or self._get_groq_api_key():
             return "online"
 
         # Ollama probe — very short timeout so UI never blocks > ~1s
@@ -185,6 +190,10 @@ class QuantosAgent:
     def _get_gemini_api_key(self) -> str | None:
         """Get Gemini API key from the unified secret store."""
         return get_secret("GEMINI_API_KEY")
+
+    def _get_groq_api_key(self) -> str | None:
+        """Get Groq API key from the unified secret store."""
+        return get_secret("GROQ_API_KEY")
 
     def _friendly_user_error(self, exc: Exception) -> str:
         txt = str(exc).lower()
@@ -247,7 +256,7 @@ class QuantosAgent:
             raise LLMUnavailableError(
                 f"Gemini returned HTTP {response.status_code}: {response.text[:200]}"
             )
-        
+
         try:
             payload = response.json()
         except Exception as exc:
@@ -265,6 +274,69 @@ class QuantosAgent:
             pass
 
         raise LLMResponseError(f"Unexpected Gemini response format: {json.dumps(payload)[:200]}")
+
+    def _groq_generate(self, prompt: str, temperature: float = 0.2) -> str:
+        """Send prompt to Groq (OpenAI-compatible) and return the response text.
+
+        Raises:
+            LLMAuthenticationError: Groq API key is missing or invalid.
+            LLMConnectionError: Cannot reach the Groq endpoint.
+            LLMTimeoutError: Request exceeded configured timeout.
+            LLMUnavailableError: Groq returned a non-200 HTTP status.
+            LLMResponseError: Response payload is malformed.
+        """
+        api_key = self._get_groq_api_key()
+        if not api_key:
+            raise LLMAuthenticationError(
+                "GROQ_API_KEY not found in Streamlit secrets or environment. "
+                "Set it via: st.secrets['GROQ_API_KEY'] = 'gsk_...'"
+            )
+
+        try:
+            response = requests.post(
+                self.GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.GROQ_MODEL_NAME,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    "max_tokens": 4096,
+                },
+                timeout=self.timeout_seconds,
+            )
+        except requests.exceptions.Timeout as exc:
+            raise LLMTimeoutError(
+                f"Groq request timed out after {self.timeout_seconds}s: {exc}"
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise LLMConnectionError(
+                f"Cannot connect to Groq API: {exc}"
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise LLMConnectionError(f"Groq request failed: {exc}") from exc
+
+        if response.status_code == 429:
+            raise LLMUnavailableError(self.RESTING_MESSAGE)
+        if response.status_code != 200:
+            body = response.text[:200].lower()
+            if "rate_limit" in body or "quota" in body:
+                raise LLMUnavailableError(self.RESTING_MESSAGE)
+            raise LLMUnavailableError(
+                f"Groq returned HTTP {response.status_code}: {response.text[:200]}"
+            )
+
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise LLMResponseError(f"Failed to parse Groq JSON response: {exc}") from exc
+
+        try:
+            return str(payload["choices"][0]["message"]["content"]).strip()
+        except (KeyError, IndexError, TypeError):
+            raise LLMResponseError(f"Unexpected Groq response format: {json.dumps(payload)[:200]}")
 
     @staticmethod
     def _safe_user_id(user_id: str) -> str:
@@ -310,11 +382,17 @@ class QuantosAgent:
             return {}
 
     def ping(self) -> tuple[bool, str]:
-        """Check AI backend availability (Ollama for local, Gemini for online)."""
+        """Check AI backend availability. For 'online', tries Gemini then Groq."""
         if self.backend == "local":
             return self._ping_ollama()
         elif self.backend == "online":
-            return self._ping_gemini()
+            if self._get_gemini_api_key():
+                ok, msg = self._ping_gemini()
+                if ok:
+                    return True, msg
+            if self._get_groq_api_key():
+                return self._ping_groq()
+            return False, "No online API keys configured (GEMINI_API_KEY / GROQ_API_KEY)."
         else:
             return False, f"Unknown backend: {self.backend}"
 
@@ -349,9 +427,8 @@ class QuantosAgent:
             return False, LLMAuthenticationError(
                 "GEMINI_API_KEY not configured. Set it in Streamlit secrets."
             ).args[0]
-        
+
         try:
-            # Make a very simple request to verify API key and connectivity
             response = requests.post(
                 f"{self.GEMINI_API_URL}?key={api_key}",
                 json={
@@ -362,6 +439,33 @@ class QuantosAgent:
             )
             if response.status_code == 200:
                 return True, "Gemini connected"
+            return False, LLMUnavailableError(f"HTTP {response.status_code}").args[0]
+        except requests.exceptions.Timeout as exc:
+            return False, LLMTimeoutError(str(exc)).args[0]
+        except Exception as exc:
+            return False, LLMConnectionError(str(exc)).args[0]
+
+    def _ping_groq(self) -> tuple[bool, str]:
+        """Check Groq API availability."""
+        api_key = self._get_groq_api_key()
+        if not api_key:
+            return False, LLMAuthenticationError(
+                "GROQ_API_KEY not configured. Set it in Streamlit secrets."
+            ).args[0]
+
+        try:
+            response = requests.post(
+                self.GROQ_API_URL,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self.GROQ_MODEL_NAME,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 5,
+                },
+                timeout=(5, 15),
+            )
+            if response.status_code == 200:
+                return True, f"Groq connected ({self.GROQ_MODEL_NAME})"
             return False, LLMUnavailableError(f"HTTP {response.status_code}").args[0]
         except requests.exceptions.Timeout as exc:
             return False, LLMTimeoutError(str(exc)).args[0]
@@ -505,22 +609,57 @@ class QuantosAgent:
         return str(payload.get("response", "")).strip()
 
     def _generate(self, prompt: str, temperature: float = 0.2) -> str:
-        """Unified generation method that dispatches to either Llama or Gemini backend.
-        
+        """Unified generation method: Gemini → Groq → raise.
+
+        For the 'online' backend, tries Gemini first. If Gemini is unavailable
+        (quota, outage, auth failure) it falls through to Groq automatically.
+        Only raises to the caller when both online backends have been exhausted.
+
         Args:
             prompt: The input prompt to send to the LLM.
             temperature: Sampling temperature (0.0 to 1.0).
-        
+
         Returns:
             The generated text response.
-        
+
         Raises:
-            Same exceptions as _llama_generate() or _gemini_generate() depending on backend.
+            Same exceptions as the underlying backend methods.
         """
         if self.backend == "local":
             return self._llama_generate(prompt, temperature)
         elif self.backend == "online":
-            return self._gemini_generate(prompt, temperature)
+            last_exc: Exception | None = None
+
+            # 1️⃣  Try Gemini
+            if self._get_gemini_api_key():
+                try:
+                    return self._gemini_generate(prompt, temperature)
+                except (
+                    LLMAuthenticationError,
+                    LLMUnavailableError,
+                    LLMConnectionError,
+                    LLMTimeoutError,
+                    LLMResponseError,
+                ) as exc:
+                    last_exc = exc  # Gemini failed — fall through to Groq
+
+            # 2️⃣  Try Groq as fallback
+            if self._get_groq_api_key():
+                try:
+                    return self._groq_generate(prompt, temperature)
+                except (
+                    LLMAuthenticationError,
+                    LLMUnavailableError,
+                    LLMConnectionError,
+                    LLMTimeoutError,
+                    LLMResponseError,
+                ) as exc:
+                    last_exc = exc
+
+            # Both exhausted — surface the last known error
+            raise last_exc or LLMUnavailableError(
+                "No online AI backend available. Set GEMINI_API_KEY or GROQ_API_KEY in secrets."
+            )
         else:
             raise BackendSelectionError(f"Unknown backend: {self.backend}")
 
@@ -601,7 +740,12 @@ class QuantosAgent:
         output_dir = self._output_dir(user_id)
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
-            model_name = self.MODEL_NAME if self.backend == "local" else "gemini-1.5-flash"
+            if self.backend == "local":
+                model_name = self.MODEL_NAME
+            elif self._get_gemini_api_key():
+                model_name = "gemini-1.5-flash"
+            else:
+                model_name = f"groq/{self.GROQ_MODEL_NAME}"
             brief_payload = {
                 "generated_at": datetime.now().isoformat(),
                 "backend": self.backend,
