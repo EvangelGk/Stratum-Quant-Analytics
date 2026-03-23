@@ -217,7 +217,11 @@ class QuantosAgent:
         txt = str(exc).lower()
         if any(token in txt for token in ("quota", "resource_exhausted", "rate limit", "429")):
             return self.RESTING_MESSAGE
-        return f"Quantos is temporarily unavailable: {type(exc).__name__}. Please try again later."
+        detail = str(exc).strip()
+        if detail:
+            safe_detail = " ".join(detail.split())[:260]
+            return f"Quantos is temporarily unavailable: {safe_detail}"
+        return "Quantos is temporarily unavailable. Please try again later."
 
     def _gemini_generate(self, prompt: str, temperature: float = 0.2) -> str:
         """Send prompt to Google Gemini and return the response text.
