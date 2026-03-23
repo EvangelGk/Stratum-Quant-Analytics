@@ -3,7 +3,7 @@ from __future__ import annotations
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
 import os
-from functools import lru_cache
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -22,14 +22,39 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-@lru_cache(maxsize=1)
+# Thread-safe caches for secret sources that may change while the app is running.
+_env_cache_lock = threading.Lock()
+_env_cache_signature: tuple[int, int] | None = None
+_toml_cache_lock = threading.Lock()
+_toml_cache: dict[str, object] = {}
+_toml_cache_signature: tuple[int, int] | None = None
+_secret_source_errors: dict[str, str] = {}
+_injected_secret_keys: set[str] = set()
+
+
 def _load_dotenv_once() -> None:
-    """Load project .env once so getenv fallback works consistently in Streamlit."""
+    """Reload project .env when the file changes so getenv fallback stays current."""
+    global _env_cache_signature  # noqa: PLW0603
     if load_dotenv is None:
         return
     env_path = _project_root() / ".env"
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
+    if not env_path.exists():
+        return
+    try:
+        stat = env_path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError as exc:
+        _secret_source_errors["dotenv"] = str(exc)
+        return
+    with _env_cache_lock:
+        if _env_cache_signature == signature:
+            return
+        try:
+            load_dotenv(env_path, override=True)
+            _env_cache_signature = signature
+            _secret_source_errors.pop("dotenv", None)
+        except Exception as exc:
+            _secret_source_errors["dotenv"] = str(exc)
 
 
 def _scalar_to_str(value: object) -> str | None:
@@ -40,8 +65,8 @@ def _scalar_to_str(value: object) -> str | None:
     return None
 
 
-@lru_cache(maxsize=1)
 def _streamlit_secrets_map() -> dict[str, str]:
+    """Read Streamlit secrets fresh each call — Streamlit manages its own cache."""
     out: dict[str, str] = {}
     try:
         import streamlit as st
@@ -51,7 +76,9 @@ def _streamlit_secrets_map() -> dict[str, str]:
                 sval = _scalar_to_str(st.secrets[key])
                 if sval is not None:
                     out[str(key)] = sval
-    except Exception:
+        _secret_source_errors.pop("streamlit", None)
+    except Exception as exc:
+        _secret_source_errors["streamlit"] = str(exc)
         return {}
     return out
 
@@ -60,17 +87,32 @@ def _streamlit_secret_value(key: str) -> str | None:
     return _streamlit_secrets_map().get(key)
 
 
-@lru_cache(maxsize=1)
 def _load_local_secrets_toml() -> dict[str, object]:
+    """Read .streamlit/secrets.toml, re-parsing only when the file changes on disk."""
+    global _toml_cache, _toml_cache_signature  # noqa: PLW0603
     if tomllib is None:
         return {}
     path = _project_root() / ".streamlit" / "secrets.toml"
     if not path.exists():
+        _secret_source_errors.pop("secrets.toml", None)
         return {}
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        stat = path.stat()
+        current_signature = (stat.st_mtime_ns, stat.st_size)
+    except OSError as exc:
+        _secret_source_errors["secrets.toml"] = str(exc)
         return {}
+    with _toml_cache_lock:
+        if current_signature != _toml_cache_signature:
+            try:
+                _toml_cache = tomllib.loads(path.read_text(encoding="utf-8"))
+                _toml_cache_signature = current_signature
+                _secret_source_errors.pop("secrets.toml", None)
+            except Exception as exc:
+                _toml_cache = {}
+                _toml_cache_signature = current_signature
+                _secret_source_errors["secrets.toml"] = str(exc)
+        return dict(_toml_cache)
 
 
 def _local_toml_value(key: str) -> str | None:
@@ -94,6 +136,7 @@ def bootstrap_env_from_secrets(
     only_keys: Iterable[str] | None = None,
 ) -> None:
     """Populate os.environ from secrets for legacy getenv-based callsites."""
+    global _injected_secret_keys  # noqa: PLW0603
     _load_dotenv_once()
     keys = set(only_keys or [])
     sources: dict[str, str] = {}
@@ -118,3 +161,9 @@ def bootstrap_env_from_secrets(
     for key, value in sources.items():
         if override or not os.getenv(key):
             os.environ[key] = value
+        _injected_secret_keys.add(key)
+
+    removable_keys = {key for key in _injected_secret_keys if (not keys or key in keys) and key not in sources}
+    for key in removable_keys:
+        os.environ.pop(key, None)
+        _injected_secret_keys.discard(key)

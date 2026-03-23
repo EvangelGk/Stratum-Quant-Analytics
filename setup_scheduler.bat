@@ -1,12 +1,5 @@
-﻿@REM ========================================================================
+@REM ========================================================================
 @REM Automated Task Scheduler Setup Script for Daily Optimizer
-@REM 
-@REM This script automatically creates a Windows Task Scheduler entry
-@REM that runs the optimizer every 2 days at 3:00 PM (15:00)
-@REM
-@REM USAGE: 
-@REM   Double-click this file (no administrator needed)
-@REM
 @REM ========================================================================
 
 @echo off
@@ -17,10 +10,10 @@ echo STRATUM QUANT ANALYTICS - AUTOMATED SCHEDULER SETUP
 echo ========================================================================
 echo.
 
-REM Define paths
-set PROJECT_DIR=C:\Users\liagk\Project\Stratum-Quant-Analytics
-set SCRIPT_PATH=%PROJECT_DIR%\run_optimizer_daily.bat
-set TASK_NAME=Stratum-Quant-Analytics-Daily-Optimizer-User
+for %%I in ("%~dp0.") do set "PROJECT_DIR=%%~fI"
+set "SCRIPT_PATH=%PROJECT_DIR%\run_optimizer_daily.bat"
+set "TASK_NAME=Stratum-Quant-Analytics-Daily-Optimizer-User"
+set "LEGACY_TASK_NAME=Scenario-Planner-Daily-Optimizer-User"
 
 echo [INFO] Creating scheduled task...
 echo        Task: %TASK_NAME%
@@ -28,17 +21,14 @@ echo        Script: %SCRIPT_PATH%
 echo        Time: 15:00 (3:00 PM, every 2 days)
 echo.
 
-REM Check if script exists
 if not exist "%SCRIPT_PATH%" (
     echo [ERROR] Script not found: %SCRIPT_PATH%
     pause
     exit /b 1
 )
 
-REM Delete existing task if present
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
-
-REM Create the scheduled task (every 2 days at 15:00) in current user context
+schtasks /delete /tn "%LEGACY_TASK_NAME%" /f >nul 2>&1
 schtasks /create /tn "%TASK_NAME%" /tr "%SCRIPT_PATH%" /sc daily /mo 2 /st 15:00:00 /rl LIMITED /f
 
 if %errorlevel% equ 0 (
@@ -50,29 +40,17 @@ if %errorlevel% equ 0 (
     echo ========================================================================
     echo.
     echo 1. Task is now scheduled to run EVERY 2 DAYS at 15:00 (3:00 PM)
+    echo 2. Queue file: output\default\.optimizer\approval_queue.json
+    echo 3. You can approve from:
+    echo    - the web owner panel,
+    echo    - python respond_to_approval.py --user-id default --approve,
+    echo    - or by editing the queue file to YES / NO.
+    echo 4. Logs: logs\scheduler.log
+    echo 5. Report: output\default\optimizer_report.json
     echo.
-    echo 2. When the optimizer finds serious problems, it creates:
-    echo    output\default\.optimizer\approval_queue.json
+    echo Manual execution from this project folder:
+    echo   python src\scheduler.py --once --user-id default
     echo.
-    echo 3. You need to APPROVE or REJECT the changes by editing that file:
-    echo    - Change: "status": "pending"
-    echo    - To: "status": "YES" or "status": "NO"
-    echo    - Save the file
-    echo    - Scheduler detects the change in 2 seconds and continues
-    echo.
-    echo 4. Monitor logs in: logs\scheduler.log
-    echo.
-    echo 5. View results in: output\default\optimizer_report.json
-    echo.
-    echo ========================================================================
-    echo MANUAL EXECUTION (without waiting for the scheduled time):
-    echo ========================================================================
-    echo.
-    echo Run in PowerShell:
-    echo   cd C:\Users\liagk\Project\Stratum-Quant-Analytics
-    echo   python src\scheduler.py --once
-    echo.
-    echo ========================================================================
     goto end
 ) else (
     echo.

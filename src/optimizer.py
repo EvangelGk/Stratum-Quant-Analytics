@@ -4,6 +4,7 @@
 
 import json
 import os
+import html
 import subprocess
 import sys
 import time
@@ -16,9 +17,9 @@ import numpy as np
 import requests
 
 try:
-    from src.secret_store import bootstrap_env_from_secrets
+    from src.secret_store import bootstrap_env_from_secrets, get_secret
 except ModuleNotFoundError:
-    from secret_store import bootstrap_env_from_secrets
+    from secret_store import bootstrap_env_from_secrets, get_secret
 
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig, RunMode
@@ -49,6 +50,9 @@ class LlamaQuantAnalyzer:
 
     OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
     MODEL_NAME = "llama3.2:1b"
+    GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+    GROQ_MODEL_NAME = "llama-3.3-70b-versatile"
     MAX_PATCH_FILES = 6
     MAX_PATCH_TOTAL_CHARS = 8000
     BLOCKED_PATH_PREFIXES: List[str] = [
@@ -162,11 +166,21 @@ exact replacement code
 Apply these changes automatically to the project files? (YES/NO)"""
 
     def __init__(self, src_root: Optional[Path] = None, timeout_seconds: int | None = None):
+        bootstrap_env_from_secrets(override=False)
         # Default 300s — llama3.2:1b on CPU can be slow; override with OLLAMA_TIMEOUT env var
-        default_timeout = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+        self.OLLAMA_API_URL = get_secret("OLLAMA_API_URL", self.__class__.OLLAMA_API_URL) or self.__class__.OLLAMA_API_URL
+        self.MODEL_NAME = get_secret("OLLAMA_MODEL", self.__class__.MODEL_NAME) or self.__class__.MODEL_NAME
+        self.GROQ_MODEL_NAME = get_secret("GROQ_MODEL", self.__class__.GROQ_MODEL_NAME) or self.__class__.GROQ_MODEL_NAME
+        default_timeout = int(get_secret("OLLAMA_TIMEOUT", "300") or "300")
         self._timeout = timeout_seconds if timeout_seconds is not None else default_timeout
         self._src = src_root or Path(__file__).parent
         self._verify_connection()
+
+    def _get_gemini_api_key(self) -> str | None:
+        return get_secret("GEMINI_API_KEY")
+
+    def _get_groq_api_key(self) -> str | None:
+        return get_secret("GROQ_API_KEY")
 
     def _ollama_base_url(self) -> str:
         url = self.OLLAMA_API_URL
@@ -176,7 +190,9 @@ Apply these changes automatically to the project files? (YES/NO)"""
         return url.rsplit("/api/", 1)[0] if "/api/" in url else url
 
     def _verify_connection(self) -> bool:
-        """Check Ollama availability via /api/tags — no model loading, instant."""
+        """Check whether any supported AI backend is reachable."""
+        if self._get_gemini_api_key() or self._get_groq_api_key():
+            return True
         try:
             response = requests.get(
                 f"{self._ollama_base_url()}/api/tags",
@@ -233,7 +249,62 @@ Apply these changes automatically to the project files? (YES/NO)"""
     # ------------------------------------------------------------------
 
     def _call_llama(self, prompt: str) -> str:
-        """Send prompt to Llama and return raw response text."""
+        """Send prompt to the best available backend: Gemini -> Groq -> Ollama."""
+        gemini_key = self._get_gemini_api_key()
+        if gemini_key:
+            try:
+                response = requests.post(
+                    f"{self.GEMINI_API_URL}?key={gemini_key}",
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "temperature": 0.2,
+                            "maxOutputTokens": 4096,
+                        },
+                    },
+                    timeout=self._timeout,
+                )
+                if response.status_code == 200:
+                    payload = response.json()
+                    candidates = payload.get("candidates", [])
+                    if candidates:
+                        content = candidates[0].get("content", {})
+                        parts = content.get("parts", [])
+                        if parts:
+                            text = str(parts[0].get("text", "")).strip()
+                            if text:
+                                return text
+            except Exception:
+                pass
+
+        groq_key = self._get_groq_api_key()
+        if groq_key:
+            try:
+                response = requests.post(
+                    self.GROQ_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {groq_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.GROQ_MODEL_NAME,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.2,
+                        "max_tokens": 4096,
+                    },
+                    timeout=self._timeout,
+                )
+                if response.status_code == 200:
+                    payload = response.json()
+                    choices = payload.get("choices", [])
+                    if choices:
+                        msg = choices[0].get("message", {})
+                        text = str(msg.get("content", "")).strip()
+                        if text:
+                            return text
+            except Exception:
+                pass
+
         try:
             response = requests.post(
                 self.OLLAMA_API_URL,
@@ -450,6 +521,7 @@ class ApprovalGateway:
         self._dir = base_output_path / ".optimizer"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._queue_path = self._dir / self.QUEUE_FILE
+        self._user_id = base_output_path.name or "default"
         self._timeout = timeout_seconds
         self._force_non_interactive = force_non_interactive
 
@@ -488,6 +560,8 @@ class ApprovalGateway:
     def _emit_pending_approval_notice(self, entry: Dict[str, Any]) -> None:
         """Emit a loud, live notification and persist an alert file while awaiting owner approval."""
         details_text = json.dumps(entry.get("details", {}), indent=2, default=str)
+        approval_script = Path(__file__).resolve().parent.parent / "respond_to_approval.py"
+        approval_cmd = f'"{sys.executable}" "{approval_script}" --user-id {self._user_id} --approve/--reject'
         banner = (
             "\n" + "!" * 76 + "\n"
             "[OPTIMIZER] OWNER APPROVAL REQUIRED (PENDING)\n"
@@ -495,7 +569,7 @@ class ApprovalGateway:
             f"Action    : {entry.get('description')}\n"
             f"Timeout   : {self._timeout} seconds\n"
             f"Queue     : {self._queue_path}\n"
-            "Respond   : YES/NO in terminal OR use respond_to_approval.py --approve/--reject\n"
+            f"Respond   : YES/NO in terminal OR run {approval_cmd}\n"
             "-" * 76 + "\n"
             f"FULL DETAILS:\n{details_text}\n"
             + "!" * 76
@@ -519,7 +593,7 @@ class ApprovalGateway:
             f"Timeout: {self._timeout}s\n"
             f"Queue: {self._queue_path}\n\n"
             "Respond with YES/NO in terminal or run:\n"
-            "respond_to_approval.py --approve / --reject"
+            f"respond_to_approval.py --user-id {self._user_id} --approve / --reject"
         )
 
         try:
@@ -603,20 +677,24 @@ class ApprovalGateway:
             solution = _extract_section(raw, "SOLUTION")
             snippets: List[str] = []
             if prob:
-                snippets.append(f"<b>AI found:</b>\n{prob[:350]}")
+                snippets.append(f"<b>AI found:</b>\n{html.escape(prob[:350])}")
             if solution:
-                snippets.append(f"<b>AI proposed fix:</b>\n{solution[:350]}")
+                snippets.append(f"<b>AI proposed fix:</b>\n{html.escape(solution[:350])}")
             if snippets:
                 llama_snippet = "\n\n" + "\n\n".join(snippets)
 
+        approval_script = Path(__file__).resolve().parent.parent / "respond_to_approval.py"
         message = (
             "\U0001F6A8 <b>STRATUM QUANT ANALYTICS — Approval Required</b>\n"
-            f"<b>Action:</b> {action}\n"
+            f"<b>Action:</b> {html.escape(action)}\n"
             f"<b>Timeout:</b> {self._timeout}s\n"
-            f"<b>Queue:</b> {self._queue_path}\n"
-            f"<b>Respond:</b> python respond_to_approval.py --approve  OR  --reject"
+            f"<b>Queue:</b> {html.escape(str(self._queue_path))}\n"
+            f"<b>Respond:</b> {html.escape(sys.executable)} {html.escape(str(approval_script))} --user-id {html.escape(self._user_id)} --approve OR --reject"
             f"{llama_snippet}"
         )
+        # Telegram hard limit ~4096 chars for text payloads.
+        if len(message) > 3900:
+            message = message[:3850] + "\n\n<i>(message truncated)</i>"
 
         # --- Telegram ---
         ok, detail = self._send_telegram(message)
@@ -651,7 +729,7 @@ class ApprovalGateway:
         if not issues:
             return
         self._load_env_once()
-        issue_list = "\n".join(f"  \u2022 {i}" for i in issues[:8])
+        issue_list = "\n".join(f"  \u2022 {html.escape(str(i))}" for i in issues[:8])
         text = (
             "\U0001F916 <b>Optimizer run started</b>\n"
             f"Found {len(issues)} issue(s):\n{issue_list}\n\n"
@@ -667,8 +745,8 @@ class ApprovalGateway:
     def notify_run_finished(self, score: float, status: str, issues: List[str]) -> None:
         """Send a completion notification with final score."""
         self._load_env_once()
-        issue_list = "\n".join(f"  \u2022 {i}" for i in issues[:6])
-        verdict = "\u2705 Target reached!" if "optimized" in status else f"\u26A0\uFE0F {status} (score {score:.0f}/100)"
+        issue_list = "\n".join(f"  \u2022 {html.escape(str(i))}" for i in issues[:6])
+        verdict = "\u2705 Target reached!" if "optimized" in status else f"\u26A0\uFE0F {html.escape(status)} (score {score:.0f}/100)"
         text = (
             f"\U0001F916 <b>Optimizer finished</b> — {verdict}\n"
             + (f"Remaining issues:\n{issue_list}" if issues else "No outstanding issues.")
@@ -700,10 +778,19 @@ class ApprovalGateway:
         """Non-interactive: owner edits queue file status to 'YES' or 'NO'."""
         deadline = time.time() + self._timeout
         next_progress_log = time.time()
+
+        def _norm_status(raw: Any) -> str:
+            val = str(raw or "pending").strip().lower()
+            if val in {"yes", "y", "approved", "approve", "true", "1"}:
+                return "YES"
+            if val in {"no", "n", "rejected", "reject", "false", "0", "timeout"}:
+                return "NO"
+            return "pending"
+
         while time.time() < deadline:
             try:
                 data = json.loads(self._queue_path.read_text(encoding="utf-8"))
-                status = data.get("status", "pending")
+                status = _norm_status(data.get("status", "pending"))
                 if status == "YES":
                     return True
                 if status == "NO":
@@ -765,9 +852,57 @@ class AutomatedOptimizationLoop:
             self._approval = ApprovalGateway(
                 base_output_path=self.output_dir.parent,
                 timeout_seconds=int(os.getenv("APPROVAL_TIMEOUT", "300")),
-                force_non_interactive=False,
+                force_non_interactive=self.scheduled,
             )
         return self._approval
+
+    def _run_cmd(self, cmd: list[str], cwd: Path | None = None, timeout: int = 40) -> tuple[bool, str]:
+        """Run a command and capture output without raising."""
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(cwd or self.project_root),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+            return proc.returncode == 0, out.strip()
+        except Exception as exc:
+            return False, str(exc)
+
+    def _auto_commit_and_push(self, reason: str) -> str:
+        """Best-effort git add/commit/push after approved code changes.
+
+        Controlled by OPTIMIZER_AUTO_GIT_PUSH (default: 1).
+        Never raises; returns a short status string for logs/adjustments.
+        """
+        enabled = (os.getenv("OPTIMIZER_AUTO_GIT_PUSH", "1").strip().lower() not in {"0", "false", "no"})
+        if not enabled:
+            return "[GIT] Auto push disabled by OPTIMIZER_AUTO_GIT_PUSH"
+
+        ok, _ = self._run_cmd(["git", "rev-parse", "--is-inside-work-tree"])
+        if not ok:
+            return "[GIT] Skipped: not a git worktree"
+
+        self._run_cmd(["git", "add", "-A"])
+        ok_diff, _ = self._run_cmd(["git", "diff", "--cached", "--quiet"])
+        if ok_diff:
+            return "[GIT] No staged changes to commit"
+
+        ok_branch, branch_out = self._run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+        branch = branch_out.splitlines()[0].strip() if ok_branch and branch_out else "main"
+
+        msg = f"optimizer: apply approved AI changes ({reason})"
+        ok_commit, commit_out = self._run_cmd(["git", "commit", "-m", msg], timeout=90)
+        if not ok_commit:
+            return f"[GIT] Commit failed: {commit_out[:220]}"
+
+        ok_push, push_out = self._run_cmd(["git", "push", "origin", branch], timeout=120)
+        if not ok_push:
+            return f"[GIT] Commit ok, push failed: {push_out[:220]}"
+        return "[GIT] Commit+push completed"
 
     @property
     def safe_user(self) -> str:
@@ -1848,9 +1983,11 @@ class AutomatedOptimizationLoop:
         if approved and has_changes:
             applied = self._llama.apply_code_changes(analysis)
             change_summary = "; ".join(applied)
+            git_status = self._auto_commit_and_push(f"iter{iteration}_{issue_type}")
             return True, (
                 f"[QUANTOS] {issue_type} fix approved.\n"
                 f"Auto-applied changes: {change_summary}\n"
+                f"{git_status}\n"
                 f"Full analysis:\n{analysis[:800]}"
             )
         elif approved:
@@ -1881,7 +2018,9 @@ class AutomatedOptimizationLoop:
             )
             if approved:
                 applied = self._llama.apply_code_changes(bug_scan["analysis"])
+                git_status = self._auto_commit_and_push("pre_run_bug_scan")
                 print(f"[QUANTOS] Bug fixes applied: {'; '.join(applied)}")
+                print(f"[QUANTOS] {git_status}")
             else:
                 print("[QUANTOS] Bug fix proposals REJECTED by owner — continuing without changes")
         elif bug_scan["success"] and bug_scan["no_bugs_found"]:
