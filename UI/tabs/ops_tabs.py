@@ -49,38 +49,76 @@ def _render_kv_table(payload: dict, title: str = "Details") -> None:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
+def _decode_reason(raw: str) -> str:
+    """Translate technical governance reason codes to human-readable text."""
+    r = str(raw)
+    if "r2_metric_alert_oos_below_threshold" in r:
+        try:
+            val_part = r.split(":", 1)[1] if ":" in r else r
+            val_s, thr_s = val_part.split("<", 1)
+            return (
+                f"\U0001f4c9 OOS R\u00b2 ({float(val_s):.4f}) is below the advisory threshold "
+                f"({float(thr_s):.4f}). Negative OOS R\u00b2 means the model predicts "
+                "slightly worse than the historical mean \u2014 this is **common and normal** "
+                "in macro factor equity forecasting. "
+                "**Advisory only \u2014 does not block outputs.**"
+            )
+        except Exception:
+            return f"OOS R\u00b2 below advisory threshold: {r}"
+    if "r2_metric_alert_walk_forward_below_threshold" in r:
+        try:
+            val_part = r.split(":", 1)[1] if ":" in r else r
+            val_s, thr_s = val_part.split("<", 1)
+            return (
+                f"\U0001f4c9 Walk-forward avg R\u00b2 ({float(val_s):.4f}) is below the advisory "
+                f"threshold ({float(thr_s):.4f}). Walk-forward performance varies across "
+                "regimes \u2014 macro factor predictiveness changes over time. "
+                "**Advisory only \u2014 does not block outputs.**"
+            )
+        except Exception:
+            return f"Walk-forward R\u00b2 below advisory threshold: {r}"
+    if "leakage" in r.lower():
+        return f"\u26a0\ufe0f Potential data leakage flag: {r}"
+    if "stationarity" in r.lower():
+        return f"\U0001f4ca Stationarity notice: {r}"
+    return r
+
+
+def _render_check_summary_table(report: dict, label_map: dict) -> None:
+    """Compact table of all check statuses."""
+    icon_status = {"pass": "\u2705 Pass", "warn": "\u26a0\ufe0f Warn", "fail": "\u274c Fail"}
+    rows = []
+    for name, result in report.get("checks", {}).items():
+        status_code = str(result.get("status", "warn"))
+        n_issues = len(result.get("issues", [])) + len(result.get("reasons", []))
+        rows.append({
+            "Check": label_map.get(name, name.capitalize()),
+            "Result": icon_status.get(status_code, f"\u2753 {status_code}"),
+            "Advisory items": n_issues if n_issues else "\u2014",
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
 def show_auditor_tab() -> None:
-    st.subheader("System Auditor")
+    """Multi-tab System Auditor with 6 tabs and human-readable explanations."""
+    st.subheader("\U0001f9eb System Auditor")
     st.caption(
-        "Independent audit judge: checks source coverage, data density, statistics, temporal continuity, output quality, threshold design and governance validity."
+        "Independent audit judge: source coverage, data density, statistics, "
+        "temporal continuity, survivorship bias, output quality, threshold design "
+        "and governance validity."
     )
-    if st.button("Re-run Audit", key="manual_audit_run"):
-        with st.spinner("Running audit..."):
-            run_and_cache_audit()
-        st.rerun()
 
     report = get_audit_report()
     if not report:
-        st.info("No audit report found yet. Run the pipeline first.")
+        st.info("No audit report found yet. Run the pipeline first, then re-run the audit.")
+        if st.button("\u27f3 Re-run Audit", key="manual_audit_run_empty"):
+            with st.spinner("Running audit..."):
+                run_and_cache_audit()
+            st.rerun()
         return
 
-    status = report.get("status", "UNKNOWN")
-    tl_color, tl_label, tl_desc = score_audit_status(status)
-    st.markdown(
-        badge_html(tl_label, tl_color, tl_desc) + f"&nbsp; <span style='color:#555'>{tl_desc}</span>",
-        unsafe_allow_html=True,
-    )
-    st.markdown("")
-
-    dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")))
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Rows", report.get("row_count", 0))
-    c2.metric("Columns", report.get("column_count", 0))
-    c3.markdown(badge_html(dr_label, dr_color, dr_desc), unsafe_allow_html=True)
-    c4.metric("Failed Checks", len(report.get("failed_checks", [])))
-    c5.metric("Warning Checks", len(report.get("warning_checks", [])))
-
-    label_map = {
+    _LABEL_MAP = {
         "integration": "Source Integration",
         "density": "Data Density",
         "statistics": "Statistical Plausibility",
@@ -90,324 +128,466 @@ def show_auditor_tab() -> None:
         "thresholds": "Threshold Design",
         "governance": "Governance Validity",
     }
-    icon_map = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
+    _ICON_MAP = {"pass": "\u2705", "warn": "\u26a0\ufe0f", "fail": "\u274c"}
 
-    failed_checks = report.get("failed_checks", [])
-    warning_checks = report.get("warning_checks", [])
-    if failed_checks:
-        st.error(f"Failed checks: {', '.join(label_map.get(c, c) for c in failed_checks)}")
-    if warning_checks:
-        st.warning(f"Warnings: {', '.join(label_map.get(c, c) for c in warning_checks)}")
+    (
+        tab_overview,
+        tab_governance,
+        tab_data_quality,
+        tab_sources,
+        tab_outputs,
+        tab_export,
+    ) = st.tabs([
+        "\U0001f4cb Overview",
+        "\U0001f6e1\ufe0f Governance & Model",
+        "\U0001f4ca Data Quality",
+        "\U0001f517 Sources & Coverage",
+        "\u2699\ufe0f Outputs & Thresholds",
+        "\U0001f4e5 Export",
+    ])
 
-    if failed_checks or warning_checks:
-        with st.expander("Check Summary", expanded=True):
-            if failed_checks:
-                for check_name in failed_checks:
-                    st.markdown(f"- ❌ {badge_html('Fail', 'red')} {label_map.get(check_name, check_name)}", unsafe_allow_html=True)
-            if warning_checks:
-                for check_name in warning_checks:
-                    st.markdown(f"- ⚠️ {badge_html('Warning', 'yellow')} {label_map.get(check_name, check_name)}", unsafe_allow_html=True)
+    # ── Tab 1 · Overview ─────────────────────────────────────────────────────
+    with tab_overview:
+        status = report.get("status", "UNKNOWN")
+        tl_color, tl_label, tl_desc = score_audit_status(status)
+        st.markdown(
+            badge_html(tl_label, tl_color, tl_desc)
+            + f"&nbsp; <span style='font-size:1.05rem;color:#555'>{tl_desc}</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
 
-    judgement = report.get("auditor_judgement", {})
-    if isinstance(judgement, dict) and judgement:
-        with st.expander("🧠 Auditor Judgement", expanded=True):
+        failed_checks = report.get("failed_checks", [])
+        warning_checks = report.get("warning_checks", [])
+        dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")))
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Rows", report.get("row_count", 0))
+        c2.metric("Columns", report.get("column_count", 0))
+        c3.markdown(badge_html(dr_label, dr_color, dr_desc), unsafe_allow_html=True)
+        c4.metric("Failed Checks", len(failed_checks))
+        c5.metric("Warning Checks", len(warning_checks))
+
+        if failed_checks:
+            st.error("**Failed checks:** " + ", ".join(_LABEL_MAP.get(c, c) for c in failed_checks))
+        if warning_checks:
+            st.warning("**Warnings:** " + ", ".join(_LABEL_MAP.get(c, c) for c in warning_checks))
+        if not failed_checks and not warning_checks:
+            st.success("\u2705 All 8 checks passed \u2014 system is production-ready.")
+
+        st.markdown("---")
+        st.markdown("### Check Results at a Glance")
+        _render_check_summary_table(report, _LABEL_MAP)
+
+        judgement = report.get("auditor_judgement", {})
+        if isinstance(judgement, dict) and judgement:
+            st.markdown("---")
+            st.markdown("### \U0001f9e0 Auditor Judgement")
             j1, j2 = st.columns(2)
             j1.metric(
                 "Information Reasonable",
-                "Yes" if judgement.get("is_information_reasonable") else "No",
+                "\u2705 Yes" if judgement.get("is_information_reasonable") else "\u274c No",
             )
             j2.metric(
                 "Can Support Decisions",
-                "Yes" if judgement.get("can_support_decisions") else "No",
+                "\u2705 Yes" if judgement.get("can_support_decisions") else "\u274c No",
             )
             for line in judgement.get("summary", []):
                 st.markdown(f"- {line}")
 
-    for name, result in report.get("checks", {}).items():
-        status_code = str(result.get("status", "warn"))
-        is_passed = bool(result.get("passed", False))
-        tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
-        title = label_map.get(name, name.capitalize())
-        expander_label = f"{icon_map.get(status_code, 'ℹ️')} {title}"
-        with st.expander(expander_label, expanded=not is_passed):
-            # Traffic-light badge at the top of each check section
+        st.markdown("---")
+        if st.button("\u27f3 Re-run Audit", key="manual_audit_run"):
+            with st.spinner("Running audit..."):
+                run_and_cache_audit()
+            st.rerun()
+
+    # ── Tab 2 · Governance & Model ────────────────────────────────────────────
+    with tab_governance:
+        gov = report.get("checks", {}).get("governance", {})
+        if not gov:
+            st.info("No governance check data available.")
+        else:
+            status_code = str(gov.get("status", "warn"))
+            is_passed = bool(gov.get("passed", False))
+            tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
             st.markdown(
                 badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
                 unsafe_allow_html=True,
             )
             st.markdown("")
-            interpretation = result.get("interpretation")
-            if isinstance(interpretation, str) and interpretation:
-                st.caption(interpretation)
-            elif isinstance(interpretation, list) and interpretation:
-                for note in interpretation:
-                    st.markdown(f"- {note}")
 
-            issues = result.get("issues", [])
-            reasons = result.get("reasons", [])
-            if issues:
-                st.markdown("**Issues detected:**")
-                for issue in issues:
-                    st.markdown(f"- {issue}")
-            if reasons:
-                st.markdown("**Governance reasons:**")
-                for reason in reasons:
-                    st.markdown(f"- {reason}")
+            metrics = gov.get("metrics", {})
+            if isinstance(metrics, dict) and metrics:
+                oos_r2_val = metrics.get("out_of_sample_r2")
+                oos_ci_lo = metrics.get("out_of_sample_r2_ci_lower")
+                oos_ci_hi = metrics.get("out_of_sample_r2_ci_upper")
+                oos_conf = metrics.get("out_of_sample_r2_ci_confidence")
+                wf_avg = metrics.get("walk_forward_avg_r2")
+                wf_med = metrics.get("walk_forward_median_r2")
+                wf_clipped = metrics.get("walk_forward_clipped_avg_r2")
+                wf_ci_lo = metrics.get("walk_forward_r2_ci_lower")
+                wf_ci_hi = metrics.get("walk_forward_r2_ci_upper")
+                model_risk = metrics.get("model_risk_score")
 
-            zero_var_columns = result.get("zero_var_columns", [])
-            all_zero_columns = result.get("all_zero_columns", [])
-            blocked_outputs = result.get("blocked_outputs", [])
-            nullish_outputs = result.get("nullish_outputs", [])
-            strictness_findings = result.get("strictness_findings", [])
-            warnings = result.get("warnings", [])
-            reasoning = result.get("reasoning", [])
+                conf_label = f"{int(round((oos_conf or 0.90) * 100))}% CI"
+                m1, m2, m3 = st.columns(3)
+                oos_display = (
+                    f"{_fmt_number(oos_r2_val, 4)}  [{_fmt_number(oos_ci_lo, 4)}, {_fmt_number(oos_ci_hi, 4)}]"
+                    if oos_ci_lo is not None and oos_ci_hi is not None
+                    else _fmt_number(oos_r2_val, 4)
+                )
+                m1.metric(f"OOS R\u00b2 ({conf_label})", oos_display)
+                wf_display = (
+                    f"{_fmt_number(wf_avg, 4)}  [{_fmt_number(wf_ci_lo, 4)}, {_fmt_number(wf_ci_hi, 4)}]"
+                    if wf_ci_lo is not None and wf_ci_hi is not None
+                    else _fmt_number(wf_avg, 4)
+                )
+                m2.metric("Walk-forward avg R\u00b2 (range)", wf_display)
+                m3.metric("Model Risk Score", _fmt_number(model_risk, 4))
 
-            if zero_var_columns:
-                st.markdown("**Zero-variance indicators:**")
-                for col in zero_var_columns:
-                    st.markdown(f"- {col}")
+                r2_tl_c, r2_tl_l, r2_tl_d = score_oos_r2(oos_r2_val)
+                mr_c, mr_l, mr_d = score_model_risk(model_risk)
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.markdown(
+                        "**OOS R\u00b2 quality:** " + badge_html(r2_tl_l, r2_tl_c, r2_tl_d),
+                        unsafe_allow_html=True,
+                    )
+                    if wf_med is not None:
+                        st.caption(
+                            f"Walk-forward median R\u00b2 = {_fmt_number(wf_med, 4)}"
+                            + (f" | clipped avg = {_fmt_number(wf_clipped, 4)}" if wf_clipped is not None else "")
+                        )
+                with col_b:
+                    st.markdown(
+                        "**Model risk:** " + badge_html(mr_l, mr_c, mr_d),
+                        unsafe_allow_html=True,
+                    )
 
-            if all_zero_columns:
-                st.markdown("**Always-zero indicators:**")
-                for col in all_zero_columns:
-                    st.markdown(f"- {col}")
+                lag_ok = metrics.get("publication_lag_compliant")
+                if lag_ok is True:
+                    st.success("\u2705 Look-ahead protection: macro publication lag compliant (\u226545 days).")
+                elif lag_ok is False:
+                    st.error("\u26a0\ufe0f Look-ahead risk: at least one macro feature is below the 45-day publication lag requirement.")
 
-            if blocked_outputs:
-                st.markdown("**Blocked outputs:**")
-                for out_name in blocked_outputs:
-                    st.markdown(f"- {out_name}")
-
-            if nullish_outputs:
-                st.markdown("**Empty/Nullish outputs:**")
-                for out_name in nullish_outputs:
-                    st.markdown(f"- {out_name}")
-
-            if strictness_findings:
-                st.markdown("**Threshold strictness findings:**")
-                for finding in strictness_findings:
-                    st.markdown(f"- {finding}")
-
-            if warnings:
-                st.markdown("**Continuity warnings:**")
-                for warn in warnings:
-                    st.markdown(f"- {warn}")
-
-            if reasoning:
-                st.markdown("**Auditor reasoning:**")
-                for reason in reasoning:
-                    st.markdown(f"- {reason}")
-
-            if name == "density":
-                d1, d2, d3 = st.columns(3)
-                null_val = result.get("null_pct")
-                d1.metric("Null %", _fmt_pct(null_val))
-                d2.metric("Row Coverage %", _fmt_pct(result.get("row_non_null_pct")))
-                d3.metric("Zero-variance cols", _fmt_number(result.get("zero_var_count"), decimals=0))
-                null_tl_c, null_tl_l, null_tl_d = score_null_pct(null_val)
+            gate_passed = gov.get("gate_passed")
+            severity = gov.get("severity", "")
+            if gate_passed is not None:
+                g_c, g_l, g_d = score_governance_gate(bool(gate_passed), str(severity))
+                st.markdown("---")
+                st.markdown("### \U0001f512 Governance Gate Decision")
                 st.markdown(
-                    f"**Data density:** " + badge_html(null_tl_l, null_tl_c, null_tl_d),
+                    badge_html(g_l, g_c, g_d) + f"&nbsp; <small>{g_d}</small>",
                     unsafe_allow_html=True,
                 )
 
-            if name == "continuity":
-                cmax, cmed, callowed, cbase = st.columns(4)
-                cmax.metric("Max Gap (bdays)", _fmt_number(result.get("max_gap"), decimals=0))
-                cmed.metric("Median Gap (bdays)", _fmt_number(result.get("median_gap")))
-                callowed.metric("Auto Allowed Gap", _fmt_number(result.get("allowed_gap"), decimals=0))
-                cbase.metric("Detected Cadence", _fmt_number(result.get("detected_baseline_gap"), decimals=0))
-                cfg_gap = result.get("configured_allowed_gap")
-                dyn_gap = result.get("allowed_gap")
-                if cfg_gap is not None and dyn_gap is not None and dyn_gap != cfg_gap:
-                    cadence_name = "monthly" if (result.get("detected_baseline_gap") or 0) >= 15 else "weekly" if (result.get("detected_baseline_gap") or 0) >= 4 else "daily"
-                    st.info(
-                        f"Auto-detected **{cadence_name}** data cadence — threshold scaled from "
-                        f"{cfg_gap} → **{dyn_gap}** business days."
-                    )
-                if result.get("duplicate_rows_removed", 0):
-                    st.warning(
-                        f"Duplicate rows removed: {result.get('duplicate_rows_removed')}"
-                    )
-                fg = result.get("failed_groups", [])
-                if fg:
-                    st.error(f"Groups failing gap check: {', '.join(fg)}")
-                if result.get("error"):
-                    st.error(f"Continuity error: {result.get('error')}")
+            reasons = gov.get("reasons", [])
+            if reasons:
+                st.markdown("---")
+                st.markdown("### \u26a0\ufe0f Advisory Alerts")
+                st.info(
+                    "These alerts report metric observations. They are **advisory only** "
+                    "and do **not** cause the audit to fail. "
+                    "The governance gate uses them as informational signals only "
+                    "(`r2_used_as_validation_gate = false`)."
+                )
+                for raw_reason in reasons:
+                    st.markdown(f"- {_decode_reason(raw_reason)}")
 
-            if name == "governance":
-                metrics = result.get("metrics", {})
-                if isinstance(metrics, dict) and metrics:
-                    m1, m2, m3 = st.columns(3)
-                    oos_r2_val = metrics.get("out_of_sample_r2")
-                    oos_ci_lo = metrics.get("out_of_sample_r2_ci_lower")
-                    oos_ci_hi = metrics.get("out_of_sample_r2_ci_upper")
-                    oos_conf = metrics.get("out_of_sample_r2_ci_confidence")
-                    if oos_ci_lo is not None and oos_ci_hi is not None:
-                        conf_label = f"{int(round((oos_conf or 0.90) * 100))}% CI"
-                        oos_label = f"OOS R² ({conf_label})"
-                        oos_display = f"{_fmt_number(oos_r2_val, 4)}  [{_fmt_number(oos_ci_lo, 4)}, {_fmt_number(oos_ci_hi, 4)}]"
-                    else:
-                        oos_label = "OOS R²"
-                        oos_display = _fmt_number(oos_r2_val, 4)
-                    m1.metric(oos_label, oos_display)
+            lag_findings = gov.get("publication_lag_findings", [])
+            if lag_findings:
+                st.markdown("---")
+                st.markdown("**Publication lag findings:**")
+                for finding in lag_findings:
+                    st.markdown(f"- {finding}")
 
-                    # Traffic-light badge for OOS R²
-                    r2_tl_c, r2_tl_l, r2_tl_d = score_oos_r2(oos_r2_val)
+            if gov.get("likely_over_strict"):
+                st.warning(
+                    "\U0001f52c Governance appears methodologically valid but conservative for "
+                    "this mixed-frequency data regime."
+                )
+
+            interpretation = gov.get("interpretation", [])
+            if interpretation:
+                with st.expander("\U0001f4d6 Interpretation notes", expanded=False):
+                    items = [interpretation] if isinstance(interpretation, str) else interpretation
+                    for note in items:
+                        st.markdown(f"- {note}")
+
+            reasoning = gov.get("reasoning", [])
+            if reasoning:
+                with st.expander("\U0001f50d Auditor reasoning", expanded=False):
+                    for r_item in reasoning:
+                        st.markdown(f"- {r_item}")
+
+            render_inline_ai_section(
+                topic="Governance Audit",
+                snapshot={
+                    "governance_passed": gov.get("passed"),
+                    "severity": gov.get("severity"),
+                    "advisory_reasons": [_decode_reason(r) for r in reasons],
+                    "metrics": gov.get("metrics", {}),
+                },
+                key_suffix="auditor_gov",
+            )
+
+    # ── Tab 3 · Data Quality ──────────────────────────────────────────────────
+    with tab_data_quality:
+        for check_name in ("density", "statistics", "continuity"):
+            result = report.get("checks", {}).get(check_name, {})
+            if not result:
+                continue
+            status_code = str(result.get("status", "warn"))
+            is_passed = bool(result.get("passed", False))
+            tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
+            icon = _ICON_MAP.get(status_code, "\u2139\ufe0f")
+            title = _LABEL_MAP.get(check_name, check_name.capitalize())
+            with st.expander(f"{icon} {title}", expanded=not is_passed):
+                st.markdown(
+                    badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")
+                interpretation = result.get("interpretation", "")
+                if isinstance(interpretation, str) and interpretation:
+                    st.caption(interpretation)
+                elif isinstance(interpretation, list):
+                    for note in interpretation:
+                        st.markdown(f"- {note}")
+                for issue in result.get("issues", []):
+                    st.markdown(f"- \u274c {issue}")
+
+                if check_name == "density":
+                    d1, d2, d3 = st.columns(3)
+                    null_val = result.get("null_pct")
+                    d1.metric("Null %", _fmt_pct(null_val))
+                    d2.metric("Row Coverage %", _fmt_pct(result.get("row_non_null_pct")))
+                    d3.metric("Zero-variance cols", _fmt_number(result.get("zero_var_count"), decimals=0))
+                    null_tl_c, null_tl_l, null_tl_d = score_null_pct(null_val)
                     st.markdown(
-                        f"**OOS R² quality:** " + badge_html(r2_tl_l, r2_tl_c, r2_tl_d),
+                        "**Data density:** " + badge_html(null_tl_l, null_tl_c, null_tl_d),
                         unsafe_allow_html=True,
                     )
+                    for col in result.get("zero_var_columns", []):
+                        st.markdown(f"- Zero-variance: `{col}`")
+                    for col in result.get("all_zero_columns", []):
+                        st.markdown(f"- Always-zero: `{col}`")
 
-                    wf_avg = metrics.get("walk_forward_avg_r2")
-                    wf_ci_lo = metrics.get("walk_forward_r2_ci_lower")
-                    wf_ci_hi = metrics.get("walk_forward_r2_ci_upper")
-                    if wf_ci_lo is not None and wf_ci_hi is not None:
-                        wf_display = f"{_fmt_number(wf_avg, 4)}  [{_fmt_number(wf_ci_lo, 4)}, {_fmt_number(wf_ci_hi, 4)}]"
-                        wf_label = "Walk-forward avg R² (range)"
-                    else:
-                        wf_display = _fmt_number(wf_avg, 4)
-                        wf_label = "Walk-forward avg R²"
-                    m2.metric(wf_label, wf_display)
-                    m3.metric("Model risk", _fmt_number(metrics.get("model_risk_score"), decimals=4))
-                    # Traffic-light badge for model risk
-                    mr_c, mr_l, mr_d = score_model_risk(metrics.get("model_risk_score"))
-                    st.markdown(
-                        f"**Model risk:** " + badge_html(mr_l, mr_c, mr_d),
-                        unsafe_allow_html=True,
-                    )
-                    lag_ok = metrics.get("publication_lag_compliant")
-                    if lag_ok is True:
-                        st.success("Look-ahead protection: macro publication lag is compliant (>=45 days).")
-                    elif lag_ok is False:
-                        st.error("Look-ahead risk detected: at least one macro feature is below 45-day publication lag.")
-                lag_findings = result.get("publication_lag_findings", [])
-                if lag_findings:
-                    st.markdown("**Publication lag findings:**")
-                    for finding in lag_findings:
-                        st.markdown(f"- {finding}")
-                if result.get("likely_over_strict"):
-                    st.warning("Governance appears methodologically valid but conservative for this mixed-frequency data regime.")
+                if check_name == "continuity":
+                    cmax, cmed, callowed, cbase = st.columns(4)
+                    cmax.metric("Max Gap (bdays)", _fmt_number(result.get("max_gap"), decimals=0))
+                    cmed.metric("Median Gap (bdays)", _fmt_number(result.get("median_gap")))
+                    callowed.metric("Auto Allowed Gap", _fmt_number(result.get("allowed_gap"), decimals=0))
+                    cbase.metric("Detected Cadence", _fmt_number(result.get("detected_baseline_gap"), decimals=0))
+                    cfg_gap = result.get("configured_allowed_gap")
+                    dyn_gap = result.get("allowed_gap")
+                    if cfg_gap is not None and dyn_gap is not None and dyn_gap != cfg_gap:
+                        cadence_name = (
+                            "monthly" if (result.get("detected_baseline_gap") or 0) >= 15
+                            else "weekly" if (result.get("detected_baseline_gap") or 0) >= 4
+                            else "daily"
+                        )
+                        st.info(
+                            f"Auto-detected **{cadence_name}** cadence \u2014 threshold scaled "
+                            f"from {cfg_gap} \u2192 **{dyn_gap}** business days."
+                        )
+                    if result.get("duplicate_rows_removed", 0):
+                        st.warning(f"Duplicate rows removed: {result.get('duplicate_rows_removed')}")
+                    fg = result.get("failed_groups", [])
+                    if fg:
+                        st.error(f"Groups failing gap check: {', '.join(fg)}")
+                    for w in result.get("warnings", []):
+                        st.markdown(f"- \u26a0\ufe0f {w}")
+                    if result.get("error"):
+                        st.error(f"Continuity error: {result.get('error')}")
 
-            if name == "survivorship":
-                metrics = result.get("metrics", {})
-                if isinstance(metrics, dict) and metrics:
-                    s1, s2, s3 = st.columns(3)
-                    s1.metric("Stale tickers", _fmt_number(metrics.get("stale_ticker_count"), decimals=0))
-                    s2.metric("Zero-volume tickers", _fmt_number(metrics.get("zero_volume_ticker_count"), decimals=0))
-                    s3.metric(
-                        "Max zero-volume streak",
-                        _fmt_number(metrics.get("max_zero_volume_streak_days"), decimals=0),
-                    )
-                stale = result.get("stale_tickers", [])
-                if stale:
-                    st.markdown("**Possible delisted/stale tickers:**")
-                    for item in stale:
-                        st.markdown(f"- {item}")
-                streaks = result.get("zero_volume_streaks", {})
-                if isinstance(streaks, dict) and streaks:
-                    st.markdown("**Zero-volume streaks (>10 days):**")
-                    for tkr, days in streaks.items():
-                        st.markdown(f"- {tkr}: {days} days")
+                if check_name == "statistics":
+                    metrics_payload = result.get("metrics", {})
+                    if isinstance(metrics_payload, dict) and metrics_payload:
+                        _render_kv_table(metrics_payload, title="Statistical plausibility metrics")
 
-            if name == "thresholds":
-                dynamic = result.get("dynamic_thresholds", {})
-                if isinstance(dynamic, dict) and dynamic:
-                    st.markdown("**🧩 Dynamic threshold flags:**")
-                    rows = [
-                        {
-                            "Threshold": str(k).replace("_", " ").title(),
-                            "Enabled": "Yes" if bool(v) else "No",
-                        }
-                        for k, v in dynamic.items()
-                    ]
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    # ── Tab 4 · Sources & Coverage ────────────────────────────────────────────
+    with tab_sources:
+        for check_name in ("integration", "survivorship"):
+            result = report.get("checks", {}).get(check_name, {})
+            if not result:
+                continue
+            status_code = str(result.get("status", "warn"))
+            is_passed = bool(result.get("passed", False))
+            tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
+            icon = _ICON_MAP.get(status_code, "\u2139\ufe0f")
+            title = _LABEL_MAP.get(check_name, check_name.capitalize())
+            with st.expander(f"{icon} {title}", expanded=not is_passed):
+                st.markdown(
+                    badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")
+                interpretation = result.get("interpretation", "")
+                if isinstance(interpretation, str) and interpretation:
+                    st.caption(interpretation)
+                elif isinstance(interpretation, list):
+                    for note in interpretation:
+                        st.markdown(f"- {note}")
+                for issue in result.get("issues", []):
+                    st.markdown(f"- \u274c {issue}")
 
-            if name == "integration":
-                metrics = result.get("metrics", {})
-                cell_fill = result.get("cell_fill_pct", {})
-                overall = result.get("overall", {})
-                if isinstance(overall, dict) and overall:
-                    o1, o2 = st.columns(2)
-                    o1.metric(
-                        "Rows with all 3 sources",
-                        _fmt_pct(overall.get("rows_with_all_sources_pct")),
-                    )
-                    max_groups = overall.get("max_source_groups_per_row", 3)
-                    avg_groups = overall.get("avg_active_source_groups_per_row")
-                    if isinstance(avg_groups, (int, float)):
+                if check_name == "integration":
+                    metrics = result.get("metrics", {})
+                    cell_fill = result.get("cell_fill_pct", {})
+                    overall = result.get("overall", {})
+                    if isinstance(overall, dict) and overall:
+                        o1, o2 = st.columns(2)
+                        o1.metric("Rows with all 3 sources", _fmt_pct(overall.get("rows_with_all_sources_pct")))
+                        avg_groups = overall.get("avg_active_source_groups_per_row")
+                        max_groups = overall.get("max_source_groups_per_row", 3)
                         o2.metric(
                             "Avg active source groups / row",
-                            f"{float(avg_groups):.2f} / {max_groups}",
+                            f"{float(avg_groups):.2f} / {max_groups}" if isinstance(avg_groups, (int, float)) else "N/A",
                         )
-                    else:
-                        o2.metric("Avg active source groups / row", "N/A")
-                if isinstance(metrics, dict) and metrics:
-                    st.markdown("**Row coverage by source:**")
-                    coverage_rows = []
-                    for source, value in metrics.items():
-                        cov_c, cov_l, _ = score_source_coverage(value)
-                        coverage_rows.append(
-                            {
+                    if isinstance(metrics, dict) and metrics:
+                        st.markdown("**Row coverage by source:**")
+                        coverage_rows = []
+                        for source, value in metrics.items():
+                            cov_c, cov_l, _ = score_source_coverage(value)
+                            coverage_rows.append({
                                 "Source": source,
                                 "Row coverage %": _fmt_pct(value),
                                 "Cell fill %": _fmt_pct(cell_fill.get(source) if isinstance(cell_fill, dict) else None),
                                 "Status": cov_l,
-                            }
-                        )
-                    st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
-
-                breadth = result.get("breadth", {})
-                if isinstance(breadth, dict) and breadth:
-                    st.markdown("**Configured entity breadth:**")
-                    rows = []
-                    for source, payload in breadth.items():
-                        if isinstance(payload, dict):
-                            rows.append(
-                                {
+                            })
+                        st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
+                    breadth = result.get("breadth", {})
+                    if isinstance(breadth, dict) and breadth:
+                        st.markdown("**Configured entity breadth:**")
+                        b_rows = []
+                        for source, payload_b in breadth.items():
+                            if isinstance(payload_b, dict):
+                                b_rows.append({
                                     "Source": source,
-                                    "Expected": payload.get("expected", 0),
-                                    "Observed": payload.get("observed", 0),
-                                    "Entity coverage ratio": payload.get("ratio", 0),
-                                }
-                            )
-                    if rows:
-                        st.dataframe(pd.DataFrame(rows), width="stretch")
+                                    "Expected": payload_b.get("expected", 0),
+                                    "Observed": payload_b.get("observed", 0),
+                                    "Coverage ratio": payload_b.get("ratio", 0),
+                                })
+                        if b_rows:
+                            st.dataframe(pd.DataFrame(b_rows), width="stretch")
 
-            metrics_payload = result.get("metrics", {})
-            if isinstance(metrics_payload, dict) and metrics_payload and name not in {
-                "governance",
-                "integration",
-                "continuity",
-                "density",
-            }:
-                with st.expander("Metrics", expanded=False):
-                    _render_kv_table(metrics_payload, title="Metrics summary")
+                if check_name == "survivorship":
+                    metrics = result.get("metrics", {})
+                    if isinstance(metrics, dict) and metrics:
+                        s1, s2, s3 = st.columns(3)
+                        s1.metric("Stale tickers", _fmt_number(metrics.get("stale_ticker_count"), decimals=0))
+                        s2.metric("Zero-volume tickers", _fmt_number(metrics.get("zero_volume_ticker_count"), decimals=0))
+                        s3.metric("Max zero-vol streak", _fmt_number(metrics.get("max_zero_volume_streak_days"), decimals=0))
+                    for tkr in result.get("stale_tickers", []):
+                        st.markdown(f"- Possible stale/delisted ticker: **{tkr}**")
+                    streaks = result.get("zero_volume_streaks", {})
+                    if isinstance(streaks, dict) and streaks:
+                        st.markdown("**Zero-volume streaks (>10 days):**")
+                        for tkr, days in streaks.items():
+                            st.markdown(f"- {tkr}: {days} days")
 
-            with st.expander("Archive", expanded=False):
+    # ── Tab 5 · Outputs & Thresholds ──────────────────────────────────────────
+    with tab_outputs:
+        for check_name in ("outputs", "thresholds"):
+            result = report.get("checks", {}).get(check_name, {})
+            if not result:
+                continue
+            status_code = str(result.get("status", "warn"))
+            is_passed = bool(result.get("passed", False))
+            tl_c, tl_l, tl_d = score_check_result(is_passed, status_code)
+            icon = _ICON_MAP.get(status_code, "\u2139\ufe0f")
+            title = _LABEL_MAP.get(check_name, check_name.capitalize())
+            with st.expander(f"{icon} {title}", expanded=not is_passed):
+                st.markdown(
+                    badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")
+                interpretation = result.get("interpretation", "")
+                if isinstance(interpretation, str) and interpretation:
+                    st.caption(interpretation)
+                elif isinstance(interpretation, list):
+                    for note in interpretation:
+                        st.markdown(f"- {note}")
+
+                if check_name == "outputs":
+                    st.metric("Output sections", result.get("result_key_count", 0))
+                    usable = result.get("usable_outputs", [])
+                    if usable:
+                        st.markdown("**\u2705 Usable outputs:**")
+                        for o in usable:
+                            st.markdown(f"- {o}")
+                    blocked = result.get("blocked_outputs", [])
+                    if blocked:
+                        st.markdown("**\u274c Blocked outputs:**")
+                        for o in blocked:
+                            st.markdown(f"- {o}")
+                    nullish = result.get("nullish_outputs", [])
+                    if nullish:
+                        st.markdown("**\u26a0\ufe0f Empty/nullish outputs:**")
+                        for o in nullish:
+                            st.markdown(f"- {o}")
+
+                if check_name == "thresholds":
+                    dynamic = result.get("dynamic_thresholds", {})
+                    if isinstance(dynamic, dict) and dynamic:
+                        st.markdown("**\U0001f9e9 Dynamic threshold flags:**")
+                        t_rows = [
+                            {
+                                "Threshold": str(k).replace("_", " ").title(),
+                                "Enabled": "\u2705 Yes" if bool(v) else "\u274c No",
+                            }
+                            for k, v in dynamic.items()
+                        ]
+                        st.dataframe(pd.DataFrame(t_rows), width="stretch", hide_index=True)
+                    for finding in result.get("strictness_findings", []):
+                        st.markdown(f"- {finding}")
+
+    # ── Tab 6 · Export ────────────────────────────────────────────────────────
+    with tab_export:
+        st.markdown("### \U0001f4e5 Audit Report Downloads")
+        st.download_button(
+            "\u2b07\ufe0f Download Full Audit Report (JSON)",
+            json.dumps(report, indent=2, ensure_ascii=False),
+            file_name="audit_report_full.json",
+            mime="application/json",
+            key="audit_download_full",
+        )
+        st.markdown("---")
+        st.markdown("**Per-check downloads:**")
+        dl_cols = st.columns(4)
+        for idx, (name, check_result) in enumerate(report.get("checks", {}).items()):
+            with dl_cols[idx % 4]:
                 st.download_button(
-                    "Download check JSON",
-                    json.dumps(result, indent=2, ensure_ascii=False),
+                    f"\u2b07\ufe0f {_LABEL_MAP.get(name, name)}",
+                    json.dumps(check_result, indent=2, ensure_ascii=False),
                     file_name=f"audit_check_{name}.json",
                     mime="application/json",
-                    key=f"audit_download_{name}",
+                    key=f"audit_dl_{name}",
                 )
 
-    # Inline AI interpretation of the full audit report
-    _ai_snap = {
-        "audit_status": report.get("status"),
-        "failed_checks": report.get("failed_checks", []),
-        "warning_checks": report.get("warning_checks", []),
-        "decision_ready": report.get("decision_ready"),
-        "auditor_judgement": report.get("auditor_judgement", {}),
-    }
+    # ── Inline Quantos at the bottom (outside tabs) ────────────────────────────
+    st.markdown("---")
     render_inline_ai_section(
-        topic="Audit Results",
-        snapshot=_ai_snap,
+        topic="Full Audit Analysis",
+        snapshot={
+            "audit_status": report.get("status"),
+            "failed_checks": report.get("failed_checks", []),
+            "warning_checks": report.get("warning_checks", []),
+            "decision_ready": report.get("decision_ready"),
+            "auditor_judgement": report.get("auditor_judgement", {}),
+            "governance_advisory_reasons": [
+                _decode_reason(r)
+                for r in report.get("checks", {}).get("governance", {}).get("reasons", [])
+            ],
+            "governance_metrics": report.get("checks", {}).get("governance", {}).get("metrics", {}),
+        },
         key_suffix="auditor",
     )
 
 
 def show_ops_tab(role: str) -> None:
-    st.subheader("⚙️ Job History & Scheduling")
+    st.subheader("έγβΎ╕Π Job History & Scheduling")
 
     history = load_session_history(limit=50)
     if history:
@@ -426,14 +606,14 @@ def show_ops_tab(role: str) -> None:
     else:
         st.info("No run history yet.")
 
-    st.markdown("### 🌙 Nightly Scheduling")
+    st.markdown("### ΏθΝβ Nightly Scheduling")
     schedule = read_json(UI_SCHEDULE_PATH) if UI_SCHEDULE_PATH.exists() else {}
     enabled_default = bool(schedule.get("enabled", False))
     hour_default = int(schedule.get("hour", 2)) if isinstance(schedule.get("hour"), int) else 2
     minute_default = int(schedule.get("minute", 0)) if isinstance(schedule.get("minute"), int) else 0
 
     enabled = st.toggle(
-        "🌙 Enable nightly schedule",
+        "ΏθΝβ Enable nightly schedule",
         value=enabled_default,
         disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
     )
@@ -444,7 +624,7 @@ def show_ops_tab(role: str) -> None:
     minute = c2.number_input(
         "Minute", min_value=0, max_value=59, value=minute_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"]
     )
-    if st.button("💾 Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
+    if st.button("ΏθΤ╛ Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
         payload = {
             "enabled": enabled,
             "hour": int(hour),
