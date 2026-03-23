@@ -101,9 +101,10 @@ Stress Test Results:
 ANALYSIS_SENSITIVITY_REGRESSION = """
 Sensitivity Regression Results:
 - Multivariate analysis of factor impacts on returns
-- Model: {model_type} (OLS or Ridge regression)
+- Model: {model_type} (Auto/OLS/Ridge/Lasso/ElasticNet/RandomForest)
 - Key drivers: {top_factors} with coefficients {coefficients}
 - R-squared: {r_squared}% of variance explained
+- Feature subset search and time-series CV used for robust OOS selection
 - Use coefficients to understand factor sensitivities
 """
 

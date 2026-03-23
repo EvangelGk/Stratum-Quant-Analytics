@@ -355,11 +355,33 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
 
     st.markdown("### 🧭 What Drives Returns the Most")
     r2 = value.get("r2")
+    cv_r2 = value.get("cv_r2")
     n_obs = value.get("n_obs")
-    c1, c2, c3 = st.columns(3)
+    lag_info = value.get("lag_selection", {}) if isinstance(value.get("lag_selection"), dict) else {}
+    selected_lag = lag_info.get("selected_macro_lag_days")
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Model", str(value.get("model", "N/A")))
     c2.metric("R²", _fmt_scalar(r2))
     c3.metric("Observations", _fmt_scalar(n_obs))
+    c4.metric("CV R²", _fmt_scalar(cv_r2))
+
+    if selected_lag is not None:
+        st.caption(f"Selected macro lag: {selected_lag} days")
+
+    subset = value.get("feature_subset_search", {}) if isinstance(value.get("feature_subset_search"), dict) else {}
+    selected_subset = subset.get("selected_subset") if isinstance(subset.get("selected_subset"), list) else []
+    if selected_subset:
+        st.caption("Selected factors: " + ", ".join(str(x) for x in selected_subset))
+
+    top_subsets = subset.get("top_subsets") if isinstance(subset.get("top_subsets"), list) else []
+    if top_subsets:
+        with st.expander("Feature subset search (top combinations)", expanded=False):
+            sdf = pd.DataFrame(top_subsets)
+            if "subset" in sdf.columns:
+                sdf["subset"] = sdf["subset"].apply(
+                    lambda lst: ", ".join(str(x) for x in lst) if isinstance(lst, list) else str(lst)
+                )
+            st.dataframe(sdf.head(15), width="stretch")
 
     cdf = pd.DataFrame(
         [{"factor": str(k), "coefficient": float(v)} for k, v in coeffs.items()]

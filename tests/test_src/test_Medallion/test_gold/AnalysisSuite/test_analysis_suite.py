@@ -177,6 +177,8 @@ def test_sensitivity_reg_ols_returns_dict():
     assert "r2" in summary
     assert "summary_text" in summary
     assert isinstance(summary["summary_text"], str)
+    assert "feature_subset_search" in summary
+    assert "lag_selection" in summary
 
 
 def test_sensitivity_reg_ridge_returns_dict():
@@ -189,6 +191,8 @@ def test_sensitivity_reg_ridge_returns_dict():
     assert "coefficients" in ridge
     assert "intercept" in ridge
     assert "r2" in ridge
+    assert "feature_subset_search" in ridge
+    assert "lag_selection" in ridge
 
 
 # ─── Preset scenarios ─────────────────────────────────────────────────────────

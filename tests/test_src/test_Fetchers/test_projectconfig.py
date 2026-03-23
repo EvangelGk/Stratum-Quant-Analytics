@@ -13,6 +13,14 @@ def test_load_from_env_missing_key(monkeypatch):
         ProjectConfig.load_from_env()
 
 
+def test_default_macro_map_includes_vix(monkeypatch):
+    monkeypatch.delenv("MACRO_SERIES_MAP", raising=False)
+    monkeypatch.delenv("WORLDBANK_INDICATOR_MAP", raising=False)
+    monkeypatch.setenv("FRED_API_KEY", "")
+    cfg = ProjectConfig.load_from_env()
+    assert cfg.macro_series_map.get("VIXCLS") == "vix_index"
+
+
 def test_load_from_env_success(monkeypatch):
     monkeypatch.setattr(
         "src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None

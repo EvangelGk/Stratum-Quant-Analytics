@@ -2,6 +2,7 @@
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
+import hmac
 import sys
 import json
 from datetime import datetime
@@ -148,9 +149,58 @@ def _render_optimizer_approval_panel() -> None:
                     st.error("Could not write approval queue file.")
 
 
+def _check_admin_pin(entered: str) -> bool:
+    """Constant-time comparison of entered PIN against the stored secret.
+
+    Returns True only when ADMIN_PIN secret is set, is exactly 6 digits,
+    and the entered value matches.
+    """
+    stored = (get_secret("ADMIN_PIN") or "").strip()
+    if not stored or not stored.isdigit() or len(stored) != 6:
+        return False
+    return hmac.compare_digest(stored.encode(), entered.strip().encode())
+
+
 def _render_sidebar() -> str:
     with st.sidebar:
-        role = st.selectbox("Role", options=["Viewer", "Analyst", "Admin"], index=1)
+        # ── Role selector ────────────────────────────────────────────────
+        role_selection = st.selectbox("Role", options=["Viewer", "Analyst", "Admin"], index=1)
+
+        # ── Admin PIN gate ───────────────────────────────────────────────
+        if "admin_authenticated" not in st.session_state:
+            st.session_state.admin_authenticated = False
+
+        if role_selection == "Admin":
+            if not st.session_state.admin_authenticated:
+                st.markdown("#### 🔒 Admin Authentication")
+                with st.form(key="admin_pin_form", clear_on_submit=True):
+                    pin_input = st.text_input(
+                        "Enter 6-digit Admin PIN",
+                        type="password",
+                        max_chars=6,
+                        placeholder="••••••",
+                    )
+                    submitted = st.form_submit_button("Unlock Admin", use_container_width=True)
+                if submitted:
+                    if pin_input.isdigit() and len(pin_input) == 6 and _check_admin_pin(pin_input):
+                        st.session_state.admin_authenticated = True
+                        st.success("Admin access granted.")
+                        st.rerun()
+                    else:
+                        st.error("Incorrect PIN. Admin access denied.")
+                # While not yet authenticated, fall back to Analyst perms
+                role = "Analyst"
+            else:
+                role = "Admin"
+                if st.button("🔓 Revoke Admin Access", key="admin_signout", use_container_width=True):
+                    st.session_state.admin_authenticated = False
+                    st.rerun()
+        else:
+            # If user switches away from Admin, clear the authenticated flag
+            if st.session_state.admin_authenticated:
+                st.session_state.admin_authenticated = False
+            role = role_selection
+
         perms = ROLE_PERMISSIONS[role]
 
         _render_api_keys_status()
@@ -159,7 +209,7 @@ def _render_sidebar() -> str:
         with st.expander("Role meaning", expanded=False):
             st.markdown("- Viewer: read-only access to dashboards and artifacts.")
             st.markdown("- Analyst: can run pipelines and export reports, but cannot schedule jobs.")
-            st.markdown("- Admin: full operational control (run, export, schedule, history deletion).")
+            st.markdown("- Admin: full operational control (run, export, schedule, history deletion). Requires PIN.")
 
         st.caption(
             f"Permissions: run={perms['can_run']}, download={perms['can_download']}, schedule={perms['can_schedule']}"

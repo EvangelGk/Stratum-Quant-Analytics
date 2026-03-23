@@ -29,8 +29,9 @@ LAYER_HELP = {
         "title": "GOLD Layer — Analysis-Ready",
         "what": "Master analytical table that merges all cleaned sources.",
         "contains": [
-            "Log-returns and macro factors combined",
+            "Log-returns plus broad market + macro factor universe",
             "Governance decisions and risk scores applied",
+            "Feature-subset search and robust CV diagnostics for model selection",
             "Ready for correlation analysis, forecasting, stress-tests, …",
         ],
         "note": "This is what the Analytics tab visualises.",
@@ -76,9 +77,9 @@ ANALYSIS_HELP: dict[str, dict[str, str]] = {
     },
     "sensitivity_reg": {
         "title": "Sensitivity Regression",
-        "what": "Multivariate regression quantifying each macro factor's contribution to asset returns.",
-        "read": "Positive coefficient means factor pushes returns up; negative means down.",
-        "use": "Pin down the dominant drivers of each asset so you can hedge them directly.",
+        "what": "Multivariate model selection over many feature combinations to quantify each factor's contribution.",
+        "read": "Panel reports selected factor subset, CV R², lag selection, and signed coefficients.",
+        "use": "Pin down dominant drivers and keep only robust features for better unseen-data performance.",
     },
     "forecasting": {
         "title": "Time-Series Forecasting",

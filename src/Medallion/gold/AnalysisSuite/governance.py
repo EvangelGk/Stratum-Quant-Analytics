@@ -3,12 +3,20 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.stattools import adfuller, kpss
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 from .mixed_frequency import prepare_supervised_frame
+from .sensitivity_reg import (
+    _build_time_series_split,
+    _candidate_registry,
+    _engineer_features,
+    _fit_candidate_with_cv,
+    _reduce_multicollinearity,
+)
 
 
 def _benjamini_hochberg(
@@ -48,6 +56,111 @@ def _score_from_r2(r2_value: float) -> float:
     if r2_value >= -0.50:
         return 0.70
     return 1.00
+
+
+def _clip_by_train_quantiles(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    lower_q: float = 0.01,
+    upper_q: float = 0.99,
+) -> tuple[pd.DataFrame, pd.DataFrame, Dict[str, Dict[str, float]]]:
+    clipped_train = train_df.copy()
+    clipped_test = test_df.copy()
+    bounds: Dict[str, Dict[str, float]] = {}
+    for column in clipped_train.columns:
+        series = pd.to_numeric(clipped_train[column], errors="coerce")
+        if series.dropna().empty:
+            continue
+        lo = float(series.quantile(lower_q))
+        hi = float(series.quantile(upper_q))
+        if not np.isfinite(lo) or not np.isfinite(hi):
+            continue
+        bounds[column] = {"lower": lo, "upper": hi}
+        clipped_train[column] = series.clip(lower=lo, upper=hi)
+        clipped_test[column] = pd.to_numeric(clipped_test[column], errors="coerce").clip(
+            lower=lo,
+            upper=hi,
+        )
+    return clipped_train, clipped_test, bounds
+
+
+def _build_model(name: str) -> Any:
+    key = str(name).strip().lower()
+    if key in {"ols", "linear"}:
+        return LinearRegression()
+    if key == "ridge":
+        return Ridge(alpha=0.5)
+    if key == "lasso":
+        return Lasso(alpha=0.01, max_iter=5000)
+    if key == "elasticnet":
+        return ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=5000)
+    return LinearRegression()
+
+
+def _prepare_best_lag_frame(
+    df: pd.DataFrame,
+    target: str,
+    factors: List[str],
+    date_col: str,
+    min_train_rows: int,
+    requested_macro_lag_days: int = 0,
+) -> tuple[pd.DataFrame, Dict[str, Dict[str, Any]], int, Dict[str, float]]:
+    lag_candidates = [int(requested_macro_lag_days)] if int(requested_macro_lag_days) > 0 else [0, 15, 30, 45]
+
+    best_frame = pd.DataFrame()
+    best_meta: Dict[str, Dict[str, Any]] = {}
+    best_lag = lag_candidates[0]
+    best_score = float("-inf")
+    lag_scores: Dict[str, float] = {}
+
+    for lag in lag_candidates:
+        frame, meta = prepare_supervised_frame(
+            df=df,
+            target=target,
+            features=factors,
+            date_col=date_col,
+            macro_lag_days=lag,
+            align_target_to_features=True,
+        )
+        if len(frame) < max(min_train_rows + 5, 30):
+            lag_scores[str(lag)] = float("-inf")
+            continue
+
+        split_idx = int(len(frame) * 0.8)
+        split_idx = max(min_train_rows, min(split_idx, len(frame) - 5))
+        train = frame.iloc[:split_idx]
+        test = frame.iloc[split_idx:]
+        x_train = train[factors].apply(pd.to_numeric, errors="coerce")
+        y_train = pd.to_numeric(train[target], errors="coerce")
+        x_test = test[factors].apply(pd.to_numeric, errors="coerce")
+        y_test = pd.to_numeric(test[target], errors="coerce")
+
+        baseline = _build_model("ridge")
+        try:
+            baseline.fit(x_train, y_train)
+            score = float(r2_score(y_test, baseline.predict(x_test)))
+        except Exception:
+            score = float("-inf")
+        lag_scores[str(lag)] = score
+
+        if score > best_score:
+            best_score = score
+            best_lag = int(lag)
+            best_frame = frame
+            best_meta = meta
+
+    if best_frame.empty:
+        best_frame, best_meta = prepare_supervised_frame(
+            df=df,
+            target=target,
+            features=factors,
+            date_col=date_col,
+            macro_lag_days=0,
+            align_target_to_features=True,
+        )
+        best_lag = 0
+
+    return best_frame, best_meta, int(best_lag), lag_scores
 
 
 def _walk_forward_backtest(
@@ -91,7 +204,7 @@ def _walk_forward_backtest(
         x_test = test_df[factors]
         y_test = test_df[target]
 
-        estimator = Ridge(alpha=0.5) if model_type == "Ridge" else LinearRegression()
+        estimator = _build_model(model_type)
         estimator.fit(x_train, y_train)
         y_pred = estimator.predict(x_test)
 
@@ -142,7 +255,7 @@ def _walk_forward_backtest(
 
 
 def _oos_r2_confidence_interval(
-    model: LinearRegression,
+    model: Any,
     test_df: pd.DataFrame,
     x_cols: List[str],
     y_col: str,
@@ -309,6 +422,7 @@ def governance_report(
     walk_forward_windows: int = 4,
     clipped_walk_forward_floor: float = -2.0,
     model_type: str = "OLS",
+    macro_lag_days: int = 0,
 ) -> Dict[str, Any]:
     """Build statistical-governance diagnostics for regression analyses.
 
@@ -328,13 +442,13 @@ def governance_report(
         if not valid_factors:
             raise DataValidationError("No valid factors found for governance checks.")
 
-        work_df, transform_metadata = prepare_supervised_frame(
+        work_df, transform_metadata, selected_macro_lag_days, lag_scores = _prepare_best_lag_frame(
             df=df,
             target=target,
-            features=valid_factors,
+            factors=valid_factors,
             date_col=date_col,
-            macro_lag_days=0,
-            align_target_to_features=True,
+            min_train_rows=min_train_rows,
+            requested_macro_lag_days=int(macro_lag_days),
         )
 
         if len(work_df) < max(min_train_rows + 5, 30):
@@ -403,14 +517,77 @@ def governance_report(
         train_df = work_df.iloc[:split_idx].copy()
         test_df = work_df.iloc[split_idx:].copy()
 
-        x_train = train_df[valid_factors]
-        y_train = train_df[target]
-        x_test = test_df[valid_factors]
-        y_test = test_df[target]
+        x_train_raw = train_df[valid_factors].apply(pd.to_numeric, errors="coerce")
+        y_train = pd.to_numeric(train_df[target], errors="coerce")
+        x_test_raw = test_df[valid_factors].apply(pd.to_numeric, errors="coerce")
+        y_test = pd.to_numeric(test_df[target], errors="coerce")
 
-        model = Ridge(alpha=0.5) if model_type == "Ridge" else LinearRegression()
-        model.fit(x_train, y_train)
-        predictions = model.predict(x_test)
+        x_train_clipped, x_test_clipped, clip_bounds = _clip_by_train_quantiles(
+            x_train_raw,
+            x_test_raw,
+            lower_q=0.01,
+            upper_q=0.99,
+        )
+        x_train_eng = _engineer_features(x_train_clipped, valid_factors)
+        x_test_eng = _engineer_features(x_test_clipped, valid_factors)
+
+        imputer = SimpleImputer(strategy="median")
+        x_train_imputed = pd.DataFrame(
+            imputer.fit_transform(x_train_eng),
+            columns=x_train_eng.columns,
+        )
+        x_test_imputed = pd.DataFrame(
+            imputer.transform(x_test_eng),
+            columns=x_train_eng.columns,
+        )
+
+        x_train, dropped_multicollinear, vif_map = _reduce_multicollinearity(
+            x_train_imputed,
+            threshold=12.0,
+            min_features=max(2, min(4, len(valid_factors))),
+        )
+        retained_features = list(x_train.columns)
+        x_test = x_test_imputed[retained_features].copy()
+
+        model_key = str(model_type).strip().lower()
+        model_alias = {
+            "ols": "Linear",
+            "linear": "Linear",
+            "ridge": "Ridge",
+            "lasso": "Lasso",
+            "elasticnet": "ElasticNet",
+            "randomforest": "RandomForest",
+            "auto": "Auto",
+        }
+        resolved_request = model_alias.get(model_key, "Linear")
+
+        registry = _candidate_registry(random_seed if random_seed is not None else 42)
+        candidate_names = list(registry.keys()) if resolved_request == "Auto" else [resolved_request]
+        splitter = _build_time_series_split(len(x_train))
+
+        best_model_name = ""
+        best_cv = -np.inf
+        best_model: Any = None
+        for candidate_name in candidate_names:
+            estimator, search_space = registry[candidate_name]
+            fitted_model, cv_r2, _ = _fit_candidate_with_cv(
+                name=candidate_name,
+                candidate=estimator,
+                param_distributions=search_space,
+                x=x_train,
+                y=y_train,
+                splitter=splitter,
+                seed=(random_seed if random_seed is not None else 42),
+            )
+            if float(cv_r2) > float(best_cv):
+                best_cv = float(cv_r2)
+                best_model_name = candidate_name
+                best_model = fitted_model
+
+        if best_model is None:
+            raise AnalysisError("Failed to fit governance model.")
+
+        predictions = best_model.predict(x_test)
         adaptive_min_test_size = max(12, min(60, len(work_df) // max(10, walk_forward_windows * 3)))
         walk_forward = _walk_forward_backtest(
             work_df,
@@ -420,7 +597,7 @@ def governance_report(
             min_train_rows=min_train_rows,
             clipped_floor=clipped_walk_forward_floor,
             min_test_size=adaptive_min_test_size,
-            model_type=model_type,
+            model_type=(best_model_name if best_model_name else model_type),
         )
 
         leakage_flags: List[str] = []
@@ -506,10 +683,12 @@ def governance_report(
             oos_r2 = raw_oos_r2
 
         # Bootstrap confidence interval for OOS R² — more stable than point estimate.
+        ci_frame = x_test.copy()
+        ci_frame[target] = y_test.values
         oos_r2_ci = _oos_r2_confidence_interval(
-            model=model,
-            test_df=test_df,
-            x_cols=valid_factors,
+            model=best_model,
+            test_df=ci_frame,
+            x_cols=retained_features,
             y_col=target,
             n_bootstrap=200,
             confidence=0.90,
@@ -550,9 +729,23 @@ def governance_report(
             rolling_window=max(3, min(10, len(y_test) // 4 if len(y_test) > 0 else 3)),
         )
 
+        model_step = best_model.named_steps.get("model") if hasattr(best_model, "named_steps") else best_model
+        raw_coef = getattr(model_step, "coef_", None)
+        if raw_coef is not None:
+            coef_arr = np.asarray(raw_coef, dtype=float).reshape(-1)
+            coeffs = {
+                factor: float(coef_arr[idx])
+                for idx, factor in enumerate(retained_features)
+            }
+        else:
+            coeffs = {factor: 0.0 for factor in retained_features}
+
+        intercept_value = float(getattr(model_step, "intercept_", 0.0))
+
         return {
             "status": "ok",
-            "model_type": model_type,
+            "model_type": (best_model_name if best_model_name else model_type),
+            "requested_model_type": model_type,
             "split": {
                 "train_rows": int(len(train_df)),
                 "test_rows": int(len(test_df)),
@@ -596,12 +789,16 @@ def governance_report(
                 "walk_forward_windows_requested": int(walk_forward_windows),
                 "walk_forward_windows_adaptive": int(adaptive_walk_windows),
                 "adaptive_walk_forward_min_test_size": int(adaptive_min_test_size),
+                "model_selection_cv_r2": float(best_cv),
+                "selected_macro_lag_days": int(selected_macro_lag_days),
+                "lag_candidate_oos_r2": lag_scores,
+                "winsor_bounds": clip_bounds,
+                "dropped_multicollinear_features": dropped_multicollinear,
+                "max_vif": float(max(vif_map.values())) if vif_map else None,
                 "transformations": transform_metadata,
             },
-            "coefficients": {
-                factor: float(coef) for factor, coef in zip(valid_factors, model.coef_)
-            },
-            "intercept": float(model.intercept_),
+            "coefficients": coeffs,
+            "intercept": intercept_value,
         }
     except DataValidationError:
         raise

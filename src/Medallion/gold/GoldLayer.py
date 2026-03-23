@@ -416,6 +416,49 @@ class GoldLayer:
     def _analysis_df(self, ticker: Optional[str]) -> pd.DataFrame:
         return filter_to_ticker(self.df, ticker=ticker)
 
+    def _resolve_analysis_factors(
+        self,
+        analysis_df: pd.DataFrame,
+        target: str,
+        explicit_factors: Optional[List[str]] = None,
+    ) -> List[str]:
+        if explicit_factors:
+            ordered = list(
+                dict.fromkeys([f for f in explicit_factors if isinstance(f, str)])
+            )
+            return [f for f in ordered if f in analysis_df.columns and f != target]
+
+        preferred_from_maps = list(
+            dict(getattr(self.config, "macro_series_map", {})).values()
+        ) + list(dict(getattr(self.config, "worldbank_indicator_map", {})).values())
+        market_candidates = ["open", "high", "low", "close", "adj_close", "volume"]
+        ordered_seed = list(dict.fromkeys(preferred_from_maps + market_candidates))
+
+        numeric_cols = [
+            col
+            for col in analysis_df.columns
+            if col != target
+            and pd.api.types.is_numeric_dtype(analysis_df[col])
+            and not str(col).startswith("__age_days_")
+        ]
+        ordered_candidates = [c for c in ordered_seed if c in numeric_cols] + [
+            c for c in numeric_cols if c not in ordered_seed
+        ]
+
+        filtered: List[str] = []
+        for col in ordered_candidates:
+            series = pd.to_numeric(analysis_df[col], errors="coerce")
+            if series.notna().sum() < 30:
+                continue
+            if float(series.nunique(dropna=True)) <= 1:
+                continue
+            filtered.append(col)
+
+        if not filtered:
+            fallback = ["inflation", "energy_index"]
+            filtered = [f for f in fallback if f in analysis_df.columns and f != target]
+        return filtered
+
     def _evaluate_governance_gate(
         self,
         report: Optional[Dict[str, Any]],
@@ -880,7 +923,7 @@ class GoldLayer:
         scenario_name: Optional[str] = None,
         target: str = "log_return",
         factors: Optional[List[str]] = None,
-        regression_model: str = "OLS",
+        regression_model: str = "Auto",
     ) -> Dict[str, Any]:
         """
         Run all analyses and return results in a dictionary.
@@ -888,8 +931,17 @@ class GoldLayer:
         results = {}
         selected_ticker = self._resolve_ticker(ticker)
         random_seed = self._resolve_random_seed()
-        resolved_factors = factors or ["inflation", "energy_index"]
         analysis_df = self._analysis_df(selected_ticker)
+        resolved_factors = self._resolve_analysis_factors(
+            analysis_df=analysis_df,
+            target=target,
+            explicit_factors=factors,
+        )
+        selected_macro_factor = (
+            macro_factor
+            if macro_factor in analysis_df.columns
+            else (resolved_factors[0] if resolved_factors else macro_factor)
+        )
         effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
             scenario_name=effective_scenario,
@@ -983,11 +1035,11 @@ class GoldLayer:
                 return results
 
         try:
-            if "log_return" in analysis_df.columns and macro_factor in analysis_df.columns:
+            if "log_return" in analysis_df.columns and selected_macro_factor in analysis_df.columns:
                 results["elasticity"] = elasticity(
                     analysis_df,
                     "log_return",
-                    macro_factor,
+                    selected_macro_factor,
                     ticker=selected_ticker,
                     macro_lag_days=0,
                     rolling_window=90,
@@ -1014,7 +1066,7 @@ class GoldLayer:
         try:
             results["lag_analysis"] = lag_analysis(
                 analysis_df,
-                macro_factor,
+                selected_macro_factor,
                 max(lags, 90),
                 target=target,
                 ticker=selected_ticker,
@@ -1027,7 +1079,7 @@ class GoldLayer:
                 best_corr = results["lag_analysis"].get("best_lag_correlation", 0.0)
                 print(
                     ANALYSIS_LAG_ANALYSIS.format(
-                        factor=macro_factor,
+                        factor=selected_macro_factor,
                         best_lag=best_lag,
                         correlation=(
                             f"{float(best_corr):.4f}"
@@ -1068,7 +1120,7 @@ class GoldLayer:
                         if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0
                         else None
                     ),
-                    macro_factor=macro_factor,
+                    macro_factor=selected_macro_factor,
                     scenario_bias=dict(scenario_payload.get("mc_bias", {})),
                 )
                 if results["monte_carlo"] is not None:
@@ -1239,7 +1291,7 @@ class GoldLayer:
         target: str = "log_return",
         factors: Optional[List[str]] = None,
         max_workers: int = 4,
-        regression_model: str = "OLS",
+        regression_model: str = "Auto",
         include_auto_ml: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
@@ -1250,11 +1302,20 @@ class GoldLayer:
         """
         print(LIVE_STEP_7_RESULTS_GENERATION)
         results: Dict[str, Any] = {}
-        safe_factors = factors or ["inflation", "energy_index"]
         worker_count = max(1, min(max_workers, 8))
         selected_ticker = self._resolve_ticker(ticker)
         random_seed = self._resolve_random_seed()
         analysis_df = self._analysis_df(selected_ticker)
+        safe_factors = self._resolve_analysis_factors(
+            analysis_df=analysis_df,
+            target=target,
+            explicit_factors=factors,
+        )
+        selected_macro_factor = (
+            macro_factor
+            if macro_factor in analysis_df.columns
+            else (safe_factors[0] if safe_factors else macro_factor)
+        )
         effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
             scenario_name=effective_scenario,
@@ -1335,7 +1396,7 @@ class GoldLayer:
             "lag_analysis": partial(
                 lag_analysis,
                 analysis_df,
-                macro_factor,
+                selected_macro_factor,
                 max(lags, 90),
                 target,
                 selected_ticker,
@@ -1387,12 +1448,12 @@ class GoldLayer:
                 0,
             )
 
-        if "log_return" in analysis_df.columns and macro_factor in analysis_df.columns:
+        if "log_return" in analysis_df.columns and selected_macro_factor in analysis_df.columns:
             tasks["elasticity"] = partial(
                 elasticity,
                 analysis_df,
                 "log_return",
-                macro_factor,
+                selected_macro_factor,
                 selected_ticker,
                 0,
                 90,
@@ -1411,7 +1472,7 @@ class GoldLayer:
                 "high_inflation"
                 if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0
                 else None,
-                macro_factor,
+                selected_macro_factor,
                 dict(scenario_payload.get("mc_bias", {})),
             )
         else:
