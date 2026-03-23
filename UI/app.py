@@ -3,6 +3,8 @@
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
 
 import sys
+import json
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -40,35 +42,110 @@ from UI.tabs import (
 
 def _render_api_keys_status() -> None:
     """Render required API key connectivity status in the sidebar."""
-    @st.cache_data(show_spinner=False, ttl=60)
-    def _status_snapshot() -> tuple[list[str], list[str]]:
-        fred_key = (get_secret("FRED_API_KEY") or "").strip()
-        gemini_key = (get_secret("GEMINI_API_KEY") or "").strip()
+    fred_key = (get_secret("FRED_API_KEY") or "").strip()
+    gemini_key = (get_secret("GEMINI_API_KEY") or "").strip()
+    groq_key = (get_secret("GROQ_API_KEY") or "").strip()
 
-        connected_local: list[str] = []
-        missing_local: list[str] = []
-        if fred_key:
-            connected_local.append("FRED_API_KEY")
-        else:
-            missing_local.append("FRED_API_KEY")
+    connected: list[str] = []
+    missing: list[str] = []
+    if fred_key:
+        connected.append("FRED_API_KEY")
+    else:
+        missing.append("FRED_API_KEY")
 
-        if gemini_key:
-            connected_local.append("GEMINI_API_KEY")
-        else:
-            missing_local.append("GEMINI_API_KEY")
-        return connected_local, missing_local
+    if gemini_key:
+        connected.append("GEMINI_API_KEY")
+    else:
+        missing.append("GEMINI_API_KEY")
 
-    connected, missing = _status_snapshot()
+    if groq_key:
+        connected.append("GROQ_API_KEY")
+    else:
+        missing.append("GROQ_API_KEY")
+
+    # AI is reachable if at least one LLM key (Gemini or Groq) is configured
+    llm_keys = {"GEMINI_API_KEY", "GROQ_API_KEY"}
+    llm_ok = bool(llm_keys & set(connected))
+    total_required = 3  # FRED + GEMINI + GROQ
 
     st.markdown("### 🔐 API Keys Status")
     if not missing:
         st.success("🟢 Connected: όλα τα αναγκαία API keys είναι διαθέσιμα")
+    elif llm_ok:
+        st.warning("🟡 Partial: τουλάχιστον ένα LLM key διαθέσιμο")
     else:
         st.error("🔴 Missing: λείπει 1 ή περισσότερα αναγκαία API keys")
 
-    st.caption(f"Connected ({len(connected)}/2): {', '.join(connected) if connected else 'none'}")
+    st.caption(f"Connected ({len(connected)}/{total_required}): {', '.join(connected) if connected else 'none'}")
     if missing:
         st.caption(f"Missing: {', '.join(missing)}")
+
+
+def _approval_queue_path() -> Path:
+    return OUTPUT_DIR / ".optimizer" / "approval_queue.json"
+
+
+def _read_approval_queue() -> dict | None:
+    path = _approval_queue_path()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_approval_queue(data: dict) -> bool:
+    path = _approval_queue_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def _render_optimizer_approval_panel() -> None:
+    queue = _read_approval_queue()
+    if not queue:
+        st.caption("No pending optimizer approval request detected.")
+        return
+
+    status = str(queue.get("status", "unknown"))
+    if status == "pending":
+        st.warning("Pending optimizer approval detected.")
+    elif status == "YES":
+        st.success("Last optimizer proposal was approved.")
+    elif status == "NO":
+        st.info("Last optimizer proposal was rejected or timed out.")
+    else:
+        st.caption(f"Approval queue status: {status}")
+
+    with st.expander("Approval queue", expanded=(status == "pending")):
+        st.caption(f"Action: {queue.get('description', 'N/A')}")
+        st.caption(f"Requested: {queue.get('requested_at', 'N/A')}")
+        details = queue.get("details", {})
+        if isinstance(details, dict):
+            st.json(details)
+
+        if status == "pending":
+            col_approve, col_reject = st.columns(2)
+            if col_approve.button("Approve", key="approve_optimizer_change", use_container_width=True):
+                queue["status"] = "YES"
+                queue["approved_at"] = datetime.utcnow().isoformat() + "Z"
+                if _write_approval_queue(queue):
+                    st.success("Approval recorded. Optimizer will detect it within ~2 seconds.")
+                    st.rerun()
+                else:
+                    st.error("Could not write approval queue file.")
+            if col_reject.button("Reject", key="reject_optimizer_change", use_container_width=True):
+                queue["status"] = "NO"
+                queue["approved_at"] = datetime.utcnow().isoformat() + "Z"
+                if _write_approval_queue(queue):
+                    st.info("Rejection recorded. Optimizer will detect it within ~2 seconds.")
+                    st.rerun()
+                else:
+                    st.error("Could not write approval queue file.")
 
 
 def _render_sidebar() -> str:
@@ -182,9 +259,10 @@ def _render_sidebar() -> str:
             st.markdown("### 🔬 Automated Optimizer")
             st.caption(
                 "Owner-only: runs the self-correcting 10-iteration optimization loop. "
-                "Each code mutation requires your approval via terminal prompt or "
-                "approval queue file."
+                "Each code mutation requires your approval via terminal prompt, CLI, "
+                "or the approval queue panel below."
             )
+            _render_optimizer_approval_panel()
             opt_target = st.slider(
                 "Target score", min_value=80, max_value=99, value=94, step=1,
                 key="opt_target_score",

@@ -10,15 +10,38 @@ import requests
 import streamlit as st
 
 from src.ai_agent import PAGE_CONTEXT_QUESTIONS, QuantosAgent
+from src.exceptions.AIAgentExceptions import AIOutputError, BackendSelectionError
 from src.secret_store import get_secret
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _get_agent() -> QuantosAgent:
-    """Return a session-cached agent instance (cheap to construct, reuse across reruns)."""
+def _current_agent_signature() -> tuple[str, str, str, str, str]:
+    """Return the current backend-relevant settings fingerprint for this session."""
+    return (
+        "1" if (get_secret("GEMINI_API_KEY") or "").strip() else "0",
+        "1" if (get_secret("GROQ_API_KEY") or "").strip() else "0",
+        (get_secret("OLLAMA_API_URL") or "http://127.0.0.1:11434/api/generate").strip(),
+        (get_secret("OLLAMA_MODEL") or "llama3.2:1b").strip(),
+        (get_secret("GROQ_MODEL") or "llama-3.3-70b-versatile").strip(),
+    )
+
+def _get_agent() -> QuantosAgent | None:
+    """Return a session-cached agent. Rebuilds if missing. Returns None when no backend available."""
+    signature = _current_agent_signature()
+    if st.session_state.get("_ai_agent_signature") != signature:
+        st.session_state.pop("_ai_agent_instance", None)
+        st.session_state["_ai_agent_signature"] = signature
+
     if "_ai_agent_instance" not in st.session_state:
-        st.session_state["_ai_agent_instance"] = QuantosAgent()
+        try:
+            st.session_state["_ai_agent_instance"] = QuantosAgent()
+        except BackendSelectionError as exc:
+            # Mark offline so the Retry button becomes visible immediately.
+            st.session_state["ai_ready"] = False
+            st.session_state["ai_offline_reason"] = str(exc)
+            st.session_state["ai_ready_checked_at"] = time.time()
+            return None
     return st.session_state["_ai_agent_instance"]  # type: ignore[return-value]
 
 
@@ -30,33 +53,50 @@ def _ensure_messages() -> list[dict[str, str]]:
 
 
 def _check_ready(force: bool = False) -> bool:
-    """Resolve Quantos readiness with zero-cost defaults.
+    """Resolve Quantos readiness.
 
     Performance policy:
-    - No network probe on normal reruns/clicks.
-    - Network probe only when force=True (Retry button).
+    - Online keys (Gemini / Groq): optimistic — key configured → Ready immediately,
+      no network probe. The actual health is checked live on every API call inside
+      _generate(), which already cascades Gemini → Groq automatically.
+    - Offline (only-Ollama) mode: TTL-based auto-recheck every 30 s so the UI
+      recovers automatically without requiring a manual Retry press.
     """
-    if not force and "ai_ready" in st.session_state:
-        return bool(st.session_state.get("ai_ready", False))
+    _ONLINE_TTL  = 120.0  # seconds before re-verifying that online keys are still present
+    _RECHECK_TTL =  30.0  # seconds before re-probing a Failed / Offline state
+    now = time.time()
+    last_checked = st.session_state.get("ai_ready_checked_at", 0.0)
 
-    # Always accept configured Gemini instantly without network calls.
+    # Fast path for Ready state — but only within the online TTL window.
+    # Once expired, fall through to re-verify keys are still present in secrets.
+    if not force and st.session_state.get("ai_ready") is True:
+        if (now - last_checked) < _ONLINE_TTL:
+            return True
+        # TTL expired → re-check keys (no network call, just re-read secrets)
+
+    # Fast path for Failed/Offline state — honour cache only within short TTL
+    if not force and st.session_state.get("ai_ready") is False:
+        if (now - last_checked) < _RECHECK_TTL:
+            return False
+        # TTL expired → fall through and re-probe
+
+    # Online key check — optimistic, no network call needed.
+    # Gemini and/or Groq both count as valid online backends.
     gkey = (get_secret("GEMINI_API_KEY") or "").strip()
-    if gkey:
+    qkey = (get_secret("GROQ_API_KEY") or "").strip()
+    if gkey or qkey:
+        if gkey and qkey:
+            label = "gemini + groq configured"
+        elif gkey:
+            label = "gemini configured"
+        else:
+            label = "groq configured"
         st.session_state["ai_ready"] = True
-        st.session_state["ai_offline_reason"] = "gemini configured"
+        st.session_state["ai_offline_reason"] = label
+        st.session_state["ai_ready_checked_at"] = now
         return True
 
-    # Keep the UI responsive: do not auto-probe Ollama unless user requests it.
-    if not force:
-        st.session_state["ai_ready"] = bool(st.session_state.get("ai_last_ollama_ok", False))
-        if not st.session_state["ai_ready"]:
-            st.session_state["ai_offline_reason"] = (
-                "Ollama probe paused for performance. Press Retry to check local backend."
-            )
-        return bool(st.session_state.get("ai_ready", False))
-
-    # Explicit probe path (user action).
-    st.session_state.pop("_ai_agent_instance", None)
+    # No online keys — probe Ollama.
     try:
         r = requests.get("http://127.0.0.1:11434/api/tags", timeout=(0.6, 1.0))
         if r.status_code == 200:
@@ -72,7 +112,7 @@ def _check_ready(force: bool = False) -> bool:
     st.session_state["ai_last_ollama_ok"] = ok
     st.session_state["ai_ready"] = ok
     st.session_state["ai_offline_reason"] = "" if ok else reason
-    st.session_state["ai_ready_checked_at"] = time.time()
+    st.session_state["ai_ready_checked_at"] = now
     return ok
 
 
@@ -83,11 +123,30 @@ def _submit_question(
 ) -> str:
     """Ask the agent a question, push both turns to shared history, return answer."""
     agent = _get_agent()
+    msgs = _ensure_messages()
+
+    if agent is None:
+        # Agent couldn't be constructed — backend unavailable.
+        offline_msg = st.session_state.get("ai_offline_reason", "AI backend unavailable.")
+        st.session_state["ai_last_error"] = offline_msg
+        return offline_msg
+
     result = agent.answer_question(
         question, user_id=user_id, current_page=current_page
     )
     answer: str = result.get("answer", "")
-    msgs = _ensure_messages()
+
+    # If the call failed (quota exhausted, outage, auth error), evict the cached
+    # agent and clear the ready flag so the next interaction re-probes the backend
+    # automatically — no manual Retry required.
+    if not result.get("success"):
+        st.session_state["ai_last_error"] = answer
+        st.session_state.pop("_ai_agent_instance", None)
+        st.session_state["ai_ready"] = False
+        st.session_state["ai_ready_checked_at"] = 0.0  # re-probe on very next event
+        return answer
+
+    st.session_state.pop("ai_last_error", None)
     msgs.append({"role": "user", "content": question})
     msgs.append({"role": "assistant", "content": answer})
     return answer
@@ -106,10 +165,15 @@ def render_sidebar_ai_widget() -> None:
     status_label = "🟢 Ready" if ai_ready else "⚫ Offline"
 
     with st.expander(f"🤖 Quantos — {status_label}", expanded=True):
+        last_error = str(st.session_state.get("ai_last_error", "") or "")
+        if last_error:
+            st.warning(last_error)
+
         if not ai_ready:
             reason = st.session_state.get("ai_offline_reason", "")
             st.caption(f"Quantos offline{': ' + reason[:120] if reason else ''}.")
             if st.button("🔄 Retry", key="sidebar_ai_retry", use_container_width=True):
+                st.session_state.pop("ai_last_error", None)
                 _check_ready(force=True)
                 st.rerun()
             return
@@ -168,6 +232,9 @@ def render_inline_ai_section(
         user_id = os.getenv("DATA_USER_ID", "default")
         current_page = st.session_state.get("selected_page", "")
         agent = _get_agent()
+        if agent is None:
+            st.caption("⚫ Quantos offline. Retry when backend is available.")
+            return
 
         col_a, col_b = st.columns([3, 1])
 
@@ -197,11 +264,16 @@ def render_inline_ai_section(
                 )
             if result.get("success"):
                 insight: str = result["insight"]
+                st.session_state.pop("ai_last_error", None)
                 st.markdown(insight)
                 msgs = _ensure_messages()
                 msgs.append({"role": "user", "content": f"[Insight] {topic}"})
                 msgs.append({"role": "assistant", "content": insight})
             else:
+                st.session_state["ai_last_error"] = str(result.get("insight", "AI error"))
+                st.session_state.pop("_ai_agent_instance", None)
+                st.session_state["ai_ready"] = False
+                st.session_state["ai_ready_checked_at"] = 0.0
                 st.error(result.get("insight", "AI error"))
 
 
@@ -216,30 +288,58 @@ def show_ai_assistant_tab() -> None:
     if not ai_ready:
         reason = st.session_state.get("ai_offline_reason", "unknown")
         st.error(f"🔴 **Quantos offline**")
+        last_error = str(st.session_state.get("ai_last_error", "") or "")
+        if last_error:
+            st.warning(last_error)
         with st.expander("🔍 Diagnostic details", expanded=True):
             st.code(reason, language=None)
         if st.button("🔄 Retry connection", key="main_ai_retry", type="primary"):
+            st.session_state.pop("ai_last_error", None)
             _check_ready(force=True)
             st.rerun()
         return
 
     agent = _get_agent()
+    # Guard: _get_agent() may return None if backend detection failed right here.
+    if agent is None:
+        reason = st.session_state.get("ai_offline_reason", "No backend available.")
+        st.error(f"🔴 **Quantos offline**: {reason}")
+        if st.button("🔄 Retry", key="main_ai_retry_agent", type="primary"):
+            st.session_state.pop("ai_ready", None)
+            st.rerun()
+        return
+
     c_status, c_brief, c_clear = st.columns([5, 3, 1])
     c_status.success("🟢 Quantos online")
+    last_error = str(st.session_state.get("ai_last_error", "") or "")
+    if last_error:
+        st.warning(last_error)
 
     if c_brief.button(
         "📋 Pipeline Brief", use_container_width=True,
         help="Generate a full AI briefing from the latest pipeline outputs"
     ):
         with st.spinner("Generating Quantos pipeline briefing…"):
-            brief = agent.create_pipeline_brief(user_id=user_id)
+            try:
+                brief = agent.create_pipeline_brief(user_id=user_id)
+            except AIOutputError as exc:
+                st.error(f"Brief failed (output write error): {exc}")
+                brief = {"success": False}
         if brief.get("success"):
+            st.session_state.pop("ai_last_error", None)
             st.toast("Brief saved to output/", icon="✅")
             with st.container(border=True):
                 st.markdown("#### 📋 Quantos Pipeline Brief")
                 st.markdown(brief.get("brief", ""))
         else:
-            st.error(f"Brief failed: {brief.get('error', 'unknown')}")
+            if brief.get("error"):
+                st.session_state["ai_last_error"] = str(brief.get("error", "unknown"))
+                st.error(f"Brief failed: {brief.get('error', 'unknown')}")
+            # LLM failure → reset agent for auto-recovery on next interaction
+            if not brief.get("success"):
+                st.session_state.pop("_ai_agent_instance", None)
+                st.session_state["ai_ready"] = False
+                st.session_state["ai_ready_checked_at"] = 0.0
 
     if c_clear.button("🗑️", help="Clear chat history", use_container_width=True):
         st.session_state["ai_messages"] = []

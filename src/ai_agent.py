@@ -15,7 +15,8 @@ import requests
 # Avoids re-reading large JSON files and re-globbing logs on every question.
 _context_bundle_cache: dict[str, dict[str, Any]] = {}
 _CONTEXT_BUNDLE_TTL: float = 30.0  # seconds
-_session_summary_cache: dict[str, Any] = {"data": None, "ts": 0.0}
+_MAX_CONTEXT_BUNDLE_CACHE_ENTRIES: int = 32
+_session_summary_cache: dict[str, dict[str, Any]] = {}
 _SESSION_SUMMARY_TTL: float = 60.0  # seconds
 
 try:
@@ -121,22 +122,36 @@ class QuantosAgent:
     Detects availability and uses appropriate backend automatically.
     """
 
-    # Local backend (Ollama)
-    OLLAMA_API_URL = get_secret("OLLAMA_API_URL", "http://127.0.0.1:11434/api/generate") or "http://127.0.0.1:11434/api/generate"
-    MODEL_NAME = get_secret("OLLAMA_MODEL", "llama3.2:1b") or "llama3.2:1b"
-    
+    # Local backend (Ollama) — static fallback defaults
+    OLLAMA_API_URL = "http://127.0.0.1:11434/api/generate"
+    MODEL_NAME = "llama3.2:1b"
+
     # Online backend (Google Gemini)
     GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
     # Online backend fallback (Groq — OpenAI-compatible)
     GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    GROQ_MODEL_NAME = get_secret("GROQ_MODEL", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile"
+    GROQ_MODEL_NAME = "llama-3.3-70b-versatile"  # static fallback default
 
     RESTING_MESSAGE = "Quantos is currently resting, please try again later."
 
     def __init__(self, root: Path | None = None, timeout_seconds: int | None = None, backend: str | None = None) -> None:
         bootstrap_env_from_secrets(override=False)
         self._root = root or Path(__file__).resolve().parent.parent
+        # Re-read dynamic config fresh on each construction so secret changes are
+        # picked up whenever the agent is rebuilt (e.g. after a backend failure).
+        self.OLLAMA_API_URL = (
+            get_secret("OLLAMA_API_URL", self.__class__.OLLAMA_API_URL)
+            or self.__class__.OLLAMA_API_URL
+        )
+        self.MODEL_NAME = (
+            get_secret("OLLAMA_MODEL", self.__class__.MODEL_NAME)
+            or self.__class__.MODEL_NAME
+        )
+        self.GROQ_MODEL_NAME = (
+            get_secret("GROQ_MODEL", self.__class__.GROQ_MODEL_NAME)
+            or self.__class__.GROQ_MODEL_NAME
+        )
         # Default 200s; override with OLLAMA_TIMEOUT env var
         default_timeout = int(get_secret("OLLAMA_TIMEOUT", "200") or "200")
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else default_timeout
@@ -146,6 +161,9 @@ class QuantosAgent:
             self.backend = self._detect_backend()
         else:
             self.backend = backend
+
+        self.last_used_backend = self.backend
+        self.last_used_model = ""
         
         if self.backend not in ("local", "online"):
             raise BackendSelectionError(
@@ -176,7 +194,7 @@ class QuantosAgent:
         raise BackendSelectionError(
             "No AI backend available. Either:\n"
             "1) Ensure Ollama is running at 127.0.0.1:11434, OR\n"
-            "2) Set GEMINI_API_KEY in Streamlit secrets or environment."
+            "2) Set GEMINI_API_KEY or GROQ_API_KEY in Streamlit secrets or environment."
         )
 
     def _base_url(self) -> str:
@@ -269,6 +287,8 @@ class QuantosAgent:
                 content = candidates[0].get("content", {})
                 parts = content.get("parts", [])
                 if parts:
+                    self.last_used_backend = "online"
+                    self.last_used_model = "gemini-1.5-flash"
                     return str(parts[0].get("text", "")).strip()
         except (KeyError, IndexError, TypeError):
             pass
@@ -334,6 +354,8 @@ class QuantosAgent:
             raise LLMResponseError(f"Failed to parse Groq JSON response: {exc}") from exc
 
         try:
+            self.last_used_backend = "online"
+            self.last_used_model = f"groq/{self.GROQ_MODEL_NAME}"
             return str(payload["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError):
             raise LLMResponseError(f"Unexpected Groq response format: {json.dumps(payload)[:200]}")
@@ -350,39 +372,79 @@ class QuantosAgent:
     def _user_data_dir(self, user_id: str) -> Path:
         return self._root / "data" / "users" / self._safe_user_id(user_id)
 
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[str, int, int, bool]:
+        """Return a stable change signature for cache invalidation."""
+        try:
+            stat = path.stat()
+            return (str(path), stat.st_mtime_ns, stat.st_size, True)
+        except OSError:
+            return (str(path), 0, 0, False)
+
+    def _evict_old_context_cache_entries(self) -> None:
+        """Keep the per-user context cache bounded in long-lived processes."""
+        if len(_context_bundle_cache) <= _MAX_CONTEXT_BUNDLE_CACHE_ENTRIES:
+            return
+        oldest_key = min(
+            _context_bundle_cache,
+            key=lambda key: float(_context_bundle_cache[key].get("_cached_at", 0.0)),
+        )
+        _context_bundle_cache.pop(oldest_key, None)
+
     def _latest_session_summary(self) -> dict[str, Any]:
         """Return latest session summary, cached for _SESSION_SUMMARY_TTL seconds."""
         now = _time.monotonic()
-        if (
-            _session_summary_cache["data"] is not None
-            and (now - _session_summary_cache["ts"]) < _SESSION_SUMMARY_TTL
-        ):
-            return _session_summary_cache["data"]  # type: ignore[return-value]
-
         logs_dir = self._root / "logs"
-        result: dict[str, Any] = {}
+        cache_key = str(logs_dir)
+        cached_entry = _session_summary_cache.get(cache_key)
+        latest_file_signature: tuple[str, int, int, bool] | None = None
+
         if logs_dir.exists():
             files = sorted(
                 logs_dir.glob("session_summary_*.json"),
                 key=lambda p: p.stat().st_mtime,
             )
             if files:
-                result = self._read_json(files[-1])
+                latest_file_signature = self._file_signature(files[-1])
 
-        _session_summary_cache["data"] = result
-        _session_summary_cache["ts"] = now
+        if (
+            cached_entry is not None
+            and (now - float(cached_entry.get("ts", 0.0))) < _SESSION_SUMMARY_TTL
+            and cached_entry.get("file_signature") == latest_file_signature
+        ):
+            return cached_entry.get("data", {})  # type: ignore[return-value]
+
+        result: dict[str, Any] = {}
+        if latest_file_signature and latest_file_signature[-1]:
+            result = self._read_json(Path(latest_file_signature[0]))
+
+        _session_summary_cache[cache_key] = {
+            "data": result,
+            "ts": now,
+            "file_signature": latest_file_signature,
+        }
         return result
 
     def _read_json(self, path: Path) -> dict[str, Any]:
+        data, _ = self._read_json_with_error(path)
+        return data
+
+    def _read_json_with_error(self, path: Path) -> tuple[dict[str, Any], str | None]:
         if not path.exists():
-            return {}
+            return {}, f"Missing file: {path.name}"
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
+            return json.loads(path.read_text(encoding="utf-8")), None
+        except Exception as exc:
+            return {}, f"Failed to read {path.name}: {type(exc).__name__}: {exc}"
+
+    @staticmethod
+    def _has_minimum_context(bundle: dict[str, Any]) -> bool:
+        """Return True when at least one primary context source contains data."""
+        primary_keys = ("analysis_results", "audit_report", "optimizer_report", "quality_report")
+        return any(bool(bundle.get(key)) for key in primary_keys)
 
     def ping(self) -> tuple[bool, str]:
-        """Check AI backend availability. For 'online', tries Gemini then Groq."""
+        """Check AI backend availability. For 'online', tries Gemini, Groq, then Ollama."""
         if self.backend == "local":
             return self._ping_ollama()
         elif self.backend == "online":
@@ -391,8 +453,13 @@ class QuantosAgent:
                 if ok:
                     return True, msg
             if self._get_groq_api_key():
-                return self._ping_groq()
-            return False, "No online API keys configured (GEMINI_API_KEY / GROQ_API_KEY)."
+                ok, msg = self._ping_groq()
+                if ok:
+                    return True, msg
+            ok, msg = self._ping_ollama()
+            if ok:
+                return True, msg
+            return False, "No AI backend available after checking Gemini, Groq, and Ollama."
         else:
             return False, f"Unknown backend: {self.backend}"
 
@@ -475,18 +542,30 @@ class QuantosAgent:
     def build_context_bundle(self, user_id: str = "default") -> dict[str, Any]:
         """Build full context bundle, cached per-user for _CONTEXT_BUNDLE_TTL seconds."""
         safe_uid = self._safe_user_id(user_id)
-        now = _time.monotonic()
-        cached = _context_bundle_cache.get(safe_uid)
-        if cached and (now - cached.get("_cached_at", 0.0)) < _CONTEXT_BUNDLE_TTL:
-            return cached
-
         output_dir = self._output_dir(user_id)
         user_data_dir = self._user_data_dir(user_id)
-        analysis = self._read_json(output_dir / "analysis_results.json")
-        audit = self._read_json(output_dir / "audit_report.json")
-        optimizer = self._read_json(output_dir / "optimizer_report.json")
-        quality = self._read_json(user_data_dir / "processed" / "quality" / "quality_report.json")
+        source_paths = [
+            output_dir / "analysis_results.json",
+            output_dir / "audit_report.json",
+            output_dir / "optimizer_report.json",
+            user_data_dir / "processed" / "quality" / "quality_report.json",
+        ]
+        source_signature = tuple(self._file_signature(path) for path in source_paths)
+        now = _time.monotonic()
+        cached = _context_bundle_cache.get(safe_uid)
+        if (
+            cached
+            and (now - float(cached.get("_cached_at", 0.0))) < _CONTEXT_BUNDLE_TTL
+            and cached.get("_source_signature") == source_signature
+        ):
+            return cached
+
+        analysis, analysis_error = self._read_json_with_error(output_dir / "analysis_results.json")
+        audit, audit_error = self._read_json_with_error(output_dir / "audit_report.json")
+        optimizer, optimizer_error = self._read_json_with_error(output_dir / "optimizer_report.json")
+        quality, quality_error = self._read_json_with_error(user_data_dir / "processed" / "quality" / "quality_report.json")
         latest_session = self._latest_session_summary()
+        read_errors = [err for err in (analysis_error, audit_error, optimizer_error, quality_error) if err]
 
         results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
         gov = results.get("governance_report", {}) if isinstance(results, dict) else {}
@@ -502,6 +581,7 @@ class QuantosAgent:
             "optimizer_report": optimizer,
             "quality_report": quality,
             "latest_session_summary": latest_session,
+            "read_errors": read_errors,
             "quick_signals": {
                 "oos_r2": oos,
                 "model_risk_score": risk,
@@ -512,9 +592,11 @@ class QuantosAgent:
                     else []
                 ),
             },
+            "_source_signature": source_signature,
             "_cached_at": now,
         }
         _context_bundle_cache[safe_uid] = bundle
+        self._evict_old_context_cache_entries()
         return bundle
 
     def _lean_prompt_context(self, bundle: dict[str, Any]) -> dict[str, Any]:
@@ -530,8 +612,17 @@ class QuantosAgent:
         analysis = bundle.get("analysis_results", {}) or {}
 
         # All failed audit checks + summary of passed ones count
-        all_checks = audit.get("checks") or []
-        failed_checks = [{"name": c.get("name"), "reason": c.get("reason"), "severity": c.get("severity")} for c in all_checks if not c.get("passed", True)]
+        raw_checks = audit.get("checks") or []
+        all_checks = [c for c in raw_checks if isinstance(c, dict)]
+        failed_checks = [
+            {
+                "name": c.get("name"),
+                "reason": c.get("reason"),
+                "severity": c.get("severity"),
+            }
+            for c in all_checks
+            if not c.get("passed", True)
+        ]
         passed_count = sum(1 for c in all_checks if c.get("passed", True))
 
         # Quality: only summary block
@@ -552,6 +643,7 @@ class QuantosAgent:
             "generated_at": bundle.get("generated_at"),
             "result_keys": bundle.get("result_keys", []),
             "quick_signals": bundle.get("quick_signals", {}),
+            "read_errors": bundle.get("read_errors", []),
             "audit": {
                 "status": audit.get("status"),
                 "model_risk_score": audit.get("model_risk_score"),
@@ -606,14 +698,17 @@ class QuantosAgent:
         except Exception as exc:
             raise LLMResponseError(f"Failed to parse Ollama JSON response: {exc}") from exc
 
+        self.last_used_backend = "local"
+        self.last_used_model = self.MODEL_NAME
         return str(payload.get("response", "")).strip()
 
     def _generate(self, prompt: str, temperature: float = 0.2) -> str:
-        """Unified generation method: Gemini → Groq → raise.
+        """Unified generation method: Gemini → Groq → Ollama → raise.
 
         For the 'online' backend, tries Gemini first. If Gemini is unavailable
-        (quota, outage, auth failure) it falls through to Groq automatically.
-        Only raises to the caller when both online backends have been exhausted.
+        (quota, outage, auth failure) it falls through to Groq automatically,
+        then to Ollama if a local backend is available.
+        Only raises to the caller when all candidate backends have been exhausted.
 
         Args:
             prompt: The input prompt to send to the LLM.
@@ -656,9 +751,22 @@ class QuantosAgent:
                 ) as exc:
                     last_exc = exc
 
+            # 3) Try local Ollama as final fallback if it is currently available
+            ok, _ = self._ping_ollama()
+            if ok:
+                try:
+                    return self._llama_generate(prompt, temperature)
+                except (
+                    LLMUnavailableError,
+                    LLMConnectionError,
+                    LLMTimeoutError,
+                    LLMResponseError,
+                ) as exc:
+                    last_exc = exc
+
             # Both exhausted — surface the last known error
             raise last_exc or LLMUnavailableError(
-                "No online AI backend available. Set GEMINI_API_KEY or GROQ_API_KEY in secrets."
+                "No AI backend available. Set GEMINI_API_KEY or GROQ_API_KEY in secrets, or run Ollama locally."
             )
         else:
             raise BackendSelectionError(f"Unknown backend: {self.backend}")
@@ -670,6 +778,14 @@ class QuantosAgent:
         current_page: str = "",
     ) -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
+        if context_bundle.get("read_errors") and not self._has_minimum_context(context_bundle):
+            return {
+                "success": False,
+                "answer": (
+                    "Quantos cannot answer reliably right now because the latest output files "
+                    "could not be read. Please rerun the pipeline or inspect the output files."
+                ),
+            }
         # Use lean context: removes full JSON files, keeps only key signals.
         # This cuts LLM input from megabytes to ~2-4 KB → much faster generation.
         lean = self._lean_prompt_context(context_bundle)
@@ -696,7 +812,7 @@ class QuantosAgent:
                 "answer": answer,
                 "context_generated_at": context_bundle.get("generated_at"),
             }
-        except (LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
+        except (LLMAuthenticationError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
             return {"success": False, "answer": self._friendly_user_error(exc)}
 
     def quick_insight(
@@ -716,11 +832,17 @@ class QuantosAgent:
         try:
             answer = self._generate(prompt, temperature=0.1)
             return {"success": True, "insight": answer}
-        except (LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
+        except (LLMAuthenticationError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
             return {"success": False, "insight": self._friendly_user_error(exc)}
 
     def create_pipeline_brief(self, user_id: str = "default") -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
+        if context_bundle.get("read_errors") and not self._has_minimum_context(context_bundle):
+            return {
+                "success": False,
+                "error": "Primary output files could not be read; cannot generate a reliable pipeline brief.",
+                "brief": "",
+            }
         lean = self._lean_prompt_context(context_bundle)
         prompt = (
             "You are a senior quant reviewer. Generate a concise execution brief after a pipeline run.\n"
@@ -734,21 +856,18 @@ class QuantosAgent:
         )
         try:
             brief_text = self._generate(prompt, temperature=0.1)
-        except (LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
+        except (LLMAuthenticationError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError, LLMResponseError) as exc:
             return {"success": False, "error": f"{type(exc).__name__}: {exc}", "brief": ""}
 
         output_dir = self._output_dir(user_id)
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
-            if self.backend == "local":
-                model_name = self.MODEL_NAME
-            elif self._get_gemini_api_key():
-                model_name = "gemini-1.5-flash"
-            else:
-                model_name = f"groq/{self.GROQ_MODEL_NAME}"
+            model_name = self.last_used_model or (
+                self.MODEL_NAME if self.backend == "local" else "gemini-1.5-flash"
+            )
             brief_payload = {
                 "generated_at": datetime.now().isoformat(),
-                "backend": self.backend,
+                "backend": self.last_used_backend or self.backend,
                 "model": model_name,
                 "brief": brief_text,
                 "quick_signals": context_bundle.get("quick_signals", {}),
