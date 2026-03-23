@@ -395,6 +395,99 @@ class QuantosAgent:
         )
         _context_bundle_cache.pop(oldest_key, None)
 
+    @staticmethod
+    def _json_scalar(value: Any) -> bool:
+        return isinstance(value, (str, int, float, bool)) or value is None
+
+    def _output_inventory(self, output_dir: Path, max_files: int = 40) -> list[dict[str, Any]]:
+        if not output_dir.exists():
+            return []
+        files = sorted(
+            [p for p in output_dir.rglob("*") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:max_files]
+        inventory: list[dict[str, Any]] = []
+        for file_path in files:
+            try:
+                stat = file_path.stat()
+                inventory.append(
+                    {
+                        "path": str(file_path.relative_to(output_dir)).replace("\\", "/"),
+                        "size_bytes": int(stat.st_size),
+                        "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    }
+                )
+            except OSError:
+                continue
+        return inventory
+
+    def _analysis_digest(self, analysis_payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(analysis_payload, dict):
+            return {}
+        results = analysis_payload.get("results") or {}
+        if not isinstance(results, dict):
+            return {}
+
+        digest: dict[str, Any] = {}
+        metric_priority = (
+            "status",
+            "model",
+            "best_model",
+            "r2",
+            "cv_r2",
+            "holdout_r2",
+            "mae",
+            "rmse",
+            "mape",
+            "n_obs",
+            "model_risk_score",
+            "decision",
+            "passed",
+            "severity",
+        )
+
+        for section, value in results.items():
+            if isinstance(value, dict):
+                section_digest: dict[str, Any] = {}
+                for key in metric_priority:
+                    if key in value and self._json_scalar(value.get(key)):
+                        section_digest[key] = value.get(key)
+
+                if not section_digest:
+                    scalar_items = [
+                        (k, v) for k, v in value.items() if self._json_scalar(v)
+                    ][:12]
+                    section_digest = {k: v for k, v in scalar_items}
+
+                if "out_of_sample" in value and isinstance(value.get("out_of_sample"), dict):
+                    oos = value.get("out_of_sample") or {}
+                    oos_slim = {
+                        k: oos.get(k)
+                        for k in ("r2", "mae", "rmse")
+                        if self._json_scalar(oos.get(k))
+                    }
+                    if oos_slim:
+                        section_digest["out_of_sample"] = oos_slim
+
+                if "walk_forward" in value and isinstance(value.get("walk_forward"), dict):
+                    wf = value.get("walk_forward") or {}
+                    wf_slim = {
+                        k: wf.get(k)
+                        for k in ("status", "avg_r2", "median_r2", "worst_r2")
+                        if self._json_scalar(wf.get(k))
+                    }
+                    if wf_slim:
+                        section_digest["walk_forward"] = wf_slim
+
+                digest[section] = section_digest
+            elif self._json_scalar(value):
+                digest[section] = value
+            else:
+                digest[section] = {"type": type(value).__name__}
+
+        return digest
+
     def _latest_session_summary(self) -> dict[str, Any]:
         """Return latest session summary, cached for _SESSION_SUMMARY_TTL seconds."""
         now = _time.monotonic()
@@ -433,18 +526,26 @@ class QuantosAgent:
         data, _ = self._read_json_with_error(path)
         return data
 
-    def _read_json_with_error(self, path: Path) -> tuple[dict[str, Any], str | None]:
+    def _read_json_with_error(
+        self,
+        path: Path,
+        required: bool = True,
+    ) -> tuple[dict[str, Any], str | None]:
         if not path.exists():
-            return {}, f"Missing file: {path.name}"
+            if required:
+                return {}, f"Missing file: {path.name}"
+            return {}, None
         try:
             return json.loads(path.read_text(encoding="utf-8")), None
         except Exception as exc:
-            return {}, f"Failed to read {path.name}: {type(exc).__name__}: {exc}"
+            if required:
+                return {}, f"Failed to read {path.name}: {type(exc).__name__}: {exc}"
+            return {}, None
 
     @staticmethod
     def _has_minimum_context(bundle: dict[str, Any]) -> bool:
         """Return True when at least one primary context source contains data."""
-        primary_keys = ("analysis_results", "audit_report", "optimizer_report", "quality_report")
+        primary_keys = ("analysis_results", "audit_report", "quality_report")
         return any(bool(bundle.get(key)) for key in primary_keys)
 
     def ping(self) -> tuple[bool, str]:
@@ -566,10 +667,15 @@ class QuantosAgent:
 
         analysis, analysis_error = self._read_json_with_error(output_dir / "analysis_results.json")
         audit, audit_error = self._read_json_with_error(output_dir / "audit_report.json")
-        optimizer, optimizer_error = self._read_json_with_error(output_dir / "optimizer_report.json")
+        optimizer, optimizer_error = self._read_json_with_error(
+            output_dir / "optimizer_report.json",
+            required=False,
+        )
         quality, quality_error = self._read_json_with_error(user_data_dir / "processed" / "quality" / "quality_report.json")
         latest_session = self._latest_session_summary()
         read_errors = [err for err in (analysis_error, audit_error, optimizer_error, quality_error) if err]
+        analysis_digest = self._analysis_digest(analysis if isinstance(analysis, dict) else {})
+        output_inventory = self._output_inventory(output_dir)
 
         results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
         gov = results.get("governance_report", {}) if isinstance(results, dict) else {}
@@ -585,6 +691,17 @@ class QuantosAgent:
             "optimizer_report": optimizer,
             "quality_report": quality,
             "latest_session_summary": latest_session,
+            "analysis_digest": analysis_digest,
+            "pipeline_visibility": {
+                "output_inventory": output_inventory,
+                "available_result_sections": sorted(list(results.keys())) if isinstance(results, dict) else [],
+                "output_dir": str(output_dir),
+            },
+            "agent_policy": {
+                "mode": "read_only",
+                "allowed_actions": ["inspect", "summarize", "recommend"],
+                "forbidden_actions": ["edit_code", "modify_config", "run_pipeline", "execute_optimizer"],
+            },
             "read_errors": read_errors,
             "quick_signals": {
                 "oos_r2": oos,
@@ -614,6 +731,9 @@ class QuantosAgent:
         optimizer = bundle.get("optimizer_report", {}) or {}
         quality = bundle.get("quality_report", {}) or {}
         analysis = bundle.get("analysis_results", {}) or {}
+        analysis_digest = bundle.get("analysis_digest", {}) or {}
+        pipeline_visibility = bundle.get("pipeline_visibility", {}) or {}
+        agent_policy = bundle.get("agent_policy", {}) or {}
 
         # All failed audit checks + summary of passed ones count
         raw_checks = audit.get("checks") or []
@@ -648,6 +768,7 @@ class QuantosAgent:
             "result_keys": bundle.get("result_keys", []),
             "quick_signals": bundle.get("quick_signals", {}),
             "read_errors": bundle.get("read_errors", []),
+            "agent_policy": agent_policy,
             "audit": {
                 "status": audit.get("status"),
                 "model_risk_score": audit.get("model_risk_score"),
@@ -660,6 +781,11 @@ class QuantosAgent:
             "quality_summary": q_summary,
             "session": session_slim,
             "optimizer": opt_slim,
+            "analysis_digest": analysis_digest,
+            "pipeline_visibility": {
+                "available_result_sections": pipeline_visibility.get("available_result_sections", []),
+                "output_inventory": pipeline_visibility.get("output_inventory", [])[:25],
+            },
         }
 
     def _llama_generate(self, prompt: str, temperature: float = 0.2) -> str:
@@ -782,16 +908,8 @@ class QuantosAgent:
         current_page: str = "",
     ) -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
-        if context_bundle.get("read_errors") and not self._has_minimum_context(context_bundle):
-            return {
-                "success": False,
-                "answer": (
-                    "Quantos cannot answer reliably right now because the latest output files "
-                    "could not be read. Please rerun the pipeline or inspect the output files."
-                ),
-            }
-        # Use lean context: removes full JSON files, keeps only key signals.
-        # This cuts LLM input from megabytes to ~2-4 KB → much faster generation.
+        # Continue with partial context so Quantos can still help even when some
+        # outputs are missing; missing files are already surfaced via read_errors.
         lean = self._lean_prompt_context(context_bundle)
         if current_page:
             lean["user_current_page"] = current_page
@@ -804,6 +922,8 @@ class QuantosAgent:
             "You are Quantos, the in-app quantitative copilot for STRATUM QUANT ANALYTICS. "
             "Answer in detailed, structured English by default. Use sections with headers (##) and bullet points where appropriate. "
             "Give complete, practical explanations and concrete next steps — never truncate or summarise without evidence. "
+            "You are in strict read-only mode: do NOT claim to have edited code, changed configuration, executed the pipeline, or executed optimizer actions. "
+            "You may only inspect context, explain findings, and propose recommendations. "
             "Use ONLY the provided context. If data for a specific question is missing from the context, say so clearly but still answer what you can.\n"
             f"{page_hint}"
             f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}\n"
@@ -841,15 +961,10 @@ class QuantosAgent:
 
     def create_pipeline_brief(self, user_id: str = "default") -> dict[str, Any]:
         context_bundle = self.build_context_bundle(user_id=user_id)
-        if context_bundle.get("read_errors") and not self._has_minimum_context(context_bundle):
-            return {
-                "success": False,
-                "error": "Primary output files could not be read; cannot generate a reliable pipeline brief.",
-                "brief": "",
-            }
         lean = self._lean_prompt_context(context_bundle)
         prompt = (
             "You are a senior quant reviewer. Generate a concise execution brief after a pipeline run.\n"
+            "Read-only policy: do not claim that you edited code/config or executed optimizer/pipeline actions.\n"
             "Return exactly these sections:\n"
             "1) Run Health\n"
             "2) Key Signals\n"

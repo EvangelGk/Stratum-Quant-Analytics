@@ -129,6 +129,71 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
     assert "governance_report" in results
 
 
+def test_run_all_analyses_default_uses_dynamic_factor_universe(monkeypatch):
+    monkeypatch.setattr(
+        gold_module.GoldLayer,
+        "_load_or_create_master_table",
+        lambda self: pd.DataFrame(
+            {
+                "ticker": ["A", "A", "A", "A"],
+                "date": pd.to_datetime(["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]),
+                "log_return": [0.01, 0.02, -0.01, 0.03],
+                "close": [100.0, 101.0, 99.5, 103.0],
+                "volume": [1_000_000, 1_100_000, 900_000, 1_200_000],
+                "inflation": [0.01, 0.012, 0.011, 0.013],
+                "energy_index": [0.2, 0.21, 0.19, 0.22],
+                "vix_index": [18.0, 19.5, 21.0, 17.0],
+            }
+        ),
+    )
+
+    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df, *args, **kwargs: "corr")
+    monkeypatch.setattr(
+        gold_module,
+        "governance_report",
+        lambda *args, **kwargs: {
+            "status": "ok",
+            "out_of_sample": {"r2": 0.1},
+            "stability": {"normalized_mean_shift": 0.1},
+            "leakage_flags": [],
+            "stationarity": {"log_return": {"is_stationary": True}},
+            "walk_forward": {"avg_r2": 0.05},
+            "model_risk_score": 0.2,
+        },
+    )
+    monkeypatch.setattr(gold_module, "elasticity", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "lag_analysis", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "feature_decay_analysis", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "monte_carlo", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "stress_test", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "forecasting", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "backtest_pre2020_holdout", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(gold_module, "auto_ml_regression", lambda *args, **kwargs: {"ok": True})
+
+    captured: dict[str, list[str]] = {"factors": []}
+
+    def _capture_sensitivity(df, t, f, m, ticker=None, macro_lag_days=0):
+        captured["factors"] = list(f)
+        return {"coefficients": {}}
+
+    monkeypatch.setattr(gold_module, "sensitivity_reg", _capture_sensitivity)
+
+    cfg = DummyConfig()
+    cfg.enforce_reproducibility = True
+    cfg.random_seed = 42
+    cfg.governance_hard_fail = False
+    cfg.governance_walk_forward_windows = 2
+    cfg.auto_ml_enabled = True
+
+    gold = gold_module.GoldLayer(cfg)
+    _ = gold.run_all_analyses(ticker="A", factors=None)
+
+    assert captured["factors"]
+    assert "inflation" in captured["factors"]
+    assert "energy_index" in captured["factors"]
+    assert "vix_index" in captured["factors"]
+
+
 @pytest.mark.governance
 def test_governance_hard_fail_blocks_advanced_analyses(monkeypatch):
     monkeypatch.setattr(

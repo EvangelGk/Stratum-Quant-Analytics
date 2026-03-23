@@ -95,8 +95,9 @@ LAYER_HELP = {
         "title": "GOLD Layer - Analysis-Ready",
         "what": "Master analytical table that merges all cleaned sources.",
         "contains": [
-            "Returns and macro factors combined",
+            "Returns, market fields, and macro/worldbank factors combined",
             "Governance decisions applied",
+            "Feature-subset search + time-series CV diagnostics",
             "Ready for analytics",
         ],
         "note": "This is the layer used by analytics and reports.",

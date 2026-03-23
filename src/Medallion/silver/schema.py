@@ -18,6 +18,9 @@ def z_score_check(series: pd.Series, threshold: float = 3.5) -> bool:
 financials_schema = DataFrameSchema(
     columns={
         "date": Column(pa.DateTime, nullable=False),
+        "open": Column(float, Check.greater_than(0), nullable=True),
+        "high": Column(float, Check.greater_than(0), nullable=True),
+        "low": Column(float, Check.greater_than(0), nullable=True),
         "close": Column(
             float,
             [
@@ -28,6 +31,7 @@ financials_schema = DataFrameSchema(
                 ),
             ],
         ),
+        "adj_close": Column(float, Check.greater_than(0), nullable=True),
         "volume": Column(float, Check.greater_than_or_equal_to(0), nullable=True),
         "source_system": Column(str, Check.isin(["yfinance"])),
         "ingested_at": Column(str),

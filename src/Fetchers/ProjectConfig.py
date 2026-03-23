@@ -74,6 +74,7 @@ class ProjectConfig:
             "UNRATE": "unemployment_rate",
             "FEDFUNDS": "fed_funds_rate",
             "DGS10": "us10y_treasury_yield",
+            "VIXCLS": "vix_index",
             "UMCSENT": "consumer_sentiment",
             "INDPRO": "industrial_production",
         }
@@ -367,6 +368,7 @@ class ProjectConfig:
             "UNRATE": "unemployment_rate",
             "FEDFUNDS": "fed_funds_rate",
             "DGS10": "us10y_treasury_yield",
+            "VIXCLS": "vix_index",
             "UMCSENT": "consumer_sentiment",
             "INDPRO": "industrial_production",
         }

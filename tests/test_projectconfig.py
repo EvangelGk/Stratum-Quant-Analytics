@@ -12,6 +12,13 @@ def test_load_from_env_missing_key(monkeypatch):
     with pytest.raises(ValueError):
         ProjectConfig.load_from_env()
 
+def test_default_macro_map_includes_vix(monkeypatch):
+    monkeypatch.delenv("MACRO_SERIES_MAP", raising=False)
+    monkeypatch.delenv("WORLDBANK_INDICATOR_MAP", raising=False)
+    monkeypatch.setenv("FRED_API_KEY", "")
+    cfg = ProjectConfig.load_from_env()
+    assert cfg.macro_series_map.get("VIXCLS") == "vix_index"
+
 
 def test_load_from_env_success(monkeypatch):
     monkeypatch.setenv("FRED_API_KEY", "dummy")
