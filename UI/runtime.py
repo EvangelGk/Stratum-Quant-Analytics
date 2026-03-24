@@ -193,13 +193,60 @@ def run_and_cache_audit() -> dict[str, Any]:
     return result
 
 
+def _audit_report_completeness(report: Any) -> int:
+    if not isinstance(report, dict) or not report:
+        return -1
+
+    score = 0
+    checks = report.get("checks")
+    if isinstance(checks, dict):
+        score += len(checks) * 10
+        non_empty_checks = sum(1 for payload in checks.values() if isinstance(payload, dict) and payload)
+        score += non_empty_checks * 5
+
+    row_count = report.get("row_count")
+    column_count = report.get("column_count")
+    if isinstance(row_count, int):
+        score += 2
+        if row_count > 0:
+            score += 10
+    if isinstance(column_count, int):
+        score += 2
+        if column_count > 0:
+            score += 10
+
+    if isinstance(report.get("failed_checks"), list):
+        score += 2
+    if isinstance(report.get("warning_checks"), list):
+        score += 2
+    if isinstance(report.get("auditor_judgement"), dict):
+        score += 2
+    if isinstance(report.get("decision_ready"), bool):
+        score += 2
+
+    status = report.get("status")
+    if isinstance(status, str) and status.strip():
+        score += 2
+
+    return score
+
+
 def get_audit_report() -> dict[str, Any]:
-    if "audit_report" in st.session_state:
-        return st.session_state["audit_report"]
-    report = read_json(AUDIT_REPORT_PATH)
-    if report:
-        st.session_state["audit_report"] = report
-    return report
+    session_report = st.session_state.get("audit_report")
+    disk_report = read_json(AUDIT_REPORT_PATH)
+
+    session_score = _audit_report_completeness(session_report)
+    disk_score = _audit_report_completeness(disk_report)
+
+    if disk_score > session_score:
+        st.session_state["audit_report"] = disk_report
+        return disk_report
+    if session_score >= 0:
+        return session_report
+    if disk_score >= 0:
+        st.session_state["audit_report"] = disk_report
+        return disk_report
+    return {}
 
 
 def _to_serializable(value: Any) -> Any:

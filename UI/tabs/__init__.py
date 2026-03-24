@@ -17,6 +17,7 @@ from UI.tabs.data_tabs import (
     show_logs_tab,
     show_output_tab,
 )
+from UI.tabs.edge_tab import show_edge_arsenal_tab
 from UI.tabs.ops_tabs import show_auditor_tab, show_ops_tab
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "show_ai_assistant_tab",
     "show_auditor_tab",
     "show_data_tab",
+    "show_edge_arsenal_tab",
     "show_explainability_tab",
     "show_governance_tab",
     "show_health_alerts_tab",

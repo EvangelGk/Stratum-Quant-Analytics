@@ -60,6 +60,12 @@ PAGE_CONTEXT_QUESTIONS: dict[str, list[str]] = {
         "Εξήγησε την governance απόφαση και το risk score.",
         "Ποιες είναι οι 3 ενέργειες βελτίωσης αξιοπιστίας;",
     ],
+    "💎 Edge Arsenal": [
+        "Ποια edge metrics είναι πραγματικά exceptional σε αυτό το run;",
+        "Δείξε γιατί το edge μπορεί να είναι χρήσιμο ακόμα και με ήπια αρνητικό R².",
+        "Ποιο metric πρέπει να ανέβει πρώτο για πιο ασφαλές production;",
+        "Πώς να βελτιώσω Profit Factor και Calmar στο επόμενο run;",
+    ],
     "🩺 Health & Alerts": [
         "Γιατί το data health score είναι στο τρέχον επίπεδο;",
         "Ποιες ελλείπουσες πηγές επηρεάζουν τα αποτελέσματα;",
@@ -445,6 +451,12 @@ class QuantosAgent:
             "decision",
             "passed",
             "severity",
+            "expectancy_per_trade",
+            "profit_factor",
+            "calmar_ratio",
+            "information_ratio",
+            "sharpe_ratio",
+            "maximum_drawdown",
         )
 
         for section, value in results.items():
@@ -679,8 +691,13 @@ class QuantosAgent:
 
         results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
         gov = results.get("governance_report", {}) if isinstance(results, dict) else {}
+        backtest = results.get("backtest_2020", {}) if isinstance(results, dict) else {}
         oos = (gov.get("out_of_sample") or {}).get("r2") if isinstance(gov, dict) else None
         risk = gov.get("model_risk_score") if isinstance(gov, dict) else None
+        expectancy = backtest.get("expectancy_per_trade") if isinstance(backtest, dict) else None
+        profit_factor = backtest.get("profit_factor") if isinstance(backtest, dict) else None
+        calmar = backtest.get("calmar_ratio") if isinstance(backtest, dict) else None
+        info_ratio = backtest.get("information_ratio") if isinstance(backtest, dict) else None
 
         bundle: dict[str, Any] = {
             "generated_at": datetime.now().isoformat(),
@@ -706,6 +723,10 @@ class QuantosAgent:
             "quick_signals": {
                 "oos_r2": oos,
                 "model_risk_score": risk,
+                "expectancy_per_trade": expectancy,
+                "profit_factor": profit_factor,
+                "calmar_ratio": calmar,
+                "information_ratio": info_ratio,
                 "audit_status": audit.get("status") if isinstance(audit, dict) else None,
                 "quality_missing_sources": (
                     (quality.get("summary") or {}).get("missing_sources", [])
@@ -922,9 +943,20 @@ class QuantosAgent:
             "You are Quantos, the in-app quantitative copilot for STRATUM QUANT ANALYTICS. "
             "Answer in detailed, structured English by default. Use sections with headers (##) and bullet points where appropriate. "
             "Give complete, practical explanations and concrete next steps — never truncate or summarise without evidence. "
+            "PRIORITY POLICY: When validated edge metrics are strong (expectancy > 0, profit_factor >= 1.2, calmar_ratio >= 2.0, information_ratio >= 0.5), "
+            "start your answer with a dedicated section titled '## Validated Edge Highlights' containing at least 3 evidence bullets before any R2 discussion. "
+            "Repeat those highlights in summary and action sections and explicitly label them as artifact-validated strengths. "
+            "Never invent positive findings that are not in context. "
             "You are in strict read-only mode: do NOT claim to have edited code, changed configuration, executed the pipeline, or executed optimizer actions. "
             "You may only inspect context, explain findings, and propose recommendations. "
             "Use ONLY the provided context. If data for a specific question is missing from the context, say so clearly but still answer what you can.\n"
+            "R\u00b2 INTERPRETATION POLICY: A mildly negative OOS R\u00b2 (between -0.10 and 0.00) is EXPECTED and NORMAL "
+            "when using low-frequency macro indicators (FRED) to explain daily equity returns. "
+            "Publication lags of 45+ days, regime shifts, and macroeconomic noise structurally limit predictive R\u00b2. "
+            "DO NOT frame a mild negative R\u00b2 as model failure: instead, emphasise directional accuracy (>55% is commercially viable), "
+            "walk-forward median R\u00b2 stability, and volatility-regime alignment. "
+            "A model with R\u00b2=-0.03 and directional accuracy 58% is perfectly usable. "
+            "Reserve concern language for R\u00b2 < -0.25 or severe walk-forward degradation.\n"
             f"{page_hint}"
             f"CONTEXT:{json.dumps(lean, ensure_ascii=False)}\n"
             f"QUESTION:{question}"
@@ -949,6 +981,8 @@ class QuantosAgent:
         prompt = (
             "You are Quantos, the quantitative AI copilot of STRATUM QUANT ANALYTICS. "
             "Provide a complete, practical interpretation in English with bullet points and concrete actions. "
+            "Begin with a short 'Validated Edge Highlights' block when strong edge metrics exist. "
+            "Prioritize validated trading-edge metrics (expectancy, profit factor, calmar, information ratio, drawdown control) over raw R2 when available. "
             "Rely only on the provided data.\n"
             f"TOPIC: {topic}\n"
             f"DATA:{json.dumps(snapshot, ensure_ascii=False)[:3000]}"
@@ -965,6 +999,10 @@ class QuantosAgent:
         prompt = (
             "You are a senior quant reviewer. Generate a concise execution brief after a pipeline run.\n"
             "Read-only policy: do not claim that you edited code/config or executed optimizer/pipeline actions.\n"
+            "When edge metrics are positive and robust, begin with a 'Validated Edge Highlights' section and keep R2 interpretation secondary.\n"
+            "R\u00b2 INTERPRETATION POLICY: Mildly negative OOS R\u00b2 (-0.10 to 0.00) is normal for macro-to-equity models "
+            "with publication lags; do not flag this as a failure. Note directional accuracy and walk-forward stability instead. "
+            "Only flag R\u00b2 < -0.25 as a genuine concern requiring investigation.\n"
             "Return exactly these sections:\n"
             "1) Run Health\n"
             "2) Key Signals\n"

@@ -196,10 +196,20 @@ def _future_target_from_series(
     return future.replace([np.inf, -np.inf], np.nan), f"forward_{horizon}d_diff"
 
 
-def resolve_target_horizon(features: Sequence[str]) -> int:
+def resolve_target_horizon(
+    features: Sequence[str],
+    min_horizon_days: int = 1,
+    max_horizon_days: Optional[int] = None,
+) -> int:
     if not features:
-        return 1
-    return max(source_horizon_days(feature) for feature in features)
+        base_horizon = 1
+    else:
+        base_horizon = max(source_horizon_days(feature) for feature in features)
+
+    clamped = max(1, int(min_horizon_days), int(base_horizon))
+    if max_horizon_days is not None:
+        clamped = min(clamped, max(1, int(max_horizon_days)))
+    return int(clamped)
 
 
 def build_stationary_panel(
@@ -271,12 +281,22 @@ def prepare_supervised_frame(
     macro_lag_days: int = 30,
     interpolation_method: str = "linear",
     align_target_to_features: bool = True,
+    min_target_horizon_days: int = 1,
+    max_target_horizon_days: Optional[int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[str, Any]]]:
     work_df = filter_to_ticker(df, ticker=ticker).copy()
     work_df[date_col] = pd.to_datetime(work_df[date_col], errors="coerce")
     work_df = work_df.dropna(subset=[date_col]).sort_values(date_col)
 
-    target_horizon = resolve_target_horizon(features) if align_target_to_features else 1
+    target_horizon = (
+        resolve_target_horizon(
+            features,
+            min_horizon_days=min_target_horizon_days,
+            max_horizon_days=max_target_horizon_days,
+        )
+        if align_target_to_features
+        else 1
+    )
     target_series, target_method = _future_target_from_series(
         work_df[target],
         target,
@@ -300,6 +320,13 @@ def prepare_supervised_frame(
         "transformation": target_method,
         "native_horizon_days": target_horizon,
         "target_horizon_days": target_horizon,
+        "target_horizon_policy": {
+            "align_to_features": bool(align_target_to_features),
+            "min_target_horizon_days": int(max(1, min_target_horizon_days)),
+            "max_target_horizon_days": (
+                int(max_target_horizon_days) if max_target_horizon_days is not None else None
+            ),
+        },
     }
     keep_columns = [date_col, target, *features]
     keep_columns = [column for column in keep_columns if column in panel.columns]

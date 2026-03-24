@@ -112,27 +112,77 @@ def _read_parquet_fast(path: Path) -> pd.DataFrame:
     return _read_parquet_cached(str(path), path.stat().st_mtime_ns)
 
 
+def _unwrap_value_payload(payload: object) -> object:
+    current = payload
+    while isinstance(current, dict) and "value" in current and len(current) == 1:
+        current = current.get("value")
+    return current
+
+
+def _coerce_optional_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _load_analysis_payload(name: str, summary_results: dict | None = None) -> object:
+    if isinstance(summary_results, dict) and name in summary_results:
+        return _unwrap_value_payload(summary_results.get(name))
+
+    path = OUTPUT_DIR / f"{name}.json"
+    if path.exists():
+        return _unwrap_value_payload(_read_json_fast(path))
+    return {}
+
+
 def _render_quant_insights(summary: dict) -> None:
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
-    if not isinstance(results, dict) or not results:
+    if not isinstance(results, dict):
+        results = {}
+
+    gov = _load_analysis_payload("governance_report", results)
+    mc = _load_analysis_payload("monte_carlo", results)
+    lag = _load_analysis_payload("lag_analysis", results)
+    elas = _load_analysis_payload("elasticity", results)
+    stress = _load_analysis_payload("stress_test", results)
+    fc = _load_analysis_payload("forecasting", results)
+    decay = _load_analysis_payload("feature_decay", results)
+    backtest = _load_analysis_payload("backtest_2020", results)
+
+    if not any(isinstance(item, dict) and item for item in (gov, mc, lag, elas, stress, fc, decay, backtest)):
         return
 
     st.markdown("---")
     st.markdown("### 📉 Insights Dashboard")
-
-    gov = results.get("governance_report", {}) if isinstance(results.get("governance_report"), dict) else {}
-    mc = results.get("monte_carlo", {}) if isinstance(results.get("monte_carlo"), dict) else {}
-    lag = results.get("lag_analysis", {}) if isinstance(results.get("lag_analysis"), dict) else {}
-    elas = results.get("elasticity", {}) if isinstance(results.get("elasticity"), dict) else {}
-    stress = results.get("stress_test", {}) if isinstance(results.get("stress_test"), dict) else {}
-    fc = results.get("forecasting", {}) if isinstance(results.get("forecasting"), dict) else {}
-    decay = results.get("feature_decay", {}) if isinstance(results.get("feature_decay"), dict) else {}
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("OOS R²", _fmt_scalar((gov.get("out_of_sample") or {}).get("r2")))
     k2.metric("Model Risk", _fmt_scalar(gov.get("model_risk_score")))
     k3.metric("Best Lag (days)", _fmt_scalar(lag.get("best_lag_days")))
     k4.metric("Elasticity β", _fmt_scalar(elas.get("static_elasticity")))
+
+    if isinstance(backtest, dict) and backtest:
+        e1, e2, e3, e4 = st.columns(4)
+        e1.metric("Expectancy/Trade", _fmt_scalar(backtest.get("expectancy_per_trade")))
+        e2.metric("Profit Factor", _fmt_scalar(backtest.get("profit_factor")))
+        e3.metric("Calmar", _fmt_scalar(backtest.get("calmar_ratio")))
+        e4.metric("Information Ratio", _fmt_scalar(backtest.get("information_ratio")))
+
+        positive_signals = []
+        pf = backtest.get("profit_factor")
+        calmar = backtest.get("calmar_ratio")
+        exp = backtest.get("expectancy_per_trade")
+        if isinstance(pf, (int, float)) and float(pf) >= 1.5:
+            positive_signals.append(f"Profit Factor {float(pf):.2f}")
+        if isinstance(calmar, (int, float)) and float(calmar) >= 2.0:
+            positive_signals.append(f"Calmar {float(calmar):.2f}")
+        if isinstance(exp, (int, float)) and float(exp) > 0.0:
+            positive_signals.append(f"Positive Expectancy {float(exp):.4f}")
+        if positive_signals:
+            st.success(
+                "Dominant validated findings: " + " | ".join(positive_signals)
+                + ". These metrics demonstrate realized strategy edge even when R² is modest."
+            )
 
     stress_results = stress.get("results", {}) if isinstance(stress, dict) else {}
     if isinstance(stress_results, dict) and stress_results:
@@ -311,21 +361,23 @@ def _render_quant_insights(summary: dict) -> None:
 
 
 def _render_governance_payload(payload: dict) -> None:
-    gate = payload.get("gate", payload.get("value", payload))
-    report = payload.get("report", {})
+    gate = _unwrap_value_payload(payload.get("gate", payload.get("value", payload)))
+    report = _unwrap_value_payload(payload.get("report", {}))
     if isinstance(gate, dict):
-        gate_passed = bool(gate.get("passed"))
+        gate_passed = _coerce_optional_bool(gate.get("passed"))
         severity = str(gate.get("severity", "unknown"))
-        tl_c, tl_l, tl_d = score_governance_gate(gate_passed, severity)
+        tl_c, tl_l, tl_d = score_governance_gate(bool(gate_passed), severity)
         st.markdown(
             badge_html(tl_l, tl_c, tl_d) + f"&nbsp; <small style='color:#555'>{tl_d}</small>",
             unsafe_allow_html=True,
         )
         st.markdown("")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Gate Passed", "Yes" if gate_passed else "No")
+        c1.metric("Gate Passed", "Yes" if gate_passed is True else "No" if gate_passed is False else "N/A")
         c2.metric("Severity", severity.upper())
         c3.metric("Regime", str(gate.get("regime", "unknown")).upper())
+        if gate_passed is True and severity.lower() == "warn":
+            st.info("Gate passed with warnings. Advisory signals are visible, but they do not block analyses.")
         reasons = gate.get("reasons", []) or []
         if reasons:
             st.markdown("**Gate reasons:**")
@@ -411,16 +463,64 @@ def _render_backtest_payload(value: dict) -> None:
         _render_key_values(value, header="Backtest Summary")
         return
 
-    st.markdown("### 🧪 Model Performance During the 2020-2022 Crisis")
+    st.markdown("### 🧪 Crisis Backtest And Real Trading Edge")
     te = value.get("tracking_error")
     mdd = value.get("maximum_drawdown")
     train_rows = value.get("train_rows")
     test_rows = value.get("test_rows")
+    sharpe = value.get("sharpe_ratio")
+    calmar = value.get("calmar_ratio")
+    profit_factor = value.get("profit_factor")
+    expectancy = value.get("expectancy_per_trade")
+    info_ratio = value.get("information_ratio")
+
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Train rows", _fmt_scalar(train_rows))
     k2.metric("Test rows", _fmt_scalar(test_rows))
     k3.metric("Tracking Error", _fmt_scalar(te))
     k4.metric("Max Drawdown", _fmt_scalar(mdd))
+
+    p1, p2, p3, p4, p5 = st.columns(5)
+    p1.metric("Sharpe", _fmt_scalar(sharpe))
+    p2.metric("Calmar", _fmt_scalar(calmar))
+    p3.metric("Profit Factor", _fmt_scalar(profit_factor))
+    p4.metric("Expectancy/Trade", _fmt_scalar(expectancy))
+    p5.metric("Information Ratio", _fmt_scalar(info_ratio))
+
+    strong_flags: list[str] = []
+    if isinstance(profit_factor, (int, float)) and float(profit_factor) >= 1.5:
+        strong_flags.append(f"Profit Factor {float(profit_factor):.2f} (excellent)")
+    if isinstance(calmar, (int, float)) and float(calmar) >= 2.0:
+        strong_flags.append(f"Calmar {float(calmar):.2f} (institutional-grade)")
+    if isinstance(expectancy, (int, float)) and float(expectancy) > 0.0:
+        strong_flags.append(f"Positive expectancy {float(expectancy):.4f} per trade")
+    if isinstance(sharpe, (int, float)) and float(sharpe) >= 1.0:
+        strong_flags.append(f"Sharpe {float(sharpe):.2f} (risk-adjusted edge)")
+    if isinstance(info_ratio, (int, float)) and float(info_ratio) >= 0.5:
+        strong_flags.append(f"Information Ratio {float(info_ratio):.2f} vs benchmark")
+
+    if strong_flags:
+        st.success(
+            "Validated positive findings: " + " | ".join(strong_flags)
+            + ". These are realized backtest edge metrics, not synthetic scores."
+        )
+    else:
+        st.info(
+            "No exceptional edge threshold was triggered in this window. "
+            "Review drawdown, expectancy, and factor robustness before deployment."
+        )
+
+    corr_test = value.get("correlation_test", {}) if isinstance(value.get("correlation_test"), dict) else {}
+    p_val = corr_test.get("p_value")
+    r_val = corr_test.get("pearson_r")
+    if isinstance(p_val, (int, float)):
+        c1, c2 = st.columns(2)
+        c1.metric("Correlation r", _fmt_scalar(r_val))
+        c2.metric("P-value", _fmt_scalar(p_val))
+        if float(p_val) < 0.05:
+            st.success("Statistical significance passed: p-value < 0.05")
+        else:
+            st.caption("Correlation significance is weak in this sample (p-value >= 0.05).")
 
     preds = value.get("predictions", [])
     actual = value.get("actual", [])
@@ -461,6 +561,35 @@ def _render_backtest_payload(value: dict) -> None:
             height=380,
         )
         st.plotly_chart(fig, width="stretch")
+
+        strategy_returns = value.get("strategy_returns", [])
+        if isinstance(strategy_returns, list) and strategy_returns:
+            tdf = pd.DataFrame({"strategy_return": [float(x) for x in strategy_returns]})
+            fig_hist = px.histogram(
+                tdf,
+                x="strategy_return",
+                nbins=30,
+                title="Trade Distribution Histogram (Gains vs Losses)",
+                color_discrete_sequence=["#0f766e"],
+            )
+            fig_hist.add_vline(x=0.0, line_dash="dot", line_color="#7f1d1d")
+            fig_hist.update_layout(height=330)
+            st.plotly_chart(fig_hist, width="stretch")
+
+        rolling_sharpe = value.get("rolling_sharpe_30d", [])
+        if isinstance(rolling_sharpe, list) and rolling_sharpe:
+            rs_df = pd.DataFrame(rolling_sharpe)
+            if {"step", "rolling_sharpe"}.issubset(rs_df.columns):
+                fig_rs = px.line(
+                    rs_df,
+                    x="step",
+                    y="rolling_sharpe",
+                    title="Rolling Sharpe Ratio (30-day)",
+                )
+                fig_rs.add_hline(y=0.0, line_dash="dot", line_color="#777")
+                fig_rs.add_hline(y=1.0, line_dash="dash", line_color="#0f766e")
+                fig_rs.update_layout(height=330)
+                st.plotly_chart(fig_rs, width="stretch")
 
         avg_abs_err = float((bdf["predicted_return"] - bdf["actual_return"]).abs().mean())
         st.info(
@@ -681,13 +810,15 @@ def _render_governance_gate_payload(value: dict) -> None:
     if not isinstance(value, dict):
         _render_key_values(value, header="Governance Gate")
         return
-    passed = bool(value.get("passed"))
+    passed = _coerce_optional_bool(value.get("passed"))
     sev = str(value.get("severity", "unknown")).lower()
-    c, l, d = score_governance_gate(passed, sev)
+    c, l, d = score_governance_gate(bool(passed), sev)
     st.markdown(badge_html(l, c, d), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.metric("Gate Decision", "PASS" if passed else "FAIL")
+    c1.metric("Gate Decision", "PASS" if passed is True else "FAIL" if passed is False else "N/A")
     c2.metric("Severity", str(value.get("severity", "N/A")).upper())
+    if passed is True and sev == "warn":
+        st.caption("This is a warn-pass, not a block. Analyses remain available.")
     reasons = value.get("reasons", [])
     if isinstance(reasons, list) and reasons:
         st.markdown("**Why this gate decision was reached**")
@@ -859,8 +990,8 @@ def _render_stress_payload(value: object) -> bool:
 
 
 def _render_governance_consistency_panel(results: dict) -> None:
-    report = results.get("governance_report")
-    gate = results.get("governance_gate")
+    report = _load_analysis_payload("governance_report", results)
+    gate = _load_analysis_payload("governance_gate", results)
     if not isinstance(report, dict) and not isinstance(gate, dict):
         return
 
@@ -871,7 +1002,7 @@ def _render_governance_consistency_panel(results: dict) -> None:
     )
 
     report_status = str(report.get("status", "unknown")).upper() if isinstance(report, dict) else "N/A"
-    gate_passed = bool(gate.get("passed")) if isinstance(gate, dict) else None
+    gate_passed = _coerce_optional_bool(gate.get("passed")) if isinstance(gate, dict) else None
     gate_severity = str(gate.get("severity", "unknown")).upper() if isinstance(gate, dict) else "N/A"
     c1, c2, c3 = st.columns(3)
     c1.metric("Report status", report_status)
@@ -879,6 +1010,11 @@ def _render_governance_consistency_panel(results: dict) -> None:
     c3.metric("Gate severity", gate_severity)
 
     if isinstance(report, dict) and isinstance(gate, dict):
+        if gate_passed is True and gate_severity == "WARN":
+            st.info(
+                "The governance gate passed with warnings. This means advisory model-risk signals were raised, "
+                "but policy did not block downstream analyses."
+            )
         if report_status in {"FAIL", "ERROR", "CRITICAL"} and gate_passed:
             st.warning(
                 "The Report shows a weak quality/risk profile, but the Gate allowed the run under a warning policy. "

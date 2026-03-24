@@ -100,6 +100,20 @@ def _render_check_summary_table(report: dict, label_map: dict) -> None:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
+def _audit_report_is_complete(report: dict) -> bool:
+    if not isinstance(report, dict) or not report:
+        return False
+    checks = report.get("checks")
+    return (
+        isinstance(checks, dict)
+        and bool(checks)
+        and isinstance(report.get("row_count"), int)
+        and isinstance(report.get("column_count"), int)
+        and report.get("row_count", 0) > 0
+        and report.get("column_count", 0) > 0
+    )
+
+
 def show_auditor_tab() -> None:
     """Multi-tab System Auditor with 6 tabs and human-readable explanations."""
     st.subheader("\U0001f9eb System Auditor")
@@ -108,6 +122,12 @@ def show_auditor_tab() -> None:
         "temporal continuity, survivorship bias, output quality, threshold design "
         "and governance validity."
     )
+
+    header_c1, header_c2 = st.columns([1, 1])
+    with header_c2:
+        if st.button("Reload Saved Audit", key="reload_saved_audit"):
+            st.session_state.pop("audit_report", None)
+            st.rerun()
 
     report = get_audit_report()
     if not report:
@@ -148,8 +168,11 @@ def show_auditor_tab() -> None:
 
     # ── Tab 1 · Overview ─────────────────────────────────────────────────────
     with tab_overview:
-        status = report.get("status", "UNKNOWN")
-        tl_color, tl_label, tl_desc = score_audit_status(status)
+        report_is_complete = _audit_report_is_complete(report)
+        effective_status = report.get("status", "UNKNOWN") if report_is_complete else "ERROR"
+        tl_color, tl_label, tl_desc = score_audit_status(effective_status)
+        if not report_is_complete:
+            tl_desc = "The loaded audit report is incomplete or stale. Reload the saved audit artifact or re-run the audit."
         st.markdown(
             badge_html(tl_label, tl_color, tl_desc)
             + f"&nbsp; <span style='font-size:1.05rem;color:#555'>{tl_desc}</span>",
@@ -167,11 +190,16 @@ def show_auditor_tab() -> None:
         c4.metric("Failed Checks", len(failed_checks))
         c5.metric("Warning Checks", len(warning_checks))
 
+        if not report_is_complete:
+            st.error(
+                "The audit report loaded in the UI is incomplete or stale. "
+                "Success messaging is suppressed until a complete report is available."
+            )
         if failed_checks:
             st.error("**Failed checks:** " + ", ".join(_LABEL_MAP.get(c, c) for c in failed_checks))
         if warning_checks:
             st.warning("**Warnings:** " + ", ".join(_LABEL_MAP.get(c, c) for c in warning_checks))
-        if not failed_checks and not warning_checks:
+        if report_is_complete and not failed_checks and not warning_checks:
             st.success("\u2705 All 8 checks passed \u2014 system is production-ready.")
 
         st.markdown("---")
@@ -587,7 +615,7 @@ def show_auditor_tab() -> None:
 
 
 def show_ops_tab(role: str) -> None:
-    st.subheader("έγβΎ╕Π Job History & Scheduling")
+    st.subheader("Job History & Scheduling")
 
     history = load_session_history(limit=50)
     if history:
@@ -606,14 +634,14 @@ def show_ops_tab(role: str) -> None:
     else:
         st.info("No run history yet.")
 
-    st.markdown("### ΏθΝβ Nightly Scheduling")
+    st.markdown("### Nightly Scheduling")
     schedule = read_json(UI_SCHEDULE_PATH) if UI_SCHEDULE_PATH.exists() else {}
     enabled_default = bool(schedule.get("enabled", False))
     hour_default = int(schedule.get("hour", 2)) if isinstance(schedule.get("hour"), int) else 2
     minute_default = int(schedule.get("minute", 0)) if isinstance(schedule.get("minute"), int) else 0
 
     enabled = st.toggle(
-        "ΏθΝβ Enable nightly schedule",
+        "Enable nightly schedule",
         value=enabled_default,
         disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
     )
@@ -624,7 +652,7 @@ def show_ops_tab(role: str) -> None:
     minute = c2.number_input(
         "Minute", min_value=0, max_value=59, value=minute_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"]
     )
-    if st.button("ΏθΤ╛ Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
+    if st.button("Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
         payload = {
             "enabled": enabled,
             "hour": int(hour),
