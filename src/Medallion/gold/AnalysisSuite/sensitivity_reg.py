@@ -7,7 +7,7 @@ import statsmodels.api as sm
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
-from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit, cross_val_score
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from statsmodels.stats.outliers_influence import variance_inflation_factor
@@ -119,17 +119,17 @@ def _candidate_registry(seed: int) -> Dict[str, tuple[Pipeline, Dict[str, Any] |
         "Linear": (linear_pipe(LinearRegression()), None),
         "Ridge": (
             linear_pipe(Ridge(random_state=seed)),
-            {"model__alpha": np.logspace(-3, 2, 40)},
+            {"model__alpha": [1e-3, 1e-2, 1e-1, 1.0, 5.0, 10.0, 50.0]},
         ),
         "Lasso": (
             linear_pipe(Lasso(random_state=seed, max_iter=5000)),
-            {"model__alpha": np.logspace(-4, 0, 40)},
+            {"model__alpha": [1e-4, 5e-4, 1e-3, 1e-2, 5e-2, 1e-1, 1.0]},
         ),
         "ElasticNet": (
             linear_pipe(ElasticNet(random_state=seed, max_iter=5000)),
             {
-                "model__alpha": np.logspace(-4, 0, 30),
-                "model__l1_ratio": np.linspace(0.1, 0.9, 9),
+                "model__alpha": [1e-4, 1e-3, 1e-2, 1e-1, 1.0],
+                "model__l1_ratio": [0.1, 0.3, 0.5, 0.7, 0.9],
             },
         ),
         "RandomForest": (
@@ -159,14 +159,12 @@ def _fit_candidate_with_cv(
     seed: int,
 ) -> tuple[Pipeline, float, Dict[str, Any]]:
     if param_distributions:
-        tuner = RandomizedSearchCV(
+        tuner = GridSearchCV(
             estimator=candidate,
-            param_distributions=param_distributions,
-            n_iter=12,
+            param_grid=param_distributions,
             scoring="r2",
             cv=splitter,
             n_jobs=-1,
-            random_state=seed,
             refit=True,
         )
         tuner.fit(x, y)
@@ -174,7 +172,7 @@ def _fit_candidate_with_cv(
             tuner.best_estimator_,
             float(tuner.best_score_),
             {
-                "method": "randomized_search",
+                "method": "grid_search",
                 "best_params": tuner.best_params_,
             },
         )

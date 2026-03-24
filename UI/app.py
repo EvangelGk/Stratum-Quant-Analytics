@@ -29,6 +29,7 @@ from UI.tabs import (
     show_analytics_tab,
     show_auditor_tab,
     show_data_tab,
+    show_edge_arsenal_tab,
     show_explainability_tab,
     show_governance_tab,
     show_health_alerts_tab,
@@ -147,6 +148,109 @@ def _render_optimizer_approval_panel() -> None:
                     st.rerun()
                 else:
                     st.error("Could not write approval queue file.")
+
+
+def _render_pre_optimizer_lag_heatmap() -> None:
+    """Render lag-correlation heatmap (1-20 days) before optimizer execution."""
+    master_path = PROJECT_ROOT / "data" / "gold" / "master_table.parquet"
+    if not master_path.exists():
+        st.caption("No Gold master table found yet. Run Full Analysis first.")
+        return
+
+    try:
+        import pandas as pd
+        import plotly.express as px
+
+        df = pd.read_parquet(master_path)
+    except Exception as exc:
+        st.caption(f"Could not load master table for lag heatmap: {exc}")
+        return
+
+    if "date" not in df.columns or "close" not in df.columns:
+        st.caption("Master table missing required date/close columns for lag heatmap.")
+        return
+
+    tickers = []
+    if "ticker" in df.columns:
+        tickers = sorted(df["ticker"].dropna().astype(str).unique().tolist())
+    selected_ticker = st.selectbox(
+        "Ticker for lag heatmap",
+        options=tickers if tickers else ["ALL"],
+        key="opt_lag_heatmap_ticker",
+    )
+
+    if "ticker" in df.columns and selected_ticker != "ALL":
+        df = df[df["ticker"].astype(str) == str(selected_ticker)].copy()
+
+    candidate_metrics = [
+        c
+        for c in df.columns
+        if c
+        not in {
+            "date",
+            "ticker",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adj_close",
+            "volume",
+            "log_return",
+        }
+        and not str(c).startswith("__")
+    ]
+    if not candidate_metrics:
+        st.caption("No macro metrics available in Gold table for lag heatmap.")
+        return
+
+    metric = st.selectbox(
+        "FRED metric",
+        options=sorted(candidate_metrics),
+        key="opt_lag_heatmap_metric",
+    )
+
+    work = df[["date", "close", metric]].copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work = work.dropna(subset=["date"]).sort_values("date")
+    work["close"] = pd.to_numeric(work["close"], errors="coerce")
+    work[metric] = pd.to_numeric(work[metric], errors="coerce")
+    work = work.dropna(subset=["close", metric])
+    if len(work) < 40:
+        st.caption("Not enough aligned rows to estimate lag correlations (need >= 40).")
+        return
+
+    lags = list(range(1, 21))
+    corr_vals: list[float] = []
+    for lag in lags:
+        shifted = work[metric].shift(lag)
+        valid = work[["close"]].copy()
+        valid["macro_lag"] = shifted
+        valid = valid.dropna(subset=["close", "macro_lag"])
+        if len(valid) < 20:
+            corr_vals.append(float("nan"))
+            continue
+        corr_vals.append(float(valid["close"].corr(valid["macro_lag"])))
+
+    hdf = pd.DataFrame(
+        {
+            "Lag": [f"L{lag}" for lag in lags],
+            "Correlation": corr_vals,
+        }
+    )
+    fig = px.imshow(
+        [corr_vals],
+        labels={"x": "Lag (days)", "y": "Metric", "color": "Correlation"},
+        x=lags,
+        y=[metric],
+        color_continuous_scale="RdBu",
+        zmin=-1,
+        zmax=1,
+        aspect="auto",
+        title="Pre-Optimizer Correlation Heatmap: FRED metric vs stock close by lag (1-20)",
+    )
+    fig.update_layout(height=260, margin=dict(l=20, r=20, t=60, b=20))
+    st.plotly_chart(fig, width="stretch")
+    st.dataframe(hdf, width="stretch", hide_index=True)
 
 
 def _check_admin_pin(entered: str) -> bool:
@@ -313,6 +417,8 @@ def _render_sidebar() -> str:
                 "or the approval queue panel below."
             )
             _render_optimizer_approval_panel()
+            with st.expander("Pre-Optimizer Lag Correlation Heatmap (1-20)", expanded=True):
+                _render_pre_optimizer_lag_heatmap()
             opt_target = st.slider(
                 "Target score", min_value=80, max_value=99, value=94, step=1,
                 key="opt_target_score",
@@ -381,6 +487,7 @@ def main() -> None:
 
     pages = [
         "🤖 Quantos Assistant",
+        "💎 Edge Arsenal",
         "🩺 Health & Alerts",
         "🧪 Auditor",
         "📊 Run Comparison",
@@ -394,13 +501,15 @@ def main() -> None:
         "🛡️ Governance",
         "📜 Logs",
     ]
-    selected_page = st.segmented_control("View", options=pages, default="🩺 Health & Alerts")
+    selected_page = st.segmented_control("View", options=pages, default="💎 Edge Arsenal")
     # Track active page in session state so sidebar AI and chips know context
     if selected_page:
         st.session_state["selected_page"] = selected_page
 
     if selected_page == "🤖 Quantos Assistant":
         show_ai_assistant_tab()
+    elif selected_page == "💎 Edge Arsenal":
+        show_edge_arsenal_tab()
     elif selected_page == "🩺 Health & Alerts":
         show_health_alerts_tab()
     elif selected_page == "🧪 Auditor":

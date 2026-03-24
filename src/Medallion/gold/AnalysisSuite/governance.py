@@ -9,7 +9,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.stattools import adfuller, kpss
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
-from .mixed_frequency import prepare_supervised_frame
+from .mixed_frequency import add_volatility_regime_feature, prepare_supervised_frame
 from .sensitivity_reg import (
     _build_time_series_split,
     _candidate_registry,
@@ -97,6 +97,106 @@ def _build_model(name: str) -> Any:
     return LinearRegression()
 
 
+def _compute_baseline_suite(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    x_train: pd.DataFrame,
+    x_test: pd.DataFrame,
+) -> Dict[str, Any]:
+    y_train_num = pd.to_numeric(y_train, errors="coerce")
+    y_test_num = pd.to_numeric(y_test, errors="coerce")
+    valid_idx = y_test_num.notna()
+    y_test_num = y_test_num.loc[valid_idx]
+    if y_test_num.empty:
+        return {"status": "insufficient_data", "models": {}}
+
+    x_train_num = x_train.apply(pd.to_numeric, errors="coerce")
+    x_test_num = x_test.apply(pd.to_numeric, errors="coerce")
+    x_test_num = x_test_num.loc[valid_idx]
+
+    models: Dict[str, Dict[str, float | None]] = {}
+
+    def _safe_metrics(name: str, y_pred: np.ndarray) -> None:
+        try:
+            models[name] = {
+                "r2": float(r2_score(y_test_num, y_pred)),
+                "mae": float(mean_absolute_error(y_test_num, y_pred)),
+                "rmse": float(np.sqrt(mean_squared_error(y_test_num, y_pred))),
+            }
+        except Exception:
+            models[name] = {"r2": None, "mae": None, "rmse": None}
+
+    train_mean = float(y_train_num.mean()) if not y_train_num.dropna().empty else 0.0
+    _safe_metrics("mean_predictor", np.full(len(y_test_num), train_mean, dtype=float))
+
+    y_train_clean = y_train_num.dropna()
+    if len(y_train_clean) >= 2:
+        recent_mean = float(y_train_clean.iloc[-min(5, len(y_train_clean)):].mean())
+    else:
+        recent_mean = train_mean
+    _safe_metrics("recent_mean_predictor", np.full(len(y_test_num), recent_mean, dtype=float))
+
+    ridge = _build_model("ridge")
+    try:
+        ridge.fit(x_train_num, y_train_num)
+        ridge_pred = ridge.predict(x_test_num)
+    except Exception:
+        ridge_pred = np.full(len(y_test_num), train_mean, dtype=float)
+    _safe_metrics("ridge_baseline", np.asarray(ridge_pred, dtype=float))
+
+    # For differenced/log-return targets, zero-drift is a robust baseline.
+    _safe_metrics("zero_drift", np.zeros(len(y_test_num), dtype=float))
+
+    return {
+        "status": "ok",
+        "models": models,
+        "best_baseline_r2": max(
+            [float(v["r2"]) for v in models.values() if isinstance(v.get("r2"), (float, int))],
+            default=None,
+        ),
+    }
+
+
+def _factor_concentration_diagnostics(coefficients: Dict[str, float]) -> Dict[str, Any]:
+    if not coefficients:
+        return {
+            "status": "insufficient_data",
+            "top_factor": None,
+            "top_share": None,
+            "top3_share": None,
+            "effective_factor_count": None,
+            "weights": {},
+        }
+
+    abs_weights = {k: float(abs(v)) for k, v in coefficients.items()}
+    total = float(sum(abs_weights.values()))
+    if total <= 1e-12:
+        return {
+            "status": "degenerate",
+            "top_factor": None,
+            "top_share": 0.0,
+            "top3_share": 0.0,
+            "effective_factor_count": 0.0,
+            "weights": {k: 0.0 for k in coefficients.keys()},
+        }
+
+    normalized = {k: float(v / total) for k, v in abs_weights.items()}
+    ranked = sorted(normalized.items(), key=lambda item: item[1], reverse=True)
+    top_factor, top_share = ranked[0]
+    top3_share = float(sum(weight for _, weight in ranked[:3]))
+    hhi = float(sum(weight * weight for weight in normalized.values()))
+    effective_count = float(1.0 / hhi) if hhi > 1e-12 else None
+
+    return {
+        "status": "ok",
+        "top_factor": top_factor,
+        "top_share": float(top_share),
+        "top3_share": top3_share,
+        "effective_factor_count": effective_count,
+        "weights": normalized,
+    }
+
+
 def _prepare_best_lag_frame(
     df: pd.DataFrame,
     target: str,
@@ -104,6 +204,8 @@ def _prepare_best_lag_frame(
     date_col: str,
     min_train_rows: int,
     requested_macro_lag_days: int = 0,
+    min_target_horizon_days: int = 1,
+    max_target_horizon_days: int | None = None,
 ) -> tuple[pd.DataFrame, Dict[str, Dict[str, Any]], int, Dict[str, float]]:
     lag_candidates = [int(requested_macro_lag_days)] if int(requested_macro_lag_days) > 0 else [0, 15, 30, 45]
 
@@ -121,6 +223,8 @@ def _prepare_best_lag_frame(
             date_col=date_col,
             macro_lag_days=lag,
             align_target_to_features=True,
+            min_target_horizon_days=min_target_horizon_days,
+            max_target_horizon_days=max_target_horizon_days,
         )
         if len(frame) < max(min_train_rows + 5, 30):
             lag_scores[str(lag)] = float("-inf")
@@ -157,6 +261,8 @@ def _prepare_best_lag_frame(
             date_col=date_col,
             macro_lag_days=0,
             align_target_to_features=True,
+            min_target_horizon_days=min_target_horizon_days,
+            max_target_horizon_days=max_target_horizon_days,
         )
         best_lag = 0
 
@@ -172,6 +278,8 @@ def _walk_forward_backtest(
     clipped_floor: float = -2.0,
     min_test_size: int = 20,
     model_type: str = "OLS",
+    tune_hyperparams_per_window: bool = False,
+    random_seed: int | None = 42,
 ) -> Dict[str, Any]:
     n_rows = len(df)
     windows = max(2, windows)
@@ -184,6 +292,7 @@ def _walk_forward_backtest(
             "windows_completed": 0,
             "avg_r2": None,
             "worst_r2": None,
+            "window_tuning_enabled": bool(tune_hyperparams_per_window),
             "window_metrics": [],
         }
 
@@ -204,7 +313,45 @@ def _walk_forward_backtest(
         x_test = test_df[factors]
         y_test = test_df[target]
 
-        estimator = _build_model(model_type)
+        selected_model_name = str(model_type)
+        if tune_hyperparams_per_window and len(x_train) >= 50:
+            registry = _candidate_registry(random_seed if random_seed is not None else 42)
+            requested = str(model_type).strip().lower()
+            alias = {
+                "ols": "Linear",
+                "linear": "Linear",
+                "ridge": "Ridge",
+                "lasso": "Lasso",
+                "elasticnet": "ElasticNet",
+                "randomforest": "RandomForest",
+                "auto": "Auto",
+            }
+            requested_name = alias.get(requested, "Linear")
+            candidate_names = list(registry.keys()) if requested_name == "Auto" else [requested_name]
+            splitter = _build_time_series_split(len(x_train))
+            best_cv = float("-inf")
+            best_window_model = None
+            best_name = requested_name
+            for candidate_name in candidate_names:
+                candidate, search_space = registry[candidate_name]
+                fitted_model, cv_r2, _ = _fit_candidate_with_cv(
+                    name=candidate_name,
+                    candidate=candidate,
+                    param_distributions=search_space,
+                    x=x_train,
+                    y=y_train,
+                    splitter=splitter,
+                    seed=(random_seed if random_seed is not None else 42) + idx,
+                )
+                if float(cv_r2) > float(best_cv):
+                    best_cv = float(cv_r2)
+                    best_window_model = fitted_model
+                    best_name = candidate_name
+            estimator = best_window_model if best_window_model is not None else _build_model(model_type)
+            selected_model_name = best_name
+        else:
+            estimator = _build_model(model_type)
+
         estimator.fit(x_train, y_train)
         y_pred = estimator.predict(x_test)
 
@@ -213,6 +360,7 @@ def _walk_forward_backtest(
                 "window": idx + 1,
                 "train_rows": int(len(train_df)),
                 "test_rows": int(len(test_df)),
+                "model": selected_model_name,
                 "r2": float(r2_score(y_test, y_pred)),
                 "mae": float(mean_absolute_error(y_test, y_pred)),
                 "rmse": float(np.sqrt(mean_squared_error(y_test, y_pred))),
@@ -226,6 +374,7 @@ def _walk_forward_backtest(
             "windows_completed": 0,
             "avg_r2": None,
             "worst_r2": None,
+            "window_tuning_enabled": bool(tune_hyperparams_per_window),
             "window_metrics": [],
         }
 
@@ -244,6 +393,7 @@ def _walk_forward_backtest(
         "status": "ok",
         "windows_requested": windows,
         "windows_completed": len(metrics),
+        "window_tuning_enabled": bool(tune_hyperparams_per_window),
         "avg_r2": float(np.mean(r2_values)),
         "median_r2": float(np.median(r2_values)),
         "clipped_avg_r2": float(np.mean(clipped_r2_values)),
@@ -423,6 +573,11 @@ def governance_report(
     clipped_walk_forward_floor: float = -2.0,
     model_type: str = "OLS",
     macro_lag_days: int = 0,
+    min_target_horizon_days: int = 1,
+    max_target_horizon_days: int | None = None,
+    walk_forward_tune_per_window: bool = True,
+    factor_concentration_warn_threshold: float = 0.65,
+    freshness_warn_days: int = 60,
 ) -> Dict[str, Any]:
     """Build statistical-governance diagnostics for regression analyses.
 
@@ -449,7 +604,25 @@ def governance_report(
             date_col=date_col,
             min_train_rows=min_train_rows,
             requested_macro_lag_days=int(macro_lag_days),
+            min_target_horizon_days=int(max(1, min_target_horizon_days)),
+            max_target_horizon_days=(
+                int(max_target_horizon_days) if max_target_horizon_days is not None else None
+            ),
         )
+
+        work_df = add_volatility_regime_feature(
+            work_df,
+            date_col=date_col,
+            return_col=target,
+            window=30,
+            threshold_quantile=0.75,
+        )
+        extra_regime_features = [
+            feature
+            for feature in ("volatility_regime_high", "rolling_vol_30d")
+            if feature in work_df.columns
+        ]
+        model_factors = list(dict.fromkeys(valid_factors + extra_regime_features))
 
         if len(work_df) < max(min_train_rows + 5, 30):
             return {
@@ -517,9 +690,9 @@ def governance_report(
         train_df = work_df.iloc[:split_idx].copy()
         test_df = work_df.iloc[split_idx:].copy()
 
-        x_train_raw = train_df[valid_factors].apply(pd.to_numeric, errors="coerce")
+        x_train_raw = train_df[model_factors].apply(pd.to_numeric, errors="coerce")
         y_train = pd.to_numeric(train_df[target], errors="coerce")
-        x_test_raw = test_df[valid_factors].apply(pd.to_numeric, errors="coerce")
+        x_test_raw = test_df[model_factors].apply(pd.to_numeric, errors="coerce")
         y_test = pd.to_numeric(test_df[target], errors="coerce")
 
         x_train_clipped, x_test_clipped, clip_bounds = _clip_by_train_quantiles(
@@ -528,8 +701,8 @@ def governance_report(
             lower_q=0.01,
             upper_q=0.99,
         )
-        x_train_eng = _engineer_features(x_train_clipped, valid_factors)
-        x_test_eng = _engineer_features(x_test_clipped, valid_factors)
+        x_train_eng = _engineer_features(x_train_clipped, model_factors)
+        x_test_eng = _engineer_features(x_test_clipped, model_factors)
 
         imputer = SimpleImputer(strategy="median")
         x_train_imputed = pd.DataFrame(
@@ -544,7 +717,7 @@ def governance_report(
         x_train, dropped_multicollinear, vif_map = _reduce_multicollinearity(
             x_train_imputed,
             threshold=12.0,
-            min_features=max(2, min(4, len(valid_factors))),
+            min_features=max(2, min(4, len(model_factors))),
         )
         retained_features = list(x_train.columns)
         x_test = x_test_imputed[retained_features].copy()
@@ -592,12 +765,14 @@ def governance_report(
         walk_forward = _walk_forward_backtest(
             work_df,
             target=target,
-            factors=valid_factors,
+            factors=model_factors,
             windows=adaptive_walk_windows,
             min_train_rows=min_train_rows,
             clipped_floor=clipped_walk_forward_floor,
             min_test_size=adaptive_min_test_size,
             model_type=(best_model_name if best_model_name else model_type),
+            tune_hyperparams_per_window=bool(walk_forward_tune_per_window),
+            random_seed=random_seed if reproducibility_enforced else None,
         )
 
         leakage_flags: List[str] = []
@@ -695,6 +870,13 @@ def governance_report(
             random_seed=random_seed if reproducibility_enforced else None,
         )
 
+        baseline_suite = _compute_baseline_suite(
+            y_train=y_train,
+            y_test=y_test,
+            x_train=x_train,
+            x_test=x_test,
+        )
+
         stationarity_known = [
             values.get("is_stationary")
             for values in stationarity.values()
@@ -713,7 +895,7 @@ def governance_report(
         )
         model_risk_score = _compute_model_risk_score(
             leakage_flags_count=len(leakage_flags),
-            factors_count=len(valid_factors),
+            factors_count=len(model_factors),
             stationarity_ratio=stationary_ratio,
             normalized_shift=float(normalized_shift),
             oos_r2=oos_r2,
@@ -741,6 +923,31 @@ def governance_report(
             coeffs = {factor: 0.0 for factor in retained_features}
 
         intercept_value = float(getattr(model_step, "intercept_", 0.0))
+        factor_concentration = _factor_concentration_diagnostics(coeffs)
+
+        freshness_publication_lags = [
+            int(meta.get("publication_lag_days", 0))
+            for key, meta in transform_metadata.items()
+            if isinstance(meta, dict) and key != target and key in valid_factors
+        ]
+        inferred_target_horizon = int(
+            (
+                (transform_metadata.get(target) or {}).get("target_horizon_days")
+                if isinstance(transform_metadata.get(target), dict)
+                else 1
+            )
+            or 1
+        )
+        freshness_alignment = {
+            "status": "ok",
+            "target_horizon_days": inferred_target_horizon,
+            "max_publication_lag_days": max(freshness_publication_lags) if freshness_publication_lags else 0,
+            "freshness_warn_days": int(max(1, freshness_warn_days)),
+            "lag_alignment_ok": bool(
+                not freshness_publication_lags
+                or max(freshness_publication_lags) <= max(1, freshness_warn_days)
+            ),
+        }
 
         return {
             "status": "ok",
@@ -759,6 +966,7 @@ def governance_report(
                 "r2_ci": oos_r2_ci,
                 "mae": float(mean_absolute_error(y_test, predictions)),
                 "rmse": float(np.sqrt(mean_squared_error(y_test, predictions))),
+                "baseline_comparison": baseline_suite,
             },
             "stability": {
                 "target_mean_shift": float(mean_shift),
@@ -779,6 +987,8 @@ def governance_report(
             "walk_forward": walk_forward,
             "model_risk_score": model_risk_score,
             "trend_volatility": trend_volatility,
+            "factor_concentration": factor_concentration,
+            "freshness_alignment": freshness_alignment,
             "reproducibility": {
                 "random_seed": random_seed,
                 "enforced": reproducibility_enforced,
@@ -796,6 +1006,12 @@ def governance_report(
                 "dropped_multicollinear_features": dropped_multicollinear,
                 "max_vif": float(max(vif_map.values())) if vif_map else None,
                 "transformations": transform_metadata,
+                "min_target_horizon_days": int(max(1, min_target_horizon_days)),
+                "max_target_horizon_days": (
+                    int(max_target_horizon_days) if max_target_horizon_days is not None else None
+                ),
+                "walk_forward_tune_per_window": bool(walk_forward_tune_per_window),
+                "factor_concentration_warn_threshold": float(factor_concentration_warn_threshold),
             },
             "coefficients": coeffs,
             "intercept": intercept_value,

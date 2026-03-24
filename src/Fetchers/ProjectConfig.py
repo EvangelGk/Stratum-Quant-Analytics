@@ -59,6 +59,11 @@ class ProjectConfig:
     silver_outlier_warning_ratio: float = 0.1
     governance_unstable_walk_forward_floor: float = -5.0
     governance_clipped_walk_forward_floor: float = -2.0
+    governance_factor_concentration_warn_threshold: float = 0.65
+    governance_freshness_warn_days: int = 60
+    governance_walk_forward_tune_per_window: bool = True
+    governance_min_target_horizon_days: int = 1
+    governance_max_target_horizon_days: int = 252
     gold_fred_max_staleness_days: int = 120
     gold_worldbank_max_staleness_days: int = 730
     pipeline_stage_retry_attempts: int = 3
@@ -304,6 +309,38 @@ class ProjectConfig:
         governance_clipped_walk_forward_floor = cls._parse_float(
             os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0
         )
+        governance_factor_concentration_warn_threshold = cls._parse_non_negative_float(
+            os.getenv("GOVERNANCE_FACTOR_CONCENTRATION_WARN_THRESHOLD", "0.65"),
+            "GOVERNANCE_FACTOR_CONCENTRATION_WARN_THRESHOLD",
+            0.65,
+        )
+        governance_factor_concentration_warn_threshold = min(
+            max(governance_factor_concentration_warn_threshold, 0.0), 1.0
+        )
+        governance_freshness_warn_days = cls._parse_positive_int(
+            os.getenv("GOVERNANCE_FRESHNESS_WARN_DAYS", "60"),
+            "GOVERNANCE_FRESHNESS_WARN_DAYS",
+            60,
+        )
+        governance_walk_forward_tune_per_window = cls._parse_bool(
+            os.getenv("GOVERNANCE_WALK_FORWARD_TUNE_PER_WINDOW"),
+            True,
+        )
+        governance_min_target_horizon_days = cls._parse_positive_int(
+            os.getenv("GOVERNANCE_MIN_TARGET_HORIZON_DAYS", "1"),
+            "GOVERNANCE_MIN_TARGET_HORIZON_DAYS",
+            1,
+        )
+        governance_max_target_horizon_days = cls._parse_positive_int(
+            os.getenv("GOVERNANCE_MAX_TARGET_HORIZON_DAYS", "252"),
+            "GOVERNANCE_MAX_TARGET_HORIZON_DAYS",
+            252,
+        )
+        if governance_max_target_horizon_days < governance_min_target_horizon_days:
+            governance_min_target_horizon_days, governance_max_target_horizon_days = (
+                governance_max_target_horizon_days,
+                governance_min_target_horizon_days,
+            )
         gold_fred_max_staleness_days = cls._parse_positive_int(
             os.getenv("GOLD_FRED_MAX_STALENESS_DAYS", "120"),
             "GOLD_FRED_MAX_STALENESS_DAYS",
@@ -432,6 +469,11 @@ class ProjectConfig:
             silver_outlier_warning_ratio=silver_outlier_warning_ratio,
             governance_unstable_walk_forward_floor=governance_unstable_walk_forward_floor,
             governance_clipped_walk_forward_floor=governance_clipped_walk_forward_floor,
+            governance_factor_concentration_warn_threshold=governance_factor_concentration_warn_threshold,
+            governance_freshness_warn_days=governance_freshness_warn_days,
+            governance_walk_forward_tune_per_window=governance_walk_forward_tune_per_window,
+            governance_min_target_horizon_days=governance_min_target_horizon_days,
+            governance_max_target_horizon_days=governance_max_target_horizon_days,
             gold_fred_max_staleness_days=gold_fred_max_staleness_days,
             gold_worldbank_max_staleness_days=gold_worldbank_max_staleness_days,
             pipeline_stage_retry_attempts=pipeline_stage_retry_attempts,
@@ -564,6 +606,11 @@ class ProjectConfig:
             "silver_outlier_warning_ratio": self.silver_outlier_warning_ratio,
             "governance_unstable_walk_forward_floor": self.governance_unstable_walk_forward_floor,
             "governance_clipped_walk_forward_floor": self.governance_clipped_walk_forward_floor,
+            "governance_factor_concentration_warn_threshold": self.governance_factor_concentration_warn_threshold,
+            "governance_freshness_warn_days": self.governance_freshness_warn_days,
+            "governance_walk_forward_tune_per_window": self.governance_walk_forward_tune_per_window,
+            "governance_min_target_horizon_days": self.governance_min_target_horizon_days,
+            "governance_max_target_horizon_days": self.governance_max_target_horizon_days,
             "gold_fred_max_staleness_days": self.gold_fred_max_staleness_days,
             "gold_worldbank_max_staleness_days": self.gold_worldbank_max_staleness_days,
             "pipeline_stage_retry_attempts": self.pipeline_stage_retry_attempts,

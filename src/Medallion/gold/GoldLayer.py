@@ -522,6 +522,9 @@ class GoldLayer:
                 and isinstance(ci_upper, (float, int))
                 and float(ci_upper) >= min_r2
             )
+            # Mildly negative OOS R2 is common for daily-return targets; treat
+            # it as a diagnostic signal unless corroborated by other failures.
+            mild_negative_band = float(oos_r2) >= -0.10
             if ci_clears:
                 advisory_reasons.append(
                     f"r2_metric_alert_oos_below_threshold_but_ci_upper_clears:"
@@ -530,6 +533,10 @@ class GoldLayer:
             elif trend_volatility_acceptable:
                 advisory_reasons.append(
                     "r2_metric_alert_oos_below_threshold_but_trend_volatility_acceptable"
+                )
+            elif mild_negative_band:
+                advisory_reasons.append(
+                    f"r2_metric_alert_oos_mild_negative_macro_noise_band:{oos_r2:.4f}"
                 )
             else:
                 advisory_reasons.append(
@@ -640,6 +647,35 @@ class GoldLayer:
             "trend_volatility_acceptable": trend_volatility_acceptable,
         }
 
+        concentration = report.get("factor_concentration", {}) or {}
+        top_share = concentration.get("top_share") if isinstance(concentration, dict) else None
+        concentration_warn_threshold = float(profile.get("factor_concentration_warn_threshold", 0.65))
+        if isinstance(top_share, (float, int)) and float(top_share) > concentration_warn_threshold:
+            advisory_reasons.append(
+                "factor_concentration_alert_top_share_above_threshold:"
+                f"{float(top_share):.4f}>{concentration_warn_threshold:.4f}"
+            )
+        gate["factor_concentration_context"] = {
+            "top_factor": concentration.get("top_factor") if isinstance(concentration, dict) else None,
+            "top_share": float(top_share) if isinstance(top_share, (float, int)) else None,
+            "warn_threshold": concentration_warn_threshold,
+        }
+
+        freshness = report.get("freshness_alignment", {}) or {}
+        lag_alignment_ok = freshness.get("lag_alignment_ok") if isinstance(freshness, dict) else None
+        if lag_alignment_ok is False:
+            advisory_reasons.append("freshness_alignment_warning_macro_lag_exceeds_policy")
+        gate["freshness_context"] = {
+            "target_horizon_days": (
+                freshness.get("target_horizon_days") if isinstance(freshness, dict) else None
+            ),
+            "max_publication_lag_days": (
+                freshness.get("max_publication_lag_days") if isinstance(freshness, dict) else None
+            ),
+            "lag_alignment_ok": lag_alignment_ok,
+            "freshness_warn_days": int(profile.get("freshness_warn_days", 60)),
+        }
+
         model_risk_score = report.get("model_risk_score")
         max_model_risk = float(profile["max_model_risk_score"])
         if (
@@ -704,6 +740,12 @@ class GoldLayer:
             "model_risk_fail_threshold": float(
                 getattr(self.config, "governance_model_risk_fail_threshold", 0.6)
             ),
+            "factor_concentration_warn_threshold": float(
+                getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
+            ),
+            "freshness_warn_days": int(
+                getattr(self.config, "governance_freshness_warn_days", 60)
+            ),
         }
 
         if ticker:
@@ -719,11 +761,12 @@ class GoldLayer:
                 "max_model_risk_score",
                 "model_risk_warn_threshold",
                 "model_risk_fail_threshold",
+                "factor_concentration_warn_threshold",
             }
             for k, v in ticker_overrides.items():
                 if k in _float_keys and k in profile:
                     profile[k] = float(v)
-                elif k == "max_leakage_flags" and k in profile:
+                elif k in {"max_leakage_flags", "freshness_warn_days"} and k in profile:
                     profile[k] = int(v)
                 elif k == "hard_fail" and k in profile:
                     profile[k] = bool(v)
@@ -1001,6 +1044,21 @@ class GoldLayer:
                     getattr(self.config, "governance_walk_forward_windows", 4)
                 ),
                 model_type=regression_model,
+                min_target_horizon_days=int(
+                    getattr(self.config, "governance_min_target_horizon_days", 1)
+                ),
+                max_target_horizon_days=int(
+                    getattr(self.config, "governance_max_target_horizon_days", 252)
+                ),
+                walk_forward_tune_per_window=bool(
+                    getattr(self.config, "governance_walk_forward_tune_per_window", True)
+                ),
+                factor_concentration_warn_threshold=float(
+                    getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
+                ),
+                freshness_warn_days=int(
+                    getattr(self.config, "governance_freshness_warn_days", 60)
+                ),
             )
             gate = self._evaluate_governance_gate(
                 results["governance_report"], ticker=selected_ticker
@@ -1342,6 +1400,21 @@ class GoldLayer:
                 bool(getattr(self.config, "enforce_reproducibility", True)),
                 int(getattr(self.config, "governance_walk_forward_windows", 4)),
                 model_type=regression_model,
+                min_target_horizon_days=int(
+                    getattr(self.config, "governance_min_target_horizon_days", 1)
+                ),
+                max_target_horizon_days=int(
+                    getattr(self.config, "governance_max_target_horizon_days", 252)
+                ),
+                walk_forward_tune_per_window=bool(
+                    getattr(self.config, "governance_walk_forward_tune_per_window", True)
+                ),
+                factor_concentration_warn_threshold=float(
+                    getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
+                ),
+                freshness_warn_days=int(
+                    getattr(self.config, "governance_freshness_warn_days", 60)
+                ),
             )
             gate = self._evaluate_governance_gate(
                 results["governance_report"], ticker=selected_ticker

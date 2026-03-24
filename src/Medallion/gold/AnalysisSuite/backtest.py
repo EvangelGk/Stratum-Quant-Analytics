@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 from sklearn.linear_model import Ridge
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
@@ -20,6 +21,31 @@ def _max_drawdown_from_returns(returns: np.ndarray) -> float:
     peaks = np.maximum.accumulate(equity_curve)
     drawdowns = (equity_curve / np.maximum(peaks, 1e-12)) - 1.0
     return float(np.min(drawdowns))
+
+
+def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> float:
+    arr = np.asarray(returns, dtype=float)
+    if arr.size == 0:
+        return 0.0
+    growth = float(np.prod(1.0 + arr))
+    if growth <= 0.0:
+        return -1.0
+    years = max(arr.size / float(periods_per_year), 1.0 / float(periods_per_year))
+    return float(growth ** (1.0 / years) - 1.0)
+
+
+def _rolling_sharpe(returns: np.ndarray, window: int = 30) -> list[dict[str, float | int]]:
+    series = pd.Series(np.asarray(returns, dtype=float))
+    if len(series) < max(5, window):
+        return []
+    mean = series.rolling(window=window, min_periods=window).mean()
+    std = series.rolling(window=window, min_periods=window).std(ddof=1)
+    sharpe = (mean / std.replace(0.0, np.nan)) * np.sqrt(252.0)
+    out: list[dict[str, float | int]] = []
+    for idx, value in sharpe.items():
+        if pd.notna(value):
+            out.append({"step": int(idx) + 1, "rolling_sharpe": float(value)})
+    return out
 
 
 def backtest_pre2020_holdout(
@@ -64,11 +90,75 @@ def backtest_pre2020_holdout(
         predictions = model.predict(test_df[features])
         actual = pd.to_numeric(test_df[target], errors="coerce").fillna(0.0)
 
+        # Trade returns: go long when signal >= 0, short when signal < 0.
+        signal = np.where(np.asarray(predictions, dtype=float) >= 0.0, 1.0, -1.0)
+        actual_arr = np.asarray(actual, dtype=float)
+        strategy_returns = signal * actual_arr
+        benchmark_returns = actual_arr
+
         te = _tracking_error(actual, predictions)
         # MDD is a risk metric for the strategy holding the actual position,
         # not for the model's fitted values.  Use actual returns.
-        actual_returns = np.asarray(actual, dtype=float)
-        mdd = _max_drawdown_from_returns(actual_returns)
+        mdd = _max_drawdown_from_returns(strategy_returns)
+
+        wins = strategy_returns[strategy_returns > 0.0]
+        losses = strategy_returns[strategy_returns < 0.0]
+        win_prob = float(len(wins) / len(strategy_returns)) if len(strategy_returns) else 0.0
+        loss_prob = float(len(losses) / len(strategy_returns)) if len(strategy_returns) else 0.0
+        avg_win = float(np.mean(wins)) if len(wins) else 0.0
+        avg_loss_abs = float(abs(np.mean(losses))) if len(losses) else 0.0
+        expectancy = float((win_prob * avg_win) - (loss_prob * avg_loss_abs))
+
+        gross_profit = float(np.sum(wins)) if len(wins) else 0.0
+        gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
+        profit_factor = (
+            float(gross_profit / gross_loss_abs)
+            if gross_loss_abs > 1e-12
+            else (None if gross_profit == 0.0 else float("inf"))
+        )
+
+        ann_return = _annualized_return(strategy_returns, periods_per_year=252)
+        calmar = float(ann_return / abs(mdd)) if abs(mdd) > 1e-12 else None
+
+        active_returns = strategy_returns - benchmark_returns
+        te_active = float(np.std(active_returns, ddof=1)) if len(active_returns) > 1 else None
+        ir = (
+            float(np.mean(active_returns) / te_active * np.sqrt(252.0))
+            if te_active is not None and te_active > 1e-12
+            else None
+        )
+
+        corr_r = None
+        corr_p = None
+        if len(strategy_returns) >= 3:
+            try:
+                corr_r, corr_p = pearsonr(np.asarray(predictions, dtype=float), actual_arr)
+                corr_r = float(corr_r)
+                corr_p = float(corr_p)
+            except Exception:
+                corr_r, corr_p = None, None
+
+        sharpe = None
+        sortino = None
+        stdev = float(np.std(strategy_returns, ddof=1)) if len(strategy_returns) > 1 else None
+        if stdev is not None and stdev > 1e-12:
+            sharpe = float(np.mean(strategy_returns) / stdev * np.sqrt(252.0))
+        downside = strategy_returns[strategy_returns < 0.0]
+        downside_std = float(np.std(downside, ddof=1)) if len(downside) > 1 else None
+        if downside_std is not None and downside_std > 1e-12:
+            sortino = float(np.mean(strategy_returns) / downside_std * np.sqrt(252.0))
+
+        rolling_sharpe = _rolling_sharpe(strategy_returns, window=30)
+
+        # Compact histogram payload for Streamlit rendering without recomputation.
+        if len(strategy_returns) > 2:
+            hist_counts, hist_edges = np.histogram(strategy_returns, bins=min(24, max(8, int(np.sqrt(len(strategy_returns))))))
+            trade_hist = {
+                "edges": [float(x) for x in hist_edges.tolist()],
+                "counts": [int(x) for x in hist_counts.tolist()],
+            }
+        else:
+            trade_hist = {"edges": [], "counts": []}
 
         return {
             "window": {
@@ -83,6 +173,30 @@ def backtest_pre2020_holdout(
             "test_rows": int(len(test_df)),
             "tracking_error": round(float(te), 8),
             "maximum_drawdown": round(float(mdd), 8),
+            "sharpe_ratio": round(float(sharpe), 8) if sharpe is not None else None,
+            "sortino_ratio": round(float(sortino), 8) if sortino is not None else None,
+            "rolling_sharpe_30d": rolling_sharpe,
+            "expectancy_per_trade": round(expectancy, 8),
+            "win_probability": round(win_prob, 8),
+            "loss_probability": round(loss_prob, 8),
+            "average_win": round(avg_win, 8),
+            "average_loss_abs": round(avg_loss_abs, 8),
+            "profit_factor": (
+                round(float(profit_factor), 8)
+                if isinstance(profit_factor, (float, int)) and np.isfinite(float(profit_factor))
+                else ("inf" if profit_factor == float("inf") else None)
+            ),
+            "annualized_return": round(float(ann_return), 8),
+            "calmar_ratio": round(float(calmar), 8) if calmar is not None else None,
+            "information_ratio": round(float(ir), 8) if ir is not None else None,
+            "active_return_tracking_error": round(float(te_active), 8) if te_active is not None else None,
+            "correlation_test": {
+                "pearson_r": round(float(corr_r), 8) if corr_r is not None else None,
+                "p_value": round(float(corr_p), 10) if corr_p is not None else None,
+            },
+            "trade_distribution_histogram": trade_hist,
+            "strategy_returns": [float(v) for v in strategy_returns.tolist()],
+            "benchmark_returns": [float(v) for v in benchmark_returns.tolist()],
             "predictions": [float(v) for v in predictions.tolist()],
             "actual": [float(v) for v in actual.tolist()],
             "transformations": metadata,
