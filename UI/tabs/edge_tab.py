@@ -92,12 +92,19 @@ def show_edge_arsenal_tab() -> None:
         unsafe_allow_html=True,
     )
 
+    # Load backtest from analysis_results.json or backtest_2020.json
     analysis = _read_json(OUTPUT_DIR / "analysis_results.json")
     results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
     if not isinstance(results, dict):
         results = {}
 
-    backtest = results.get("backtest_2020") if isinstance(results.get("backtest_2020"), dict) else _read_json(OUTPUT_DIR / "backtest_2020.json")
+    # Try analysis_results first, then fallback to standalone backtest_2020.json
+    backtest = results.get("backtest_2020")
+    if not isinstance(backtest, dict):
+        backtest_payload = _read_json(OUTPUT_DIR / "backtest_2020.json")
+        # Handle wrapped structure: {"value": {...}} or direct structure
+        backtest = backtest_payload.get("value", backtest_payload) if isinstance(backtest_payload, dict) else {}
+    
     if not isinstance(backtest, dict) or not backtest:
         st.warning("No backtest payload found yet. Run Full Analysis to populate Edge Arsenal.")
         return
@@ -109,13 +116,22 @@ def show_edge_arsenal_tab() -> None:
     ir = backtest.get("information_ratio")
     mdd = backtest.get("maximum_drawdown")
 
+    # Check if metrics exist; if not, render partial view with fallback
+    has_metrics = any(v is not None for v in [expectancy, pf, calmar, sharpe, ir, mdd])
+    if not has_metrics:
+        st.info(
+            "Backtest data exists but advanced edge metrics (Expectancy, Profit Factor, Calmar, etc.) "
+            "are not yet computed. Please re-run Full Analysis to generate these metrics."
+        )
+        return
+
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Expectancy/Trade", _fmt(expectancy, 6))
-    c2.metric("Profit Factor", _fmt(pf))
-    c3.metric("Calmar", _fmt(calmar))
-    c4.metric("Sharpe", _fmt(sharpe))
-    c5.metric("Info Ratio", _fmt(ir))
-    c6.metric("Max Drawdown", _fmt(mdd))
+    c1.metric("Expectancy/Trade", _fmt(expectancy, 6) if expectancy is not None else "N/A")
+    c2.metric("Profit Factor", _fmt(pf) if pf is not None else "N/A")
+    c3.metric("Calmar", _fmt(calmar) if calmar is not None else "N/A")
+    c4.metric("Sharpe", _fmt(sharpe) if sharpe is not None else "N/A")
+    c5.metric("Info Ratio", _fmt(ir) if ir is not None else "N/A")
+    c6.metric("Max Drawdown", _fmt(mdd) if mdd is not None else "N/A")
 
     signals: list[str] = []
     if isinstance(expectancy, (int, float)) and float(expectancy) > 0.0:
@@ -136,20 +152,20 @@ def show_edge_arsenal_tab() -> None:
         st.info(
             "No exceptional threshold triggered in this run. Edge Arsenal still shows full diagnostics transparently."
         )
-
     st.latex(r"\text{Expectancy} = (P_{win}\times AvgWin) - (P_{loss}\times AvgLoss)")
 
     corr = backtest.get("correlation_test", {}) if isinstance(backtest.get("correlation_test"), dict) else {}
     p_value = corr.get("p_value")
     pearson_r = corr.get("pearson_r")
+    
     p1, p2 = st.columns(2)
-    p1.metric("Pearson r", _fmt(pearson_r))
-    p2.metric("P-value", _fmt(p_value, 6))
-    if isinstance(p_value, (int, float)):
-        if float(p_value) < 0.05:
-            st.success("Statistical significance passed: p-value < 0.05")
-        else:
-            st.caption("P-value >= 0.05 in this window. Keep result as exploratory, not confirmatory.")
+    p1.metric("Pearson r", _fmt(pearson_r) if pearson_r is not None else "N/A")
+    p2.metric("P-value", _fmt(p_value, 6) if p_value is not None else "N/A")
+    
+    if isinstance(p_value, (int, float)) and float(p_value) < 0.05:
+        st.success("Statistical significance passed: p-value < 0.05")
+    elif isinstance(p_value, (int, float)):
+        st.caption("P-value >= 0.05 in this window. Keep result as exploratory, not confirmatory.")
 
     strategy_returns = backtest.get("strategy_returns", [])
     if isinstance(strategy_returns, list) and strategy_returns:
@@ -164,7 +180,7 @@ def show_edge_arsenal_tab() -> None:
         )
         hist_fig.add_vline(x=0.0, line_dash="dot", line_color="#7f1d1d")
         hist_fig.update_layout(height=340)
-        st.plotly_chart(hist_fig, width="stretch")
+        st.plotly_chart(hist_fig, use_container_width=True)
 
         rolling = backtest.get("rolling_sharpe_30d", [])
         if isinstance(rolling, list) and rolling:
@@ -179,7 +195,7 @@ def show_edge_arsenal_tab() -> None:
                 rs_fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
                 rs_fig.add_hline(y=1.0, line_dash="dash", line_color="#0f766e")
                 rs_fig.update_layout(height=340)
-                st.plotly_chart(rs_fig, width="stretch")
+                st.plotly_chart(rs_fig, use_container_width=True)
 
         benchmark_returns = backtest.get("benchmark_returns", [])
         if isinstance(benchmark_returns, list) and benchmark_returns and len(benchmark_returns) == len(sret):
@@ -195,4 +211,6 @@ def show_edge_arsenal_tab() -> None:
             eq_fig.add_trace(go.Scatter(x=curve_df["step"], y=curve_df["strategy"], mode="lines", name="Strategy", line=dict(color="#0f766e", width=3)))
             eq_fig.add_trace(go.Scatter(x=curve_df["step"], y=curve_df["benchmark"], mode="lines", name="Benchmark", line=dict(color="#b91c1c", width=2)))
             eq_fig.update_layout(title="Strategy vs Benchmark Equity Curve", height=360)
-            st.plotly_chart(eq_fig, width="stretch")
+            st.plotly_chart(eq_fig, use_container_width=True)
+    else:
+        st.caption("Strategy returns and chart data not yet available. Re-run Full Analysis to populate.")
