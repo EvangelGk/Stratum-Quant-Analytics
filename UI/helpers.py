@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from .constants import LOGS_DIR, OUTPUT_DIR, PROCESSED_DIR, UI_SNAPSHOT_PATH
+from .constants import GOLD_DIR, LOGS_DIR, OUTPUT_DIR, PROCESSED_DIR, UI_SNAPSHOT_PATH
 
 
 def import_first(*module_names: str) -> Any:
@@ -37,6 +37,49 @@ def read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     return _read_json_cached(str(path), path.stat().st_mtime_ns)
+
+
+def clear_file_caches() -> None:
+    _read_json_cached.cache_clear()
+
+
+def _iter_watched_artifact_files() -> list[Path]:
+    files: list[Path] = []
+
+    if OUTPUT_DIR.exists():
+        for pattern in ("*.json", "*.csv", "*.parquet"):
+            files.extend([p for p in OUTPUT_DIR.glob(pattern) if p.is_file()])
+
+    quality_report = PROCESSED_DIR / "quality" / "quality_report.json"
+    if quality_report.exists():
+        files.append(quality_report)
+
+    master_table = GOLD_DIR / "master_table.parquet"
+    if master_table.exists():
+        files.append(master_table)
+
+    if LOGS_DIR.exists():
+        files.extend([p for p in LOGS_DIR.glob("session_summary_*.json") if p.is_file()])
+
+    unique = {str(path.resolve()): path for path in files}
+    return sorted(unique.values(), key=lambda path: str(path).lower())
+
+
+def compute_artifact_signature() -> str:
+    rows: list[dict[str, int | str]] = []
+    for path in _iter_watched_artifact_files():
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        rows.append(
+            {
+                "path": str(path),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "size": int(stat.st_size),
+            }
+        )
+    return json.dumps(rows, sort_keys=True, separators=(",", ":"))
 
 
 def list_session_files() -> list[Path]:
@@ -196,7 +239,8 @@ def build_explainability_lines() -> list[str]:
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
     lines: list[str] = []
 
-    gov = results.get("governance_report", {})
+    gov_path = OUTPUT_DIR / "governance_report.json"
+    gov = read_json(gov_path).get("value", {}) if gov_path.exists() else results.get("governance_report", {})
     if isinstance(gov, dict):
         score = gov.get("model_risk_score")
         oos = (gov.get("out_of_sample") or {}).get("r2")

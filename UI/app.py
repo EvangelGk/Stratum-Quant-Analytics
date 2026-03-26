@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS
+from UI.helpers import clear_file_caches, compute_artifact_signature
 from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_message, show_kpis
 from UI.runtime import clear_all_run_history, run_and_cache_audit, run_pipeline, show_pipeline_failure
 from UI.runtime import run_optimizer_background
@@ -253,6 +255,42 @@ def _render_pre_optimizer_lag_heatmap() -> None:
     st.dataframe(hdf, width="stretch", hide_index=True)
 
 
+def _sync_artifact_freshness() -> None:
+    current_signature = compute_artifact_signature()
+    previous_signature = st.session_state.get("_artifact_signature")
+
+    if previous_signature is None:
+        st.session_state["_artifact_signature"] = current_signature
+        return
+
+    if current_signature != previous_signature:
+        st.session_state["_artifact_signature"] = current_signature
+        st.session_state["_artifacts_updated_message"] = (
+            "New artifacts detected. Refreshing tabs with latest outputs."
+        )
+        clear_file_caches()
+        st.cache_data.clear()
+        st.rerun()
+
+
+if hasattr(st, "fragment"):
+    @st.fragment(run_every="6s")
+    def _artifact_watchdog() -> None:
+        _sync_artifact_freshness()
+else:
+    def _artifact_watchdog() -> None:
+        components.html(
+            """
+            <script>
+            setTimeout(function () {
+                window.parent.location.reload();
+            }, 6000);
+            </script>
+            """,
+            height=0,
+        )
+
+
 def _check_admin_pin(entered: str) -> bool:
     """Constant-time comparison of entered PIN against the stored secret.
 
@@ -470,6 +508,9 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     inject_styles()
+    _artifact_watchdog()
+    if st.session_state.get("_artifacts_updated_message"):
+        st.info(st.session_state.pop("_artifacts_updated_message"))
 
     st.markdown(
         """

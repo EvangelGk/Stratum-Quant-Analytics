@@ -126,12 +126,12 @@ def _coerce_optional_bool(value: object) -> bool | None:
 
 
 def _load_analysis_payload(name: str, summary_results: dict | None = None) -> object:
-    if isinstance(summary_results, dict) and name in summary_results:
-        return _unwrap_value_payload(summary_results.get(name))
-
     path = OUTPUT_DIR / f"{name}.json"
     if path.exists():
         return _unwrap_value_payload(_read_json_fast(path))
+
+    if isinstance(summary_results, dict) and name in summary_results:
+        return _unwrap_value_payload(summary_results.get(name))
     return {}
 
 

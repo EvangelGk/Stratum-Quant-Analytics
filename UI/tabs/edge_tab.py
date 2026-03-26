@@ -197,39 +197,43 @@ def _compute_missing_metrics(backtest: dict) -> dict:
             avg_win = float(np.mean(wins)) if len(wins) else 0.0
             avg_loss_abs = float(abs(np.mean(losses))) if len(losses) else 0.0
 
-            if out.get("expectancy_per_trade") is None:
-                out["expectancy_per_trade"] = float((win_prob * avg_win) - (loss_prob * avg_loss_abs))
+            out["expectancy_per_trade"] = float((win_prob * avg_win) - (loss_prob * avg_loss_abs))
 
             gross_profit = float(np.sum(wins)) if len(wins) else 0.0
             gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
-            if out.get("profit_factor") is None:
-                out["profit_factor"] = (
-                    float(gross_profit / gross_loss_abs)
-                    if gross_loss_abs > 1e-12
-                    else (None if gross_profit == 0.0 else float("inf"))
-                )
+            out["profit_factor"] = (
+                float(gross_profit / gross_loss_abs)
+                if gross_loss_abs > 1e-12
+                else (None if gross_profit == 0.0 else float("inf"))
+            )
 
             stdev = float(np.std(sret, ddof=1)) if len(sret) > 1 else None
-            if out.get("sharpe_ratio") is None and stdev is not None and stdev > 1e-12:
+            if stdev is not None and stdev > 1e-12:
                 out["sharpe_ratio"] = float(np.mean(sret) / stdev * np.sqrt(252.0))
+            else:
+                out["sharpe_ratio"] = None
 
-            if out.get("calmar_ratio") is None:
-                ann_return = _annualized_return(
-                    sret,
-                    periods_per_year=_infer_periods_per_year(out),
-                )
-                mdd = float(out.get("maximum_drawdown") or 0.0)
-                # Use a floor of 1% on |MDD| to prevent division-by-near-zero
-                denom = max(abs(mdd), 0.01)
-                out["calmar_ratio"] = float(ann_return / denom)
+            ann_return = _annualized_return(
+                sret,
+                periods_per_year=_infer_periods_per_year(out),
+            )
+            out["annualized_return"] = float(ann_return)
+            mdd = float(out.get("maximum_drawdown") or 0.0)
+            # Use a floor of 1% on |MDD| to prevent division-by-near-zero
+            denom = max(abs(mdd), 0.01)
+            out["calmar_ratio"] = float(ann_return / denom)
 
             bret = out.get("benchmark_returns")
-            if out.get("information_ratio") is None and isinstance(bret, list) and bret and len(bret) == len(sret):
+            if isinstance(bret, list) and bret and len(bret) == len(sret):
                 b = np.asarray([float(x) for x in bret], dtype=float)
                 active = sret - b
                 te = float(np.std(active, ddof=1)) if len(active) > 1 else None
                 if te is not None and te > 1e-12:
                     out["information_ratio"] = float(np.mean(active) / te * np.sqrt(252.0))
+                else:
+                    out["information_ratio"] = None
+            else:
+                out["information_ratio"] = None
 
             corr = out.get("correlation_test")
             if not isinstance(corr, dict):
@@ -252,7 +256,13 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
 
 def _discover_backtest_payload() -> tuple[dict, Path | None]:
-    # 1) current UI output dir
+    # 1) Prefer the dedicated artifact over embedded summary payloads because
+    # summary files are often older and can contain stale copied metrics.
+    current_bt = _read_json(OUTPUT_DIR / "backtest_2020.json")
+    bt = _extract_backtest(current_bt)
+    if bt:
+        return bt, OUTPUT_DIR / "backtest_2020.json"
+
     current_analysis = _read_json(OUTPUT_DIR / "analysis_results.json")
     bt = _extract_backtest(current_analysis)
     if bt:
@@ -271,12 +281,6 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
                 bt = _extract_backtest(payload)
                 if bt:
                     return bt, bt_path
-
-    current_bt = _read_json(OUTPUT_DIR / "backtest_2020.json")
-    bt = _extract_backtest(current_bt)
-    if bt:
-        return bt, OUTPUT_DIR / "backtest_2020.json"
-
     # 2) fallback: scan all output/* folders and pick most recently modified artifact
     output_root = OUTPUT_DIR.parent
     if not output_root.exists():
