@@ -6,15 +6,21 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+try:
+    from src.secret_store import bootstrap_env_from_secrets, get_secret
+except ModuleNotFoundError:
+    from secret_store import bootstrap_env_from_secrets, get_secret
+
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT
 load_dotenv(ROOT / ".env")
+bootstrap_env_from_secrets(override=False, only_keys=["DATA_USER_ID"])
 
 _src_path = str(ROOT / "src")
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
-_UI_USER_ID = os.getenv("DATA_USER_ID", "default").strip() or "default"
+_UI_USER_ID = (get_secret("DATA_USER_ID", "default") or "default").strip() or "default"
 _SAFE_UI_USER = "".join(
     ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in _UI_USER_ID
 ) or "default"

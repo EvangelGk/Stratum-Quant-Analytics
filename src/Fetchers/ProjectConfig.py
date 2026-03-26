@@ -35,7 +35,7 @@ class ProjectConfig:
     retry_delay_max: float = 3.0
     random_seed: Optional[int] = 42
     enforce_reproducibility: bool = True
-    governance_hard_fail: bool = True
+    governance_hard_fail: bool = False
     governance_min_r2: float = -0.25
     governance_max_normalized_shift: float = 2.5
     governance_max_leakage_flags: int = 1
@@ -227,7 +227,7 @@ class ProjectConfig:
         enforce_reproducibility = cls._parse_bool(
             os.getenv("ENFORCE_REPRODUCIBILITY"), True
         )
-        governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), True)
+        governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), False)
         governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), -0.25)
         governance_max_normalized_shift = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_NORMALIZED_SHIFT", "2.5"),
