@@ -273,22 +273,6 @@ def _sync_artifact_freshness() -> None:
         st.rerun()
 
 
-if hasattr(st, "fragment"):
-    @st.fragment(run_every="6s")
-    def _artifact_watchdog() -> None:
-        _sync_artifact_freshness()
-else:
-    def _artifact_watchdog() -> None:
-        components.html(
-            """
-            <script>
-            setTimeout(function () {
-                window.parent.location.reload();
-            }, 6000);
-            </script>
-            """,
-            height=0,
-        )
 
 
 def _check_admin_pin(entered: str) -> bool:
@@ -508,6 +492,24 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     inject_styles()
+
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="6s")
+        def _artifact_watchdog() -> None:
+            _sync_artifact_freshness()
+    else:
+        def _artifact_watchdog() -> None:
+            components.html(
+                """
+                <script>
+                setTimeout(function () {
+                    window.parent.location.reload();
+                }, 6000);
+                </script>
+                """,
+                height=0,
+            )
+
     _artifact_watchdog()
     if st.session_state.get("_artifacts_updated_message"):
         st.info(st.session_state.pop("_artifacts_updated_message"))
