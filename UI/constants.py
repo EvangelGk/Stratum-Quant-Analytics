@@ -2,23 +2,28 @@ from __future__ import annotations
 
 import os
 import sys
+import importlib
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-try:
-    from src.secret_store import bootstrap_env_from_secrets, get_secret
-except ModuleNotFoundError:
-    from secret_store import bootstrap_env_from_secrets, get_secret
-
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT
-load_dotenv(ROOT / ".env")
-bootstrap_env_from_secrets(override=False, only_keys=["DATA_USER_ID"])
+
+_root_path = str(ROOT)
+if _root_path not in sys.path:
+    sys.path.insert(0, _root_path)
 
 _src_path = str(ROOT / "src")
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
+
+_secret_store = importlib.import_module("secret_store")
+bootstrap_env_from_secrets = getattr(_secret_store, "bootstrap_env_from_secrets")
+get_secret = getattr(_secret_store, "get_secret")
+
+load_dotenv(ROOT / ".env")
+bootstrap_env_from_secrets(override=False, only_keys=["DATA_USER_ID"])
 
 _UI_USER_ID = (get_secret("DATA_USER_ID", "default") or "default").strip() or "default"
 _SAFE_UI_USER = "".join(

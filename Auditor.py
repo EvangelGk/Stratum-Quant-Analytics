@@ -102,22 +102,40 @@ class ScenarioAuditor:
         report["row_count"] = int(len(df))
         report["column_count"] = int(len(df.columns))
 
-        report["checks"]["integration"] = self._check_sources(df)
-        report["checks"]["density"] = self._check_density(df)
-        report["checks"]["statistics"] = self._check_stats(df)
-        report["checks"]["continuity"] = self._check_continuity(df)
-        report["checks"]["survivorship"] = self._check_survivorship(df)
-        report["checks"]["outputs"] = self._check_outputs()
-        report["checks"]["thresholds"] = self._check_threshold_design()
-        report["checks"]["governance"] = self._check_governance()
+        def _safe_check(name: str, fn: Any, *args: Any) -> Dict[str, Any]:
+            try:
+                payload = fn(*args)
+                if isinstance(payload, dict):
+                    return payload
+                return {
+                    "passed": False,
+                    "status": "fail",
+                    "error": f"{name}_returned_non_dict",
+                }
+            except Exception as exc:
+                return {
+                    "passed": False,
+                    "status": "fail",
+                    "error": f"{name}_exception:{exc}",
+                }
 
-        failed_checks = [
-            name for name, result in report["checks"].items() if not result.get("passed", False)
-        ]
+        report["checks"]["integration"] = _safe_check("integration", self._check_sources, df)
+        report["checks"]["density"] = _safe_check("density", self._check_density, df)
+        report["checks"]["statistics"] = _safe_check("statistics", self._check_stats, df)
+        report["checks"]["continuity"] = _safe_check("continuity", self._check_continuity, df)
+        report["checks"]["survivorship"] = _safe_check("survivorship", self._check_survivorship, df)
+        report["checks"]["outputs"] = _safe_check("outputs", self._check_outputs)
+        report["checks"]["thresholds"] = _safe_check("thresholds", self._check_threshold_design)
+        report["checks"]["governance"] = _safe_check("governance", self._check_governance)
+
+        failed_checks = []
+        for name, result in report["checks"].items():
+            if not isinstance(result, dict) or not result.get("passed", False):
+                failed_checks.append(name)
         warn_checks = [
             name
             for name, result in report["checks"].items()
-            if result.get("status") == "warn"
+            if isinstance(result, dict) and result.get("status") == "warn"
         ]
 
         report["failed_checks"] = failed_checks
@@ -238,6 +256,8 @@ class ScenarioAuditor:
         entity_names_by_source: Dict[str, List[str]] = {source: [] for source in EXPECTED_SOURCES}
         worldbank_economies_seen: set[str] = set()
         for entity, meta in catalog.items():
+            if not isinstance(meta, dict):
+                continue
             source = str(meta.get("source", ""))
             if source in source_counts:
                 source_counts[source] += 1

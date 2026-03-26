@@ -7,10 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
-try:
-    from src.secret_store import bootstrap_env_from_secrets
-except ModuleNotFoundError:
-    from secret_store import bootstrap_env_from_secrets
+from secret_store import bootstrap_env_from_secrets
 
 
 class RunMode(Enum):

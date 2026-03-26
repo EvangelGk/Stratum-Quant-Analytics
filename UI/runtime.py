@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import importlib
 import json
 import os
 import shutil
@@ -23,17 +24,18 @@ from UI.constants import (
 from UI.constants import UI_SNAPSHOT_PATH, USER_DATA_DIR
 from UI.helpers import read_json
 
-try:
-    from src.secret_store import bootstrap_env_from_secrets
-except ModuleNotFoundError:
-    from secret_store import bootstrap_env_from_secrets
+# Ensure project root and src/ are on sys.path before importing secret_store.
+_ROOT_PATH = str(ROOT)
+if _ROOT_PATH not in sys.path:
+    sys.path.insert(0, _ROOT_PATH)
 
-# Ensure src/ is on sys.path so runtime imports of pipeline modules resolve
-# both at static-analysis time and at runtime when runtime.py is imported
-# directly (e.g. in tests) before UI.constants has been imported.
+# Ensure src/ is on sys.path before importing secret_store in all contexts.
 _SRC_PATH = str(ROOT / "src")
 if _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
+
+_secret_store = importlib.import_module("secret_store")
+bootstrap_env_from_secrets = getattr(_secret_store, "bootstrap_env_from_secrets")
 
 
 class StreamlitError(Exception):
