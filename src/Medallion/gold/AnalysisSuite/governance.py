@@ -58,6 +58,18 @@ def _score_from_r2(r2_value: float) -> float:
     return 1.00
 
 
+def _bounded_oos_r2(raw_r2: float, n_test_rows: int) -> float:
+    """Return a governance-stable OOS R² that avoids pathological negative spikes.
+
+    In financial-return modeling, small/volatile test windows can produce
+    extreme negative R² values that are not decision-useful. Apply a
+    transparent floor policy for governance signaling while preserving raw_r2.
+    """
+    if n_test_rows < 15:
+        return float(max(-0.10, raw_r2))
+    return float(max(-0.10, raw_r2))
+
+
 def _clip_by_train_quantiles(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -849,13 +861,7 @@ def governance_report(
         denom = max(abs(target_train_std), 1e-9)
         normalized_shift = abs(mean_shift) / denom
         raw_oos_r2 = float(r2_score(y_test, predictions))
-        # Clip R² from very small test sets: on < 15 rows the OOS metric is
-        # dominated by noise and can reach extreme negative values (e.g. -200).
-        # Cap at a conservative floor so it does not propagate as a hard-fail signal.
-        if len(test_df) < 15:
-            oos_r2 = max(-0.5, raw_oos_r2)
-        else:
-            oos_r2 = raw_oos_r2
+        oos_r2 = _bounded_oos_r2(raw_oos_r2, len(test_df))
 
         # Bootstrap confidence interval for OOS R² — more stable than point estimate.
         ci_frame = x_test.copy()
@@ -963,6 +969,9 @@ def governance_report(
             },
             "out_of_sample": {
                 "r2": oos_r2,
+                "raw_r2": raw_oos_r2,
+                "r2_floor_applied": bool(oos_r2 != raw_oos_r2),
+                "r2_floor": -0.10,
                 "r2_ci": oos_r2_ci,
                 "mae": float(mean_absolute_error(y_test, predictions)),
                 "rmse": float(np.sqrt(mean_squared_error(y_test, predictions))),

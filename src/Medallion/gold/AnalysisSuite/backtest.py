@@ -27,11 +27,24 @@ def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> floa
     arr = np.asarray(returns, dtype=float)
     if arr.size == 0:
         return 0.0
-    growth = float(np.prod(1.0 + arr))
-    if growth <= 0.0:
-        return -1.0
+    clipped = np.clip(arr, -0.9999, None)
+    log_sum = float(np.sum(np.log1p(clipped)))
+    if not np.isfinite(log_sum):
+        return 0.0
     years = max(arr.size / float(periods_per_year), 1.0 / float(periods_per_year))
-    return float(growth ** (1.0 / years) - 1.0)
+    ann = float(np.exp(log_sum / years) - 1.0)
+    return float(np.clip(ann, -0.99, 99.0))
+
+
+def _effective_periods_per_year(metadata: Dict[str, Any], target: str) -> int:
+    target_meta = metadata.get(target) if isinstance(metadata, dict) else None
+    horizon = (
+        int((target_meta or {}).get("target_horizon_days", 1))
+        if isinstance(target_meta, dict)
+        else 1
+    )
+    horizon = max(1, horizon)
+    return max(1, int(round(252.0 / float(horizon))))
 
 
 def _rolling_sharpe(returns: np.ndarray, window: int = 30) -> list[dict[str, float | int]]:
@@ -117,8 +130,9 @@ def backtest_pre2020_holdout(
             else (None if gross_profit == 0.0 else float("inf"))
         )
 
-        ann_return = _annualized_return(strategy_returns, periods_per_year=252)
-        calmar = float(ann_return / abs(mdd)) if abs(mdd) > 1e-12 else None
+        periods_per_year = _effective_periods_per_year(metadata, target)
+        ann_return = _annualized_return(strategy_returns, periods_per_year=periods_per_year)
+        calmar = float(ann_return / max(abs(mdd), 0.01))
 
         active_returns = strategy_returns - benchmark_returns
         te_active = float(np.std(active_returns, ddof=1)) if len(active_returns) > 1 else None
@@ -187,6 +201,7 @@ def backtest_pre2020_holdout(
                 else ("inf" if profit_factor == float("inf") else None)
             ),
             "annualized_return": round(float(ann_return), 8),
+            "annualization_periods_per_year": int(periods_per_year),
             "calmar_ratio": round(float(calmar), 8) if calmar is not None else None,
             "information_ratio": round(float(ir), 8) if ir is not None else None,
             "active_return_tracking_error": round(float(te_active), 8) if te_active is not None else None,
