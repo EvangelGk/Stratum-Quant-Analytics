@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -104,14 +105,37 @@ def _audit_report_is_complete(report: dict) -> bool:
     if not isinstance(report, dict) or not report:
         return False
     checks = report.get("checks")
-    return (
-        isinstance(checks, dict)
-        and bool(checks)
-        and isinstance(report.get("row_count"), int)
-        and isinstance(report.get("column_count"), int)
-        and report.get("row_count", 0) > 0
-        and report.get("column_count", 0) > 0
+    if not isinstance(checks, dict) or not checks:
+        return False
+
+    # New audit payloads may omit top-level row_count/column_count while still
+    # carrying complete per-check diagnostics and an overall status.
+    has_status = isinstance(report.get("status"), str) and bool(str(report.get("status")).strip())
+    has_decision = isinstance(report.get("decision_ready"), bool)
+    core_names = (
+        "integration",
+        "density",
+        "statistics",
+        "continuity",
+        "survivorship",
+        "outputs",
+        "thresholds",
+        "governance",
     )
+    present_core_checks = sum(1 for name in core_names if isinstance(checks.get(name), dict))
+    # Accept legacy payloads that may not contain all eight checks.
+    has_core_checks = present_core_checks >= 4
+
+    # If row/column counters exist, validate them; if absent, do not mark stale.
+    row_count = report.get("row_count")
+    column_count = report.get("column_count")
+    counters_valid = True
+    if row_count is not None:
+        counters_valid = counters_valid and isinstance(row_count, int) and row_count > 0
+    if column_count is not None:
+        counters_valid = counters_valid and isinstance(column_count, int) and column_count > 0
+
+    return bool(has_status and has_decision and has_core_checks and counters_valid)
 
 
 def show_auditor_tab() -> None:
@@ -129,13 +153,28 @@ def show_auditor_tab() -> None:
             st.session_state.pop("audit_report", None)
             st.rerun()
 
+    active_user = os.getenv("DATA_USER_ID", "default")
+    st.caption(f"Active audit profile: {active_user}")
+
     report = get_audit_report()
     if not report:
         st.info("No audit report found yet. Run the pipeline first, then re-run the audit.")
         if st.button("\u27f3 Re-run Audit", key="manual_audit_run_empty"):
             with st.spinner("Running audit..."):
-                run_and_cache_audit()
+                fresh_report = run_and_cache_audit()
+            if isinstance(fresh_report, dict) and str(fresh_report.get("status", "")).upper() == "ERROR":
+                st.session_state["audit_last_run_message"] = (
+                    "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
+                )
+            else:
+                st.session_state["audit_last_run_message"] = "Audit re-run completed and saved."
             st.rerun()
+        last_msg = st.session_state.get("audit_last_run_message")
+        if isinstance(last_msg, str) and last_msg:
+            if last_msg.lower().startswith("audit re-run failed"):
+                st.error(last_msg)
+            else:
+                st.success(last_msg)
         return
 
     _LABEL_MAP = {
@@ -183,9 +222,11 @@ def show_auditor_tab() -> None:
         failed_checks = report.get("failed_checks", [])
         warning_checks = report.get("warning_checks", [])
         dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")))
+        row_count = report.get("row_count")
+        column_count = report.get("column_count")
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Rows", report.get("row_count", 0))
-        c2.metric("Columns", report.get("column_count", 0))
+        c1.metric("Rows", str(row_count) if isinstance(row_count, int) else "N/A")
+        c2.metric("Columns", str(column_count) if isinstance(column_count, int) else "N/A")
         c3.markdown(badge_html(dr_label, dr_color, dr_desc), unsafe_allow_html=True)
         c4.metric("Failed Checks", len(failed_checks))
         c5.metric("Warning Checks", len(warning_checks))
@@ -225,8 +266,21 @@ def show_auditor_tab() -> None:
         st.markdown("---")
         if st.button("\u27f3 Re-run Audit", key="manual_audit_run"):
             with st.spinner("Running audit..."):
-                run_and_cache_audit()
+                fresh_report = run_and_cache_audit()
+            if isinstance(fresh_report, dict) and str(fresh_report.get("status", "")).upper() == "ERROR":
+                st.session_state["audit_last_run_message"] = (
+                    "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
+                )
+            else:
+                st.session_state["audit_last_run_message"] = "Audit re-run completed and saved."
             st.rerun()
+
+        last_msg = st.session_state.get("audit_last_run_message")
+        if isinstance(last_msg, str) and last_msg:
+            if last_msg.lower().startswith("audit re-run failed"):
+                st.error(last_msg)
+            else:
+                st.success(last_msg)
 
     # ── Tab 2 · Governance & Model ────────────────────────────────────────────
     with tab_governance:

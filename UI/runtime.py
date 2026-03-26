@@ -231,9 +231,19 @@ def _audit_report_completeness(report: Any) -> int:
     return score
 
 
+def _normalize_audit_report_payload(report: Any) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    # Support wrapped artifacts: {"value": {...}}
+    wrapped = report.get("value")
+    if isinstance(wrapped, dict):
+        return wrapped
+    return report
+
+
 def get_audit_report() -> dict[str, Any]:
-    session_report = st.session_state.get("audit_report")
-    disk_report = read_json(AUDIT_REPORT_PATH)
+    session_report = _normalize_audit_report_payload(st.session_state.get("audit_report"))
+    disk_report = _normalize_audit_report_payload(read_json(AUDIT_REPORT_PATH))
 
     session_score = _audit_report_completeness(session_report)
     disk_score = _audit_report_completeness(disk_report)
@@ -246,6 +256,26 @@ def get_audit_report() -> dict[str, Any]:
     if disk_score >= 0:
         st.session_state["audit_report"] = disk_report
         return disk_report
+
+    # Fallback: scan other output profiles and pick the most complete report.
+    try:
+        output_root = OUTPUT_DIR.parent
+        best_report: dict[str, Any] = {}
+        best_score = -1
+        if output_root.exists():
+            for child in output_root.iterdir():
+                if not child.is_dir():
+                    continue
+                candidate = _normalize_audit_report_payload(read_json(child / "audit_report.json"))
+                score = _audit_report_completeness(candidate)
+                if score > best_score:
+                    best_score = score
+                    best_report = candidate
+        if best_score >= 0:
+            st.session_state["audit_report"] = best_report
+            return best_report
+    except OSError:
+        pass
     return {}
 
 
