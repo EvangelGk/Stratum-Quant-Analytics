@@ -39,7 +39,9 @@ def score_audit_status(status: str) -> tuple[str, str, str]:
         return "green", "✅ All Clear", "All audit checks passed — system is production-ready."
     if s == "WARN":
         return "yellow", "⚠️ Review Needed", "Some checks flagged warnings — review before relying on output."
-    return "red", "❌ Action Required", "One or more critical checks failed — pipeline output should not be used."
+    if s in {"CRITICAL", "FAIL", "ERROR"}:
+        return "red", "❌ Action Required", "One or more critical checks failed — pipeline output should not be used."
+    return "yellow", "⚠️ Incomplete Context", "Audit context is partial; review artifacts and refresh before final decisions."
 
 
 def score_decision_ready(ready: bool) -> tuple[str, str, str]:
@@ -63,9 +65,9 @@ def score_model_risk(score: Optional[float]) -> tuple[str, str, str]:
     if score is None:
         return "yellow", "Unknown", "Model risk score not available."
     s = float(score)
-    if s <= 0.35:
+    if s <= 0.45:
         return "green", "Low Risk", f"Model risk score {s:.2f} — within safe operating range."
-    if s <= 0.55:
+    if s <= 0.70:
         return "yellow", "Moderate Risk", f"Model risk score {s:.2f} — elevated but within tolerance."
     return "red", "High Risk", f"Model risk score {s:.2f} — exceeds acceptable ceiling."
 
@@ -76,7 +78,9 @@ def score_oos_r2(r2: Optional[float]) -> tuple[str, str, str]:
     v = float(r2)
     if v >= 0.05:
         return "green", "Good Fit", f"OOS R² = {v:.3f} — model explains meaningful variance."
-    if v >= -0.50:
+    if v >= -0.25:
+        return "yellow", "Expected Noise Band", f"OOS R² = {v:.3f} — common in macro-to-equity settings; prioritize directional and risk-adjusted metrics."
+    if v >= -0.75:
         return "yellow", "Weak Signal", f"OOS R² = {v:.3f} — negative values are common in noisy return forecasting; monitor with caution."
     return "red", "High Uncertainty", f"OOS R² = {v:.3f} — predictive signal is currently unstable and requires close review."
 

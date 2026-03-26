@@ -74,6 +74,208 @@ def _render_hero_style() -> None:
     )
 
 
+def _extract_backtest(candidate: dict) -> dict:
+    if not isinstance(candidate, dict) or not candidate:
+        return {}
+    # Wrapped artifact payload: {"value": {...}}
+    wrapped = candidate.get("value")
+    if isinstance(wrapped, dict):
+        inner = _extract_backtest(wrapped)
+        if inner:
+            return inner
+
+    direct = candidate.get("backtest_2020")
+    if isinstance(direct, dict):
+        return direct.get("value", direct) if isinstance(direct, dict) else {}
+    # analysis_results structure
+    results = candidate.get("results")
+    if isinstance(results, dict):
+        bt = results.get("backtest_2020")
+        if isinstance(bt, dict):
+            return bt.get("value", bt)
+    # single-artifact structure
+    if isinstance(wrapped, dict):
+        # May already be the backtest payload
+        if any(k in wrapped for k in ("strategy_returns", "maximum_drawdown", "sharpe_ratio", "predictions", "actual")):
+            return wrapped
+    # direct payload
+    if any(k in candidate for k in ("strategy_returns", "maximum_drawdown", "sharpe_ratio", "predictions", "actual")):
+        return candidate
+    return {}
+
+
+def _max_drawdown_from_returns(returns: np.ndarray) -> float:
+    if returns.size == 0:
+        return 0.0
+    equity_curve = np.cumprod(1.0 + returns)
+    peaks = np.maximum.accumulate(equity_curve)
+    drawdowns = (equity_curve / np.maximum(peaks, 1e-12)) - 1.0
+    return float(np.min(drawdowns))
+
+
+def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> float:
+    if returns.size == 0:
+        return 0.0
+    growth = float(np.prod(1.0 + returns))
+    if growth <= 0.0:
+        return -1.0
+    years = max(returns.size / float(periods_per_year), 1.0 / float(periods_per_year))
+    return float(growth ** (1.0 / years) - 1.0)
+
+
+def _compute_missing_metrics(backtest: dict) -> dict:
+    if not isinstance(backtest, dict):
+        return {}
+
+    out = dict(backtest)
+    preds = out.get("predictions")
+    actual = out.get("actual")
+    strategy_returns = out.get("strategy_returns")
+
+    if (not isinstance(strategy_returns, list) or not strategy_returns) and isinstance(preds, list) and isinstance(actual, list):
+        try:
+            p = np.asarray([float(x) for x in preds], dtype=float)
+            a = np.asarray([float(x) for x in actual], dtype=float)
+            n = min(len(p), len(a))
+            if n > 0:
+                p = p[:n]
+                a = a[:n]
+                signal = np.where(p >= 0.0, 1.0, -1.0)
+                sret = signal * a
+                out["strategy_returns"] = [float(x) for x in sret.tolist()]
+                if not isinstance(out.get("benchmark_returns"), list):
+                    out["benchmark_returns"] = [float(x) for x in a.tolist()]
+        except Exception:
+            pass
+
+    if isinstance(out.get("strategy_returns"), list) and out["strategy_returns"]:
+        try:
+            sret = np.asarray([float(x) for x in out["strategy_returns"]], dtype=float)
+
+            if out.get("maximum_drawdown") is None:
+                out["maximum_drawdown"] = _max_drawdown_from_returns(sret)
+
+            wins = sret[sret > 0.0]
+            losses = sret[sret < 0.0]
+            win_prob = float(len(wins) / len(sret)) if len(sret) else 0.0
+            loss_prob = float(len(losses) / len(sret)) if len(sret) else 0.0
+            avg_win = float(np.mean(wins)) if len(wins) else 0.0
+            avg_loss_abs = float(abs(np.mean(losses))) if len(losses) else 0.0
+
+            if out.get("expectancy_per_trade") is None:
+                out["expectancy_per_trade"] = float((win_prob * avg_win) - (loss_prob * avg_loss_abs))
+
+            gross_profit = float(np.sum(wins)) if len(wins) else 0.0
+            gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
+            if out.get("profit_factor") is None:
+                out["profit_factor"] = (
+                    float(gross_profit / gross_loss_abs)
+                    if gross_loss_abs > 1e-12
+                    else (None if gross_profit == 0.0 else float("inf"))
+                )
+
+            stdev = float(np.std(sret, ddof=1)) if len(sret) > 1 else None
+            if out.get("sharpe_ratio") is None and stdev is not None and stdev > 1e-12:
+                out["sharpe_ratio"] = float(np.mean(sret) / stdev * np.sqrt(252.0))
+
+            if out.get("calmar_ratio") is None:
+                ann_return = _annualized_return(sret, periods_per_year=252)
+                mdd = float(out.get("maximum_drawdown") or 0.0)
+                out["calmar_ratio"] = float(ann_return / abs(mdd)) if abs(mdd) > 1e-12 else None
+
+            bret = out.get("benchmark_returns")
+            if out.get("information_ratio") is None and isinstance(bret, list) and bret and len(bret) == len(sret):
+                b = np.asarray([float(x) for x in bret], dtype=float)
+                active = sret - b
+                te = float(np.std(active, ddof=1)) if len(active) > 1 else None
+                if te is not None and te > 1e-12:
+                    out["information_ratio"] = float(np.mean(active) / te * np.sqrt(252.0))
+
+            corr = out.get("correlation_test")
+            if not isinstance(corr, dict):
+                corr = {}
+            if corr.get("pearson_r") is None and isinstance(preds, list) and isinstance(actual, list):
+                p = np.asarray([float(x) for x in preds], dtype=float)
+                a = np.asarray([float(x) for x in actual], dtype=float)
+                n = min(len(p), len(a))
+                if n >= 3:
+                    p = p[:n]
+                    a = a[:n]
+                    r = np.corrcoef(p, a)[0, 1]
+                    if np.isfinite(r):
+                        corr["pearson_r"] = float(r)
+            out["correlation_test"] = corr
+        except Exception:
+            pass
+
+    return out
+
+
+def _discover_backtest_payload() -> tuple[dict, Path | None]:
+    # 1) current UI output dir
+    current_analysis = _read_json(OUTPUT_DIR / "analysis_results.json")
+    bt = _extract_backtest(current_analysis)
+    if bt:
+        return bt, OUTPUT_DIR / "analysis_results.json"
+
+    # analysis_results may provide a path map instead of embedding payload
+    if isinstance(current_analysis, dict):
+        artifacts = current_analysis.get("artifacts")
+        if isinstance(artifacts, dict):
+            bt_path_raw = artifacts.get("backtest_2020")
+            if isinstance(bt_path_raw, str) and bt_path_raw.strip():
+                bt_path = Path(bt_path_raw)
+                if not bt_path.is_absolute():
+                    bt_path = OUTPUT_DIR / bt_path
+                payload = _read_json(bt_path)
+                bt = _extract_backtest(payload)
+                if bt:
+                    return bt, bt_path
+
+    current_bt = _read_json(OUTPUT_DIR / "backtest_2020.json")
+    bt = _extract_backtest(current_bt)
+    if bt:
+        return bt, OUTPUT_DIR / "backtest_2020.json"
+
+    # 2) fallback: scan all output/* folders and pick most recently modified artifact
+    output_root = OUTPUT_DIR.parent
+    if not output_root.exists():
+        return {}, None
+
+    candidates: list[tuple[float, Path]] = []
+    for child in output_root.iterdir():
+        if not child.is_dir():
+            continue
+        for name in ("analysis_results.json", "backtest_2020.json"):
+            p = child / name
+            if p.exists() and p.is_file():
+                try:
+                    candidates.append((p.stat().st_mtime, p))
+                except OSError:
+                    continue
+
+    for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
+        payload = _read_json(path)
+        bt = _extract_backtest(payload)
+        if bt:
+            return bt, path
+
+        if path.name == "analysis_results.json" and isinstance(payload, dict):
+            artifacts = payload.get("artifacts")
+            if isinstance(artifacts, dict):
+                bt_path_raw = artifacts.get("backtest_2020")
+                if isinstance(bt_path_raw, str) and bt_path_raw.strip():
+                    bt_path = Path(bt_path_raw)
+                    if not bt_path.is_absolute():
+                        bt_path = path.parent / bt_path
+                    inner_payload = _read_json(bt_path)
+                    bt = _extract_backtest(inner_payload)
+                    if bt:
+                        return bt, bt_path
+
+    return {}, None
+
+
 def show_edge_arsenal_tab() -> None:
     _render_hero_style()
     st.markdown(
@@ -92,22 +294,25 @@ def show_edge_arsenal_tab() -> None:
         unsafe_allow_html=True,
     )
 
-    # Load backtest from analysis_results.json or backtest_2020.json
-    analysis = _read_json(OUTPUT_DIR / "analysis_results.json")
-    results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
-    if not isinstance(results, dict):
-        results = {}
-
-    # Try analysis_results first, then fallback to standalone backtest_2020.json
-    backtest = results.get("backtest_2020")
-    if not isinstance(backtest, dict):
-        backtest_payload = _read_json(OUTPUT_DIR / "backtest_2020.json")
-        # Handle wrapped structure: {"value": {...}} or direct structure
-        backtest = backtest_payload.get("value", backtest_payload) if isinstance(backtest_payload, dict) else {}
-    
+    backtest, source_path = _discover_backtest_payload()
+    backtest = _compute_missing_metrics(backtest)
     if not isinstance(backtest, dict) or not backtest:
-        st.warning("No backtest payload found yet. Run Full Analysis to populate Edge Arsenal.")
+        available_profiles: list[str] = []
+        output_root = OUTPUT_DIR.parent
+        if output_root.exists():
+            for child in output_root.iterdir():
+                if child.is_dir():
+                    available_profiles.append(child.name)
+        st.warning(
+            "No backtest payload found in any output profile. "
+            "Run Full Analysis and verify the active DATA_USER_ID profile."
+        )
+        if available_profiles:
+            st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
         return
+
+    if source_path is not None:
+        st.caption(f"Loaded backtest artifact: {source_path}")
 
     expectancy = backtest.get("expectancy_per_trade")
     pf = backtest.get("profit_factor")
