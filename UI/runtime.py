@@ -23,6 +23,11 @@ from UI.constants import (
 from UI.constants import UI_SNAPSHOT_PATH, USER_DATA_DIR
 from UI.helpers import read_json
 
+try:
+    from src.secret_store import bootstrap_env_from_secrets
+except ModuleNotFoundError:
+    from secret_store import bootstrap_env_from_secrets
+
 # Ensure src/ is on sys.path so runtime imports of pipeline modules resolve
 # both at static-analysis time and at runtime when runtime.py is imported
 # directly (e.g. in tests) before UI.constants has been imported.
@@ -52,6 +57,9 @@ def run_pipeline(
     progress_bar: Any = None,
     resume_from_checkpoint: bool = False,
 ) -> tuple[bool, str]:
+    # Ensure Streamlit secrets are reflected in os.environ before subprocess spawn
+    # so DATA_USER_ID and governance knobs are visible to src/main.py.
+    bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
     env["ENVIRONMENT"] = mode
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
@@ -166,15 +174,26 @@ def _load_audit_class() -> Any:
     try:
         spec = importlib.util.spec_from_file_location("Auditor", ROOT / "Auditor.py")
         if spec is None or spec.loader is None:
-            return None
+            try:
+                from Auditor import ScenarioAuditor  # type: ignore
+
+                return ScenarioAuditor
+            except Exception:
+                return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return getattr(module, "ScenarioAuditor", None)
     except Exception:
-        return None
+        try:
+            from Auditor import ScenarioAuditor  # type: ignore
+
+            return ScenarioAuditor
+        except Exception:
+            return None
 
 
 def run_and_cache_audit() -> dict[str, Any]:
+    bootstrap_env_from_secrets(override=True)
     AuditorClass = _load_audit_class()
     if AuditorClass is None:
         result: dict[str, Any] = {"status": "ERROR", "error": "Auditor module could not be loaded."}
@@ -185,9 +204,13 @@ def run_and_cache_audit() -> dict[str, Any]:
         except Exception as exc:
             result = {"status": "ERROR", "error": str(exc)}
     st.session_state["audit_report"] = result
+
+    result_score = _audit_report_completeness(_normalize_audit_report_payload(result))
+    should_persist = result_score >= 20 and str(result.get("status", "")).upper() != "ERROR"
     try:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        AUDIT_REPORT_PATH.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+        if should_persist:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            AUDIT_REPORT_PATH.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     except OSError:
         pass
     return result
