@@ -1,3 +1,96 @@
+import numpy as np
+import pandas as pd
+
+def run_professional_backtest(
+    df,
+    price_col='close',
+    rolling_window=20,
+    zscore_threshold=1.0,
+    volatility_window=14,
+    volatility_mean_window=20,
+    min_volatility=None,
+    trend_window=200,
+    transaction_cost=0.0015,
+    annualization_factor=252
+):
+    # --- Rolling Z-score Signal ---
+    returns = df[price_col].pct_change()
+    rolling_mean = returns.rolling(window=rolling_window, min_periods=rolling_window).mean()
+    rolling_std = returns.rolling(window=rolling_window, min_periods=rolling_window).std()
+    zscore = (returns - rolling_mean) / rolling_std
+    signal = np.where(zscore > zscore_threshold, 1, np.where(zscore < -zscore_threshold, -1, 0))
+    # --- Trend Filter (200-SMA) ---
+    sma = df[price_col].rolling(window=trend_window, min_periods=trend_window).mean()
+    trend = df[price_col] > sma
+    # --- Volatility Filter (ATR or StdDev > rolling mean) ---
+    vol = returns.rolling(window=volatility_window, min_periods=volatility_window).std()
+    vol_mean = vol.rolling(window=volatility_mean_window, min_periods=volatility_mean_window).mean()
+    vol_filter = vol > vol_mean
+    # --- Final Signal: Apply all filters, shift for execution lag ---
+    filtered_signal = pd.Series(signal, index=df.index)
+    filtered_signal = filtered_signal.where(trend, 0)
+    filtered_signal = filtered_signal.where(vol_filter, 0)
+    exec_signal = filtered_signal.shift(1)
+    # --- Only apply transaction cost on trades (signal changes) ---
+    trades = exec_signal.fillna(0).diff().abs()
+    trades.iloc[0] = abs(exec_signal.iloc[0]) if not pd.isna(exec_signal.iloc[0]) else 0
+    # --- Strategy Returns with Transaction Costs ---
+    strat_ret = exec_signal * returns - trades * transaction_cost
+    # --- Drop NaNs from shifting/rolling ---
+    valid = ~(strat_ret.isna() | returns.isna() | exec_signal.isna())
+    strat_ret = strat_ret[valid]
+    returns = returns[valid]
+    exec_signal = exec_signal[valid]
+    # --- Cumulative Wealth and Drawdown ---
+    wealth = (1 + strat_ret).cumprod()
+    cummax_wealth = wealth.cummax()
+    drawdown = (wealth / cummax_wealth) - 1
+    max_drawdown = drawdown.min()
+    # --- Metrics ---
+    ann_return = np.expm1(np.log1p(strat_ret).mean() * annualization_factor)
+    ann_vol = strat_ret.std(ddof=1) * np.sqrt(annualization_factor)
+    sharpe = (strat_ret.mean() / strat_ret.std(ddof=1)) * np.sqrt(annualization_factor) if strat_ret.std(ddof=1) > 0 else np.nan
+    downside = strat_ret[strat_ret < 0]
+    sortino = (strat_ret.mean() / downside.std(ddof=1)) * np.sqrt(annualization_factor) if downside.std(ddof=1) > 0 else np.nan
+    profit_factor = strat_ret[strat_ret > 0].sum() / abs(strat_ret[strat_ret < 0].sum()) if abs(strat_ret[strat_ret < 0].sum()) > 0 else np.nan
+    calmar = ann_return / abs(max_drawdown) if abs(max_drawdown) > 0 else np.nan
+    metrics = {
+        'Annualized Return %': round(ann_return * 100, 2),
+        'Annualized Volatility %': round(ann_vol * 100, 2),
+        'Sharpe Ratio': round(sharpe, 3),
+        'Sortino Ratio': round(sortino, 3),
+        'Max Drawdown %': round(max_drawdown * 100, 2),
+        'Profit Factor': round(profit_factor, 3),
+        'Calmar Ratio': round(calmar, 3)
+    }
+    return metrics
+
+def grid_search_professional(
+    df,
+    price_col='close',
+    rolling_windows=[10, 20, 50, 100],
+    zscore_thresholds=[1.0, 1.5, 2.0, 2.5],
+    trend_window=200,
+    transaction_cost=0.0015
+):
+    results = []
+    for rw in rolling_windows:
+        for zt in zscore_thresholds:
+            metrics = run_professional_backtest(
+                df,
+                price_col=price_col,
+                rolling_window=rw,
+                zscore_threshold=zt,
+                trend_window=trend_window,
+                transaction_cost=transaction_cost
+            )
+            if metrics['Profit Factor'] > 1.0 and metrics['Sharpe Ratio'] > 0.5:
+                result = metrics.copy()
+                result['Rolling Window'] = rw
+                result['Z-Score Threshold'] = zt
+                results.append(result)
+    results = sorted(results, key=lambda x: x['Sortino Ratio'], reverse=True)
+    return pd.DataFrame(results).head(5)
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
