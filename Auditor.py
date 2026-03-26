@@ -128,15 +128,25 @@ class ScenarioAuditor:
         report["checks"]["thresholds"] = _safe_check("thresholds", self._check_threshold_design)
         report["checks"]["governance"] = _safe_check("governance", self._check_governance)
 
-        failed_checks = []
+        # Important: warning checks should not be treated as hard failures.
+        failed_checks: List[str] = []
+        warn_checks: List[str] = []
         for name, result in report["checks"].items():
-            if not isinstance(result, dict) or not result.get("passed", False):
+            if not isinstance(result, dict):
                 failed_checks.append(name)
-        warn_checks = [
-            name
-            for name, result in report["checks"].items()
-            if isinstance(result, dict) and result.get("status") == "warn"
-        ]
+                continue
+
+            status = str(result.get("status", "")).strip().lower()
+            if status == "fail":
+                failed_checks.append(name)
+            elif status == "warn":
+                warn_checks.append(name)
+            elif status:
+                if result.get("passed") is False:
+                    warn_checks.append(name)
+            else:
+                if result.get("passed") is False:
+                    failed_checks.append(name)
 
         report["failed_checks"] = failed_checks
         report["warning_checks"] = warn_checks

@@ -129,11 +129,31 @@ def _max_drawdown_from_returns(returns: np.ndarray) -> float:
 def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> float:
     if returns.size == 0:
         return 0.0
-    growth = float(np.prod(1.0 + returns))
-    if growth <= 0.0:
-        return -1.0
+    # Use log-sum to avoid np.prod overflow on large series; equivalent to geometric CAGR
+    clipped = np.clip(returns, -0.9999, None)
+    log_sum = float(np.sum(np.log1p(clipped)))
+    if not np.isfinite(log_sum):
+        return 0.0
     years = max(returns.size / float(periods_per_year), 1.0 / float(periods_per_year))
-    return float(growth ** (1.0 / years) - 1.0)
+    ann = float(np.exp(log_sum / years) - 1.0)
+    # Cap at ±9900% to prevent astronomic Calmar values caused by compounding on
+    # inflated return data (e.g. returns expressed in non-daily units).
+    return float(np.clip(ann, -0.99, 99.0))
+
+
+def _infer_periods_per_year(backtest: dict) -> int:
+    if not isinstance(backtest, dict):
+        return 252
+    target = str(backtest.get("target", "log_return"))
+    transforms = backtest.get("transformations")
+    if not isinstance(transforms, dict):
+        return 252
+    target_meta = transforms.get(target)
+    if not isinstance(target_meta, dict):
+        return 252
+    horizon = int(target_meta.get("target_horizon_days", 1) or 1)
+    horizon = max(1, horizon)
+    return max(1, int(round(252.0 / float(horizon))))
 
 
 def _compute_missing_metrics(backtest: dict) -> dict:
@@ -165,8 +185,10 @@ def _compute_missing_metrics(backtest: dict) -> dict:
         try:
             sret = np.asarray([float(x) for x in out["strategy_returns"]], dtype=float)
 
-            if out.get("maximum_drawdown") is None:
-                out["maximum_drawdown"] = _max_drawdown_from_returns(sret)
+            # Always recompute maximum_drawdown from strategy returns; the value
+            # pre-stored in the artifact may have been computed incorrectly (e.g.
+            # min of raw return vector instead of peak-to-trough on equity curve).
+            out["maximum_drawdown"] = _max_drawdown_from_returns(sret)
 
             wins = sret[sret > 0.0]
             losses = sret[sret < 0.0]
@@ -192,9 +214,14 @@ def _compute_missing_metrics(backtest: dict) -> dict:
                 out["sharpe_ratio"] = float(np.mean(sret) / stdev * np.sqrt(252.0))
 
             if out.get("calmar_ratio") is None:
-                ann_return = _annualized_return(sret, periods_per_year=252)
+                ann_return = _annualized_return(
+                    sret,
+                    periods_per_year=_infer_periods_per_year(out),
+                )
                 mdd = float(out.get("maximum_drawdown") or 0.0)
-                out["calmar_ratio"] = float(ann_return / abs(mdd)) if abs(mdd) > 1e-12 else None
+                # Use a floor of 1% on |MDD| to prevent division-by-near-zero
+                denom = max(abs(mdd), 0.01)
+                out["calmar_ratio"] = float(ann_return / denom)
 
             bret = out.get("benchmark_returns")
             if out.get("information_ratio") is None and isinstance(bret, list) and bret and len(bret) == len(sret):
