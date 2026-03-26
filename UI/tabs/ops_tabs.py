@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from UI.constants import ROLE_PERMISSIONS, UI_SCHEDULE_PATH
+from UI.constants import OUTPUT_DIR, ROLE_PERMISSIONS, UI_SCHEDULE_PATH, USER_DATA_DIR
 from UI.helpers import load_session_history, read_json
 from UI.runtime import get_audit_report, run_and_cache_audit
 from UI.tabs.assistant_tab import render_inline_ai_section
@@ -99,6 +100,52 @@ def _render_check_summary_table(report: dict, label_map: dict) -> None:
         })
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+
+def _artifact_facts(path: Path) -> dict[str, str]:
+    exists = path.exists()
+    if not exists:
+        return {
+            "Artifact": str(path.name),
+            "Exists": "No",
+            "Modified": "N/A",
+            "Size KB": "N/A",
+        }
+    stat = path.stat()
+    modified = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
+    return {
+        "Artifact": str(path.name),
+        "Exists": "Yes",
+        "Modified": modified,
+        "Size KB": f"{(stat.st_size / 1024.0):.1f}",
+    }
+
+
+def _render_pipeline_lineage() -> None:
+    st.markdown("### 🔗 Pipeline Lineage (Bronze/Silver/Gold -> UI)")
+    active_user = os.getenv("DATA_USER_ID", "default")
+    st.caption(f"Active profile: {active_user}")
+
+    raw_catalog = USER_DATA_DIR / "raw" / "catalog.json"
+    silver_quality = USER_DATA_DIR / "processed" / "quality" / "quality_report.json"
+    gold_master = USER_DATA_DIR / "gold" / "master_table.parquet"
+    out_analysis = OUTPUT_DIR / "analysis_results.json"
+    out_backtest = OUTPUT_DIR / "backtest_2020.json"
+    out_audit = OUTPUT_DIR / "audit_report.json"
+
+    rows = [
+        _artifact_facts(raw_catalog),
+        _artifact_facts(silver_quality),
+        _artifact_facts(gold_master),
+        _artifact_facts(out_analysis),
+        _artifact_facts(out_backtest),
+        _artifact_facts(out_audit),
+    ]
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    available_profiles = sorted([p.name for p in OUTPUT_DIR.parent.iterdir() if p.is_dir()]) if OUTPUT_DIR.parent.exists() else []
+    if available_profiles:
+        st.caption("Detected output profiles: " + ", ".join(available_profiles))
 
 
 def _audit_report_is_complete(report: dict) -> bool:
@@ -207,6 +254,8 @@ def show_auditor_tab() -> None:
 
     # ── Tab 1 · Overview ─────────────────────────────────────────────────────
     with tab_overview:
+        _render_pipeline_lineage()
+        st.markdown("---")
         report_is_complete = _audit_report_is_complete(report)
         effective_status = report.get("status", "UNKNOWN") if report_is_complete else "ERROR"
         tl_color, tl_label, tl_desc = score_audit_status(effective_status)
@@ -232,7 +281,7 @@ def show_auditor_tab() -> None:
         c5.metric("Warning Checks", len(warning_checks))
 
         if not report_is_complete:
-            st.error(
+            st.warning(
                 "The audit report loaded in the UI is incomplete or stale. "
                 "Success messaging is suppressed until a complete report is available."
             )

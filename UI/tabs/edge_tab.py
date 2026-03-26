@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -9,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from UI.constants import OUTPUT_DIR
+from UI.constants import OUTPUT_DIR, USER_DATA_DIR
 
 
 def _read_json(path: Path) -> dict:
@@ -19,6 +20,18 @@ def _read_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _artifact_row(path: Path, label: str) -> dict[str, str]:
+    if not path.exists():
+        return {"Layer": label, "Path": str(path), "Exists": "No", "Modified": "N/A"}
+    stat = path.stat()
+    return {
+        "Layer": label,
+        "Path": str(path),
+        "Exists": "Yes",
+        "Modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+    }
 
 
 def _fmt(value: object, ndigits: int = 4) -> str:
@@ -296,6 +309,17 @@ def show_edge_arsenal_tab() -> None:
 
     backtest, source_path = _discover_backtest_payload()
     backtest = _compute_missing_metrics(backtest)
+
+    st.markdown("### 🔗 Data Lineage Health")
+    lineage_rows = [
+        _artifact_row(USER_DATA_DIR / "raw" / "catalog.json", "Bronze catalog"),
+        _artifact_row(USER_DATA_DIR / "processed" / "quality" / "quality_report.json", "Silver quality"),
+        _artifact_row(USER_DATA_DIR / "gold" / "master_table.parquet", "Gold master"),
+        _artifact_row(OUTPUT_DIR / "analysis_results.json", "Output summary"),
+        _artifact_row(OUTPUT_DIR / "backtest_2020.json", "Backtest artifact"),
+    ]
+    st.dataframe(pd.DataFrame(lineage_rows), width="stretch", hide_index=True)
+
     if not isinstance(backtest, dict) or not backtest:
         available_profiles: list[str] = []
         output_root = OUTPUT_DIR.parent
@@ -337,6 +361,21 @@ def show_edge_arsenal_tab() -> None:
     c4.metric("Sharpe", _fmt(sharpe) if sharpe is not None else "N/A")
     c5.metric("Info Ratio", _fmt(ir) if ir is not None else "N/A")
     c6.metric("Max Drawdown", _fmt(mdd) if mdd is not None else "N/A")
+
+    # Strategic performance quality score (display only, no data fabrication)
+    score = 0.0
+    if isinstance(expectancy, (int, float)) and expectancy > 0:
+        score += 25.0
+    if isinstance(pf, (int, float)):
+        score += min(max((pf - 1.0) * 30.0, 0.0), 25.0)
+    if isinstance(calmar, (int, float)):
+        score += min(max(calmar * 8.0, 0.0), 20.0)
+    if isinstance(sharpe, (int, float)):
+        score += min(max(sharpe * 6.0, 0.0), 20.0)
+    if isinstance(ir, (int, float)):
+        score += min(max(ir * 10.0, 0.0), 10.0)
+    score = min(score, 100.0)
+    st.progress(score / 100.0, text=f"Strategic Edge Quality Score: {score:.1f}/100")
 
     signals: list[str] = []
     if isinstance(expectancy, (int, float)) and float(expectancy) > 0.0:
