@@ -220,3 +220,251 @@ def backtest_pre2020_holdout(
         raise
     except Exception as exc:
         raise AnalysisError(f"Unexpected error in backtest_pre2020_holdout: {exc}") from exc
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pillar 1 — Advanced Vectorized Backtesting Engine
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _compute_strategy_metrics(
+    strategy_returns: pd.Series,
+    trade_flags: pd.Series,
+    friction_per_trade: float = 0.0015,
+) -> Dict[str, Any]:
+    """
+    Compute the full metric suite from a *daily* return series that already
+    has execution lag and friction applied.
+
+    Parameters
+    ----------
+    strategy_returns : daily P&L series (after lag + friction), NaN-free.
+    trade_flags      : boolean/int series — 1 on days a position change occurs.
+    friction_per_trade : one-way cost (commission + slippage), default 0.15 %.
+    """
+    r = strategy_returns.values.astype(float)
+    n = len(r)
+    if n == 0:
+        return {}
+
+    # ── Annualised return & volatility ───────────────────────────────────────
+    ann_factor = np.sqrt(252.0)
+    daily_vol = float(np.std(r, ddof=1)) if n > 1 else 0.0
+    ann_vol = daily_vol * ann_factor
+
+    # Geometric annualised return via log-sum (avoids overflow on long series)
+    clipped = np.clip(r, -0.9999, None)
+    log_sum = float(np.nansum(np.log1p(clipped)))
+    years = max(n / 252.0, 1.0 / 252.0)
+    ann_return = float(np.exp(log_sum / years) - 1.0)
+    ann_return = float(np.clip(ann_return, -0.99, 99.0))
+
+    # ── Sharpe Ratio (risk-free = 0) ─────────────────────────────────────────
+    sharpe = float(np.mean(r) / daily_vol * ann_factor) if daily_vol > 1e-12 else None
+
+    # ── Sortino Ratio (downside deviation only) ──────────────────────────────
+    downside = r[r < 0.0]
+    down_std = float(np.std(downside, ddof=1)) if len(downside) > 1 else None
+    sortino = float(np.mean(r) / down_std * ann_factor) if (down_std and down_std > 1e-12) else None
+
+    # ── Max Drawdown  (peak-to-trough on cumulative equity curve) ────────────
+    cum = pd.Series(r).add(1.0).cumprod()
+    running_max = cum.cummax()
+    drawdown = (cum / running_max) - 1.0
+    max_dd = float(drawdown.min())
+
+    # ── Profit Factor ────────────────────────────────────────────────────────
+    gains = r[r > 0.0]
+    losses = r[r < 0.0]
+    gross_profit = float(np.sum(gains)) if len(gains) else 0.0
+    gross_loss = float(abs(np.sum(losses))) if len(losses) else 0.0
+    profit_factor: Optional[float]
+    if gross_loss > 1e-12:
+        profit_factor = gross_profit / gross_loss
+    elif gross_profit > 0.0:
+        profit_factor = float("inf")
+    else:
+        profit_factor = None
+
+    # ── Trade stats ──────────────────────────────────────────────────────────
+    total_trades = int(trade_flags.sum()) if hasattr(trade_flags, "sum") else 0
+    win_rate = float(len(gains) / n) if n > 0 else 0.0
+
+    # ── Calmar ───────────────────────────────────────────────────────────────
+    calmar = float(ann_return / max(abs(max_dd), 0.01))
+
+    return {
+        "annualized_return": round(ann_return, 6),
+        "annualized_volatility": round(ann_vol, 6),
+        "sharpe_ratio": round(sharpe, 6) if sharpe is not None else None,
+        "sortino_ratio": round(sortino, 6) if sortino is not None else None,
+        "max_drawdown": round(max_dd, 6),
+        "profit_factor": (
+            round(profit_factor, 6)
+            if profit_factor is not None and np.isfinite(profit_factor)
+            else ("inf" if profit_factor == float("inf") else None)
+        ),
+        "calmar_ratio": round(calmar, 6),
+        "total_trades": total_trades,
+        "win_rate": round(win_rate, 6),
+        "total_days": n,
+    }
+
+
+def run_strategy_backtest(
+    prices: pd.Series,
+    rolling_window: int = 20,
+    z_threshold: float = 1.5,
+    friction: float = 0.0015,
+    volatility_filter: bool = True,
+    trend_filter: bool = True,
+    vol_window: int = 14,
+    vol_ma_window: int = 20,
+    trend_sma_window: int = 200,
+) -> Dict[str, Any]:
+    """
+    Bias-free, vectorised mean-reversion strategy backtest.
+
+    Design guarantees
+    -----------------
+    * All features computed with `.rolling(window=n)` — **no global scaling**,
+      preventing data-leakage / look-ahead bias.
+    * Execution lag: `.shift(1)` on the final signal so trades execute on the
+      day *after* the signal is generated.
+    * Realistic friction: 0.15 % (0.10 % commission + 0.05 % slippage) applied
+      only when the position changes (i.e. on actual trades).
+    * All NaN rows (from rolling windows + shift) dropped before metric calc.
+
+    Strategy logic (mean-reversion)
+    --------------------------------
+    raw_signal = +1  when z_score < -z_threshold  (buy the dip)
+               = -1  when z_score >  z_threshold  (sell the spike)
+               =  0  otherwise (flat / neutral)
+
+    Optional filters (applied before execution lag):
+    * Volatility filter : trade only when 14-day rolling StdDev > its 20-day MA.
+      Avoids entering during compressed, trending markets.
+    * Trend filter      : suppress Short signals when Price > 200-day SMA
+      (only allow Long entries in up-trends).
+
+    Parameters
+    ----------
+    prices          : pd.Series of daily closing prices (date-indexed).
+    rolling_window  : lookback for Z-score rolling mean/std (e.g. 20 days).
+    z_threshold     : entry threshold in standard deviation units (e.g. 1.5).
+    friction        : round-trip cost per trade (default 0.0015 = 0.15 %).
+    volatility_filter : enable/disable the ATR/StdDev activity filter.
+    trend_filter    : enable/disable the 200-day SMA directional filter.
+    vol_window      : rolling window for volatility measurement (default 14).
+    vol_ma_window   : MA window applied to the vol series (default 20).
+    trend_sma_window: SMA window for trend detection (default 200).
+
+    Returns
+    -------
+    dict with metrics, equity-curve list, trade log, and parameter snapshot.
+    """
+    if not isinstance(prices, pd.Series):
+        raise DataValidationError("run_strategy_backtest expects a pd.Series of prices.")
+    if len(prices) < max(rolling_window, trend_sma_window) + 2:
+        raise DataValidationError(
+            f"Not enough price rows ({len(prices)}) for the requested windows "
+            f"(rolling={rolling_window}, trend_sma={trend_sma_window})."
+        )
+
+    # ── 1. Log returns (forward-fill prices first to remove weekend gaps) ────
+    px = prices.ffill().dropna()
+    log_ret = np.log(px / px.shift(1))  # daily log returns
+
+    # ── 2. Rolling Z-score (no global scaling → zero data-leakage) ──────────
+    roll_mean = px.rolling(window=rolling_window, min_periods=rolling_window).mean()
+    roll_std = px.rolling(window=rolling_window, min_periods=rolling_window).std(ddof=1)
+    z_score = (px - roll_mean) / roll_std.replace(0.0, np.nan)
+
+    # ── 3. Raw signal from Z-score thresholds ────────────────────────────────
+    raw_signal = pd.Series(0.0, index=px.index)
+    raw_signal[z_score < -z_threshold] = 1.0   # long: price below rolling mean
+    raw_signal[z_score > z_threshold] = -1.0   # short: price above rolling mean
+
+    # ── 4a. Volatility filter — only trade when market is "active" ───────────
+    if volatility_filter:
+        rolling_vol = log_ret.rolling(window=vol_window, min_periods=vol_window).std(ddof=1)
+        vol_ma = rolling_vol.rolling(window=vol_ma_window, min_periods=vol_ma_window).mean()
+        vol_active = rolling_vol > vol_ma
+        raw_signal = raw_signal.where(vol_active, other=0.0)
+
+    # ── 4b. Trend filter — suppress shorts in up-trends ──────────────────────
+    if trend_filter:
+        sma_200 = px.rolling(window=trend_sma_window, min_periods=trend_sma_window).mean()
+        in_uptrend = px > sma_200
+        # Suppress -1 (short) signals when price is above 200-day SMA
+        raw_signal = raw_signal.where(~((raw_signal == -1.0) & in_uptrend), other=0.0)
+
+    # ── 5. Execution lag — enter the position on the NEXT day's open ─────────
+    signal = raw_signal.shift(1)  # trade executes day-after signal
+
+    # ── 6. Daily strategy returns ────────────────────────────────────────────
+    strategy_ret = signal * log_ret
+
+    # ── 7. Friction — deduct cost only when position changes (actual trade) ──
+    position_change = signal.diff().fillna(0.0).abs() > 0.5  # True on trade days
+    trade_cost = position_change.astype(float) * friction
+    strategy_ret = strategy_ret - trade_cost
+
+    # ── 8. Drop NaN rows produced by rolling windows + shift ─────────────────
+    valid_mask = (
+        strategy_ret.notna()
+        & signal.notna()
+        & log_ret.notna()
+        & z_score.notna()
+    )
+    strategy_ret = strategy_ret[valid_mask]
+    signal_clean = signal[valid_mask]
+    trades_clean = position_change[valid_mask]
+    log_ret_clean = log_ret[valid_mask]
+
+    if len(strategy_ret) < 10:
+        raise DataValidationError(
+            "Too few valid rows after applying rolling windows and NaN removal "
+            f"({len(strategy_ret)} rows). Reduce rolling_window or supply more data."
+        )
+
+    # ── 9. Benchmark (buy-and-hold log returns) ───────────────────────────────
+    benchmark_ret = log_ret_clean.copy()
+
+    # ── 10. Compute metrics ───────────────────────────────────────────────────
+    metrics = _compute_strategy_metrics(strategy_ret, trades_clean, friction_per_trade=friction)
+
+    # Benchmark metrics (no friction)
+    bm_metrics = _compute_strategy_metrics(benchmark_ret, pd.Series(0, index=benchmark_ret.index))
+
+    # ── 11. Equity curves (cumulative product of (1 + daily_ret)) ────────────
+    equity_curve = (strategy_ret + 1.0).cumprod()
+    bm_curve = (benchmark_ret + 1.0).cumprod()
+
+    # ── 12. Rolling 30-day Sharpe for chart ──────────────────────────────────
+    r_s = strategy_ret
+    roll_sharpe = (
+        r_s.rolling(30, min_periods=30).mean()
+        / r_s.rolling(30, min_periods=30).std(ddof=1).replace(0.0, np.nan)
+    ) * np.sqrt(252.0)
+
+    return {
+        "parameters": {
+            "rolling_window": rolling_window,
+            "z_threshold": z_threshold,
+            "friction": friction,
+            "volatility_filter": volatility_filter,
+            "trend_filter": trend_filter,
+            "vol_window": vol_window,
+            "vol_ma_window": vol_ma_window,
+            "trend_sma_window": trend_sma_window,
+        },
+        "metrics": metrics,
+        "benchmark_metrics": bm_metrics,
+        "equity_curve": equity_curve.round(6).tolist(),
+        "benchmark_curve": bm_curve.round(6).tolist(),
+        "strategy_returns": strategy_ret.round(8).tolist(),
+        "benchmark_returns": benchmark_ret.round(8).tolist(),
+        "rolling_sharpe_30d": roll_sharpe.dropna().round(6).tolist(),
+        "dates": [str(d) for d in strategy_ret.index.tolist()],
+        "total_rows_after_filter": int(len(strategy_ret)),
+    }

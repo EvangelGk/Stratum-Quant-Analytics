@@ -2263,3 +2263,139 @@ if __name__ == "__main__":
     main()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Pillar 2 — Parameter Optimisation: Grid Search over Backtest Hyperparameters
+# ──────────────────────────────────────────────────────────────────────────────
+
+import itertools
+import pandas as pd
+
+
+def grid_search_backtest(
+    prices: "pd.Series",
+    rolling_windows: list[int] | None = None,
+    z_thresholds: list[float] | None = None,
+    volatility_filter: bool = True,
+    trend_filter: bool = True,
+    friction: float = 0.0015,
+    top_n: int = 5,
+    output_path: str | None = None,
+) -> list[dict]:
+    """
+    Grid-search over rolling-window and Z-score-threshold combinations and
+    return the **top N parameter sets** ranked by Sortino Ratio.
+
+    Signal filters
+    --------------
+    * Volatility filter : only trade when the 14-day rolling StdDev is above
+      its 20-day moving average — avoids flat, compressed regimes.
+    * Trend filter      : suppress Short signals when Price > 200-day SMA
+      (only go Long in up-trends), reducing counter-trend drawdowns.
+
+    Parameters
+    ----------
+    prices           : pd.Series of daily close prices (date-indexed).
+    rolling_windows  : lookback periods to search (default: [10, 20, 50, 100]).
+    z_thresholds     : entry thresholds in σ units (default: [1.0, 1.5, 2.0, 2.5]).
+    volatility_filter: enable the ATR/StdDev activity filter across all runs.
+    trend_filter     : enable the 200-day SMA trend filter across all runs.
+    friction         : one-way trade cost applied to all runs (default: 0.15 %).
+    top_n            : how many best combinations to return (default: 5).
+    output_path      : if provided, write the ranked results as a CSV to this path.
+
+    Returns
+    -------
+    List[dict] — the top_n results, each containing:
+        {
+          "rolling_window": int,
+          "z_threshold": float,
+          "sortino_ratio": float | None,
+          "sharpe_ratio": float | None,
+          "annualized_return": float,
+          "annualized_volatility": float,
+          "max_drawdown": float,
+          "profit_factor": float | None,
+          "total_trades": int,
+          "win_rate": float,
+          "total_days": int,
+        }
+    """
+    try:
+        from Medallion.gold.AnalysisSuite.backtest import run_strategy_backtest
+    except ModuleNotFoundError:
+        from src.Medallion.gold.AnalysisSuite.backtest import run_strategy_backtest
+
+    if rolling_windows is None:
+        rolling_windows = [10, 20, 50, 100]
+    if z_thresholds is None:
+        z_thresholds = [1.0, 1.5, 2.0, 2.5]
+
+    records: list[dict] = []
+
+    for window, threshold in itertools.product(rolling_windows, z_thresholds):
+        try:
+            result = run_strategy_backtest(
+                prices=prices,
+                rolling_window=window,
+                z_threshold=threshold,
+                friction=friction,
+                volatility_filter=volatility_filter,
+                trend_filter=trend_filter,
+            )
+            m = result.get("metrics", {})
+            row = {
+                "rolling_window": window,
+                "z_threshold": threshold,
+                "sortino_ratio": m.get("sortino_ratio"),
+                "sharpe_ratio": m.get("sharpe_ratio"),
+                "annualized_return": m.get("annualized_return"),
+                "annualized_volatility": m.get("annualized_volatility"),
+                "max_drawdown": m.get("max_drawdown"),
+                "profit_factor": m.get("profit_factor"),
+                "calmar_ratio": m.get("calmar_ratio"),
+                "total_trades": m.get("total_trades"),
+                "win_rate": m.get("win_rate"),
+                "total_days": m.get("total_days"),
+            }
+            records.append(row)
+        except Exception as exc:
+            # Log failed combinations but keep grid search running
+            records.append({
+                "rolling_window": window,
+                "z_threshold": threshold,
+                "sortino_ratio": None,
+                "sharpe_ratio": None,
+                "annualized_return": None,
+                "annualized_volatility": None,
+                "max_drawdown": None,
+                "profit_factor": None,
+                "calmar_ratio": None,
+                "total_trades": None,
+                "win_rate": None,
+                "total_days": None,
+                "error": str(exc),
+            })
+
+    # ── Rank by Sortino Ratio (descending); push None/-inf to the bottom ─────
+    def _sort_key(row: dict) -> float:
+        v = row.get("sortino_ratio")
+        if v is None or not np.isfinite(float(v)):
+            return -1e18
+        return float(v)
+
+    ranked = sorted(records, key=_sort_key, reverse=True)
+    top = ranked[:top_n]
+
+    # ── Optionally persist results as CSV ─────────────────────────────────────
+    if output_path:
+        try:
+            import pandas as _pd
+            df = _pd.DataFrame(ranked)
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(output_path, index=False)
+        except Exception:
+            pass  # Non-fatal: metrics already returned in-memory
+
+    return top
+
+

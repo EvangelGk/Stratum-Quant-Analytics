@@ -31,7 +31,7 @@ def _fmt_scalar(value: object) -> str:
     if isinstance(value, (int, bool)):
         return str(value)
     if value is None:
-        return "N/A"
+        return "—"
     return str(value)
 
 
@@ -152,21 +152,43 @@ def _render_quant_insights(summary: dict) -> None:
     if not any(isinstance(item, dict) and item for item in (gov, mc, lag, elas, stress, fc, decay, backtest)):
         return
 
-    st.markdown("---")
-    st.markdown("### 📉 Insights Dashboard")
+    # ── Build Insights rows — only include metrics that have actual values ────
+    _oos_r2   = (gov.get("out_of_sample") or {}).get("r2")
+    _mod_risk = gov.get("model_risk_score")
+    _best_lag = lag.get("best_lag_days")
+    _elas_b   = elas.get("static_elasticity")
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("OOS R²", _fmt_scalar((gov.get("out_of_sample") or {}).get("r2")))
-    k2.metric("Model Risk", _fmt_scalar(gov.get("model_risk_score")))
-    k3.metric("Best Lag (days)", _fmt_scalar(lag.get("best_lag_days")))
-    k4.metric("Elasticity β", _fmt_scalar(elas.get("static_elasticity")))
+    _top_pairs = [
+        ("OOS R²",          _oos_r2),
+        ("Model Risk",      _mod_risk),
+        ("Best Lag (days)", _best_lag),
+        ("Elasticity β",    _elas_b),
+    ]
+    _top_available = [(lbl, val) for lbl, val in _top_pairs if val is not None]
+
+    if _top_available:
+        st.markdown("---")
+        st.markdown("### 📉 Insights Dashboard")
+        _cols = st.columns(len(_top_available))
+        for _col, (lbl, val) in zip(_cols, _top_available):
+            _col.metric(lbl, _fmt_scalar(val))
 
     if isinstance(backtest, dict) and backtest:
-        e1, e2, e3, e4 = st.columns(4)
-        e1.metric("Expectancy/Trade", _fmt_scalar(backtest.get("expectancy_per_trade")))
-        e2.metric("Profit Factor", _fmt_scalar(backtest.get("profit_factor")))
-        e3.metric("Calmar", _fmt_scalar(backtest.get("calmar_ratio")))
-        e4.metric("Information Ratio", _fmt_scalar(backtest.get("information_ratio")))
+        _bt_pairs = [
+            ("Expectancy/Trade",  backtest.get("expectancy_per_trade")),
+            ("Profit Factor",     backtest.get("profit_factor")),
+            ("Calmar",            backtest.get("calmar_ratio")),
+            ("Information Ratio", backtest.get("information_ratio")),
+        ]
+        _bt_available = [(lbl, val) for lbl, val in _bt_pairs if val is not None]
+        if _bt_available:
+            if not _top_available:
+                # Show header here if the top row was skipped entirely
+                st.markdown("---")
+                st.markdown("### 📉 Insights Dashboard")
+            _bt_cols = st.columns(len(_bt_available))
+            for _col, (lbl, val) in zip(_bt_cols, _bt_available):
+                _col.metric(lbl, _fmt_scalar(val))
 
         positive_signals = []
         pf = backtest.get("profit_factor")
@@ -373,9 +395,13 @@ def _render_governance_payload(payload: dict) -> None:
         )
         st.markdown("")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Gate Passed", "Yes" if gate_passed is True else "No" if gate_passed is False else "N/A")
-        c2.metric("Severity", severity.upper())
-        c3.metric("Regime", str(gate.get("regime", "unknown")).upper())
+        if gate_passed is not None:
+            c1.metric("Gate Passed", "Yes" if gate_passed else "No")
+        if severity and severity.lower() not in {"unknown", ""}:
+            c2.metric("Severity", severity.upper())
+        _regime = gate.get("regime")
+        if _regime and str(_regime).lower() not in {"unknown", ""}:
+            c3.metric("Regime", str(_regime).upper())
         if gate_passed is True and severity.lower() == "warn":
             st.info("Gate passed with warnings. Advisory signals are visible, but they do not block analyses.")
         reasons = gate.get("reasons", []) or []
@@ -412,7 +438,8 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
     lag_info = value.get("lag_selection", {}) if isinstance(value.get("lag_selection"), dict) else {}
     selected_lag = lag_info.get("selected_macro_lag_days")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Model", str(value.get("model", "N/A")))
+    _model_val = value.get("model")
+    c1.metric("Model", str(_model_val) if _model_val else "—")
     c2.metric("R²", _fmt_scalar(r2))
     c3.metric("Observations", _fmt_scalar(n_obs))
     c4.metric("CV R²", _fmt_scalar(cv_r2))
@@ -609,7 +636,8 @@ def _render_elasticity_payload(value: dict) -> None:
     f1, f2, f3 = st.columns(3)
     f1.metric("Static Elasticity", _fmt_scalar(static_el))
     f2.metric("Data Points", _fmt_scalar(points))
-    f3.metric("Macro Factor", str(value.get("macro_factor", "N/A")))
+    _mf = value.get("macro_factor")
+    f3.metric("Macro Factor", str(_mf) if _mf else "—")
 
     direction = "rises" if isinstance(static_el, (int, float)) and static_el >= 0 else "falls"
     st.success(
@@ -718,7 +746,8 @@ def _render_monte_carlo_payload(value: dict) -> None:
 
     st.markdown("### 🎲 Monte Carlo Risk Snapshot")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Scenario", str(value.get("scenario", "N/A")))
+    _sc = value.get("scenario")
+    c1.metric("Scenario", str(_sc) if _sc else "—")
     c2.metric("Daily Vol", _fmt_scalar(value.get("daily_volatility")))
     c3.metric("Scenario Vol", _fmt_scalar(value.get("scenario_volatility")))
 
@@ -749,9 +778,9 @@ def _render_auto_ml_payload(value: dict) -> None:
         _render_key_values(value, header="Auto ML Summary")
         return
 
-    best_model = value.get("best_model", "N/A")
+    best_model = value.get("best_model")
     c1 = st.columns(1)[0]
-    c1.metric("Best Model", str(best_model))
+    c1.metric("Best Model", str(best_model) if best_model else "—")
     st.success("AutoML selected the best-performing model for this run's dataset.")
 
     preds = value.get("predictions")
@@ -815,8 +844,11 @@ def _render_governance_gate_payload(value: dict) -> None:
     c, l, d = score_governance_gate(bool(passed), sev)
     st.markdown(badge_html(l, c, d), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    c1.metric("Gate Decision", "PASS" if passed is True else "FAIL" if passed is False else "N/A")
-    c2.metric("Severity", str(value.get("severity", "N/A")).upper())
+    if passed is not None:
+        c1.metric("Gate Decision", "PASS" if passed else "FAIL")
+    _sev_raw = value.get("severity")
+    if _sev_raw and str(_sev_raw).lower() not in {"unknown", "n/a", ""}:
+        c2.metric("Severity", str(_sev_raw).upper())
     if passed is True and sev == "warn":
         st.caption("This is a warn-pass, not a block. Analyses remain available.")
     reasons = value.get("reasons", [])
@@ -1001,13 +1033,29 @@ def _render_governance_consistency_panel(results: dict) -> None:
         "They are not duplicates — they serve different roles."
     )
 
-    report_status = str(report.get("status", "unknown")).upper() if isinstance(report, dict) else "N/A"
+    # Extract values — treat missing/unknown as None so we can suppress the slot
+    _raw_status = report.get("status") if isinstance(report, dict) else None
+    report_status = str(_raw_status).upper() if _raw_status else None
     gate_passed = _coerce_optional_bool(gate.get("passed")) if isinstance(gate, dict) else None
-    gate_severity = str(gate.get("severity", "unknown")).upper() if isinstance(gate, dict) else "N/A"
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Report status", report_status)
-    c2.metric("Gate passed", "Yes" if gate_passed is True else "No" if gate_passed is False else "N/A")
-    c3.metric("Gate severity", gate_severity)
+    _raw_sev = gate.get("severity") if isinstance(gate, dict) else None
+    gate_severity = str(_raw_sev).upper() if _raw_sev else None
+
+    # Only render metrics that carry actual information
+    _gov_metric_pairs: list[tuple[str, str]] = []
+    if report_status and report_status not in {"UNKNOWN", "N/A", ""}:
+        _gov_metric_pairs.append(("Report status", report_status))
+    if gate_passed is not None:
+        _gov_metric_pairs.append(("Gate passed", "Yes" if gate_passed else "No"))
+    if gate_severity and gate_severity not in {"UNKNOWN", "N/A", ""}:
+        _gov_metric_pairs.append(("Gate severity", gate_severity))
+
+    # If nothing meaningful to show, skip the panel entirely
+    if not _gov_metric_pairs:
+        return
+
+    _gov_cols = st.columns(len(_gov_metric_pairs))
+    for _gc, (lbl, val) in zip(_gov_cols, _gov_metric_pairs):
+        _gc.metric(lbl, val)
 
     if isinstance(report, dict) and isinstance(gate, dict):
         if gate_passed is True and gate_severity == "WARN":
@@ -1049,8 +1097,8 @@ def _render_analysis_payload(analysis_name: str, payload: object) -> None:
     if analysis_name == "correlation_matrix" and isinstance(value, dict):
         c1, c2 = st.columns(2)
         shape = value.get("shape", [0, 0])
-        c1.metric("Rows", shape[0] if isinstance(shape, list) and len(shape) == 2 else "N/A")
-        c2.metric("Columns", shape[1] if isinstance(shape, list) and len(shape) == 2 else "N/A")
+        c1.metric("Rows", shape[0] if isinstance(shape, list) and len(shape) == 2 else "—")
+        c2.metric("Columns", shape[1] if isinstance(shape, list) and len(shape) == 2 else "—")
         cols = value.get("columns", [])
         if isinstance(cols, list) and cols:
             st.caption("Available fields")
@@ -1228,10 +1276,12 @@ def show_logs_tab() -> None:
     st.metric("Total Sessions Recorded", len(history))
     info = latest.get("session_info", {}) if isinstance(latest, dict) else {}
     p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Session ID", str(info.get("session_id", "N/A"))[:12])
+    _sid = info.get("session_id")
+    p1.metric("Session ID", str(_sid)[:12] if _sid else "—")
     p2.metric("Duration (s)", _fmt_scalar(info.get("total_duration_seconds")))
     p3.metric("Operations", _fmt_scalar(info.get("total_operations")))
-    p4.metric("Run ID", str(info.get("run_id", "N/A"))[:12])
+    _rid = info.get("run_id")
+    p4.metric("Run ID", str(_rid)[:12] if _rid else "—")
 
     timeline = latest.get("operations_timeline", []) if isinstance(latest, dict) else []
     if isinstance(timeline, list) and timeline:
