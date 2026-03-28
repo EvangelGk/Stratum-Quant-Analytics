@@ -116,14 +116,16 @@ def _compute_baseline_suite(
 ) -> Dict[str, Any]:
     y_train_num = pd.to_numeric(y_train, errors="coerce")
     y_test_num = pd.to_numeric(y_test, errors="coerce")
-    valid_idx = y_test_num.notna()
-    y_test_num = y_test_num.loc[valid_idx]
+    # Use positional (numpy) masking — index may differ between y and x after imputation.
+    valid_mask = y_test_num.values if hasattr(y_test_num, "values") else np.asarray(y_test_num)
+    valid_mask = ~np.isnan(valid_mask.astype(float))
+    y_test_num = pd.Series(np.asarray(y_test_num, dtype=float)[valid_mask])
     if y_test_num.empty:
         return {"status": "insufficient_data", "models": {}}
 
     x_train_num = x_train.apply(pd.to_numeric, errors="coerce")
     x_test_num = x_test.apply(pd.to_numeric, errors="coerce")
-    x_test_num = x_test_num.loc[valid_idx]
+    x_test_num = pd.DataFrame(x_test_num.values[valid_mask], columns=x_test_num.columns)
 
     models: Dict[str, Dict[str, float | None]] = {}
 
@@ -319,10 +321,24 @@ def _walk_forward_backtest(
         train_df = df.iloc[:train_end]
         test_df = df.iloc[train_end:test_end]
 
-        x_train = train_df[factors]
-        y_train = train_df[target]
-        x_test = test_df[factors]
-        y_test = test_df[target]
+        x_train_raw = train_df[factors].apply(pd.to_numeric, errors="coerce")
+        y_train = pd.to_numeric(train_df[target], errors="coerce")
+        x_test_raw = test_df[factors].apply(pd.to_numeric, errors="coerce")
+        y_test = pd.to_numeric(test_df[target], errors="coerce")
+
+        # Impute NaN in X with median (fit on train only — no leakage).
+        _wf_imputer = SimpleImputer(strategy="median")
+        x_train_arr = _wf_imputer.fit_transform(x_train_raw.values)
+        x_test_arr = _wf_imputer.transform(x_test_raw.values)
+        # Drop rows where y is still NaN after coercion (use positional mask).
+        _train_mask = y_train.notna().values
+        _test_mask = y_test.notna().values
+        x_train = pd.DataFrame(x_train_arr[_train_mask], columns=x_train_raw.columns)
+        y_train = y_train.values[_train_mask]
+        x_test = pd.DataFrame(x_test_arr[_test_mask], columns=x_train_raw.columns)
+        y_test = y_test.values[_test_mask]
+        if len(x_train) < 10 or len(x_test) < 2:
+            continue
 
         selected_model_name = str(model_type)
         if tune_hyperparams_per_window and len(x_train) >= 50:
@@ -698,6 +714,11 @@ def governance_report(
         )
         x_train_eng = _engineer_features(x_train_clipped, model_factors)
         x_test_eng = _engineer_features(x_test_clipped, model_factors)
+        # Align test columns to train: _engineer_features may create __sq columns
+        # only when nunique > 2; test set may have fewer unique values and miss them.
+        for _missing_col in set(x_train_eng.columns) - set(x_test_eng.columns):
+            x_test_eng[_missing_col] = np.nan
+        x_test_eng = x_test_eng[x_train_eng.columns]
 
         imputer = SimpleImputer(strategy="median")
         x_train_imputed = pd.DataFrame(

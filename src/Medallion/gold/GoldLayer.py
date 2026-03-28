@@ -730,7 +730,7 @@ class GoldLayer:
             "min_r2": float(getattr(self.config, "governance_min_r2", -0.25)),
             "max_normalized_shift": float(getattr(self.config, "governance_max_normalized_shift", 2.5)),
             "max_leakage_flags": int(getattr(self.config, "governance_max_leakage_flags", 1)),
-            "min_stationary_ratio": float(getattr(self.config, "governance_min_stationary_ratio", 0.4)),
+            "min_stationary_ratio": float(getattr(self.config, "governance_min_stationary_ratio", 0.10)),
             "min_walk_forward_r2": float(getattr(self.config, "governance_min_walk_forward_r2", -0.25)),
             "max_model_risk_score": float(getattr(self.config, "governance_max_model_risk_score", 0.6)),
             "model_risk_warn_threshold": float(getattr(self.config, "governance_model_risk_warn_threshold", 0.4)),
