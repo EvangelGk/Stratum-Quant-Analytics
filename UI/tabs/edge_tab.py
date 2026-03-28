@@ -144,10 +144,19 @@ def _extract_backtest(candidate: dict) -> dict:
     return {}
 
 
+def _sanitize_returns(returns: np.ndarray, max_abs: float = 0.15) -> np.ndarray:
+    """Replace inf/NaN and clip outlier returns to ±max_abs before any compounding."""
+    arr = np.asarray(returns, dtype=float)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(arr, -max_abs, max_abs)
+
+
 def _max_drawdown_from_returns(returns: np.ndarray) -> float:
-    if returns.size == 0:
+    """Correct MDD for log-return series: equity curve = exp(cumsum)."""
+    arr = _sanitize_returns(returns)
+    if arr.size == 0:
         return 0.0
-    equity_curve = np.cumprod(1.0 + returns)
+    equity_curve = np.exp(np.cumsum(arr))
     peaks = np.maximum.accumulate(equity_curve)
     drawdowns = (equity_curve / np.maximum(peaks, 1e-12)) - 1.0
     return float(np.min(drawdowns))
@@ -156,16 +165,14 @@ def _max_drawdown_from_returns(returns: np.ndarray) -> float:
 def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> float:
     if returns.size == 0:
         return 0.0
-    # Use log-sum to avoid np.prod overflow on large series; equivalent to geometric CAGR
-    clipped = np.clip(returns, -0.9999, None)
-    log_sum = float(np.sum(np.log1p(clipped)))
+    # returns ARE already log-returns — direct nansum, do NOT np.log1p (double-transform).
+    log_sum = float(np.nansum(returns))
     if not np.isfinite(log_sum):
         return 0.0
     years = max(returns.size / float(periods_per_year), 1.0 / float(periods_per_year))
     ann = float(np.exp(log_sum / years) - 1.0)
-    # Cap at ±9900% to prevent astronomic Calmar values caused by compounding on
-    # inflated return data (e.g. returns expressed in non-daily units).
-    return float(np.clip(ann, -0.99, 99.0))
+    # Cap at ±2500% to prevent astronomic Calmar values.
+    return float(np.clip(ann, -0.99, 25.0))
 
 
 def _infer_periods_per_year(backtest: dict) -> int:
@@ -599,11 +606,15 @@ def show_edge_arsenal_tab() -> None:
             else:
                 _x_axis = np.arange(1, len(sret) + 1)
 
+            # exp(cumsum) is the correct compounding for log returns.
+            # cumprod(1+r) explodes to 10^44 when the series contains outliers.
+            _sret_clean = _sanitize_returns(sret)
+            _bret_clean = _sanitize_returns(bret)
             curve_df = pd.DataFrame(
                 {
                     "x": _x_axis,
-                    "Strategy": np.cumprod(1.0 + sret),
-                    "Buy & Hold": np.cumprod(1.0 + bret),
+                    "Strategy": np.exp(np.cumsum(_sret_clean)),
+                    "Buy & Hold": np.exp(np.cumsum(_bret_clean)),
                 }
             )
 

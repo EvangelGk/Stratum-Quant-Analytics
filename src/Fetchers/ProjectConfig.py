@@ -24,7 +24,7 @@ class ProjectConfig:
 
     fred_api_key: Optional[str]
     mode: RunMode = RunMode.ACTUAL
-    start_date: str = "2016-01-01"
+    start_date: str = "2014-01-01"  # ≥10 years of history for DataFetchingAuditor
     end_date: str = "2026-12-31"
     max_workers: int = 10
     max_retries: int = 4
@@ -196,7 +196,7 @@ class ProjectConfig:
         mode = RunMode.ACTUAL if env_mode == "actual" else RunMode.SAMPLE
 
         # get dates and other configs
-        start_date = cls._validate_iso_date(os.getenv("START_DATE", "2016-01-01"), "START_DATE", "2016-01-01")
+        start_date = cls._validate_iso_date(os.getenv("START_DATE", "2014-01-01"), "START_DATE", "2014-01-01")
         end_date = cls._validate_iso_date(os.getenv("END_DATE", "2026-12-31"), "END_DATE", "2026-12-31")
         max_workers = cls._parse_positive_int(os.getenv("MAX_WORKERS", "10"), "MAX_WORKERS", 10)
         max_retries = cls._parse_positive_int(os.getenv("MAX_RETRIES", "4"), "MAX_RETRIES", 4)
@@ -485,13 +485,53 @@ class ProjectConfig:
         if self.pipeline_stage_retry_attempts < 1:
             raise ValueError("Invalid configuration: PIPELINE_STAGE_RETRY_ATTEMPTS must be >= 1")
 
+    # Cross-asset universe covering 5 GICS sectors — 30 large-cap tickers.
+    # Listed largest-cap-first; overridable via TARGET_TICKERS env variable.
+    _DEFAULT_UNIVERSE: List[str] = [
+        # Technology (6)
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AVGO",
+        "ORCL",
+        "ADBE",
+        # Financials (6)
+        "JPM",
+        "BAC",
+        "GS",
+        "MS",
+        "V",
+        "MA",
+        # Healthcare (6)
+        "JNJ",
+        "PFE",
+        "UNH",
+        "ABBV",
+        "LLY",
+        "AMGN",
+        # Energy & Materials (6)
+        "XOM",
+        "CVX",
+        "SLB",
+        "LIN",
+        "APD",
+        "NEM",
+        # Industrials & Consumer Staples (6)
+        "CAT",
+        "GE",
+        "HON",
+        "PG",
+        "KO",
+        "WMT",
+    ]
+
     def get_targets(self) -> List[str]:
-        """Επιστρέφει τα tickers βάσει του mode."""
+        """Returns tickers based on mode. Env override via TARGET_TICKERS."""
         if self.target_tickers:
             return self.target_tickers
         if self.mode == RunMode.SAMPLE:
-            return ["AAPL", "F"]
-        return ["AAPL", "TSLA", "MSFT", "WMT", "XOM"]
+            return ["AAPL", "MSFT", "JPM", "XOM", "JNJ"]
+        return self._DEFAULT_UNIVERSE
 
     def should_use_parallel_pipeline(self) -> bool:
         """Enable the parallel orchestration path only for full (actual) runs."""

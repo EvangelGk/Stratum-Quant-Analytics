@@ -183,6 +183,19 @@ class GoldLayer:
         _price_col = "adj_close" if "adj_close" in master_df.columns else "close"
         master_df["log_return"] = master_df.groupby("ticker")[_price_col].transform(lambda x: np.log(x / x.shift(1)))
 
+        # ── Anti-Gravity Guard (Log-Return Winsorisation) ────────────────────
+        # A single-day move beyond ±25% almost always reflects bad YFinance
+        # data (corporate actions, delisting artefacts, API errors).
+        # Clipping at ±ln(1.25) ≈ ±0.2231 prevents $10^44-scale equity curves.
+        _LR_CLIP = float(np.log(1.25))
+        _n_lr_clipped = int((master_df["log_return"].abs() > _LR_CLIP).sum())
+        if _n_lr_clipped > 0:
+            self.logger.warning(
+                f"Anti-Gravity Guard: clipped {_n_lr_clipped} log_return values "
+                f"beyond ±{_LR_CLIP:.4f} (≈±25% simple return) — likely bad YFinance data."
+            )
+        master_df["log_return"] = master_df["log_return"].clip(lower=-_LR_CLIP, upper=_LR_CLIP)
+
         fred_enabled = bool(getattr(self.config, "fred_api_key", None))
         worldbank_enabled = bool(getattr(self.config, "worldbank_indicator_map", {}))
 
@@ -263,6 +276,45 @@ class GoldLayer:
             source_date_col = f"__source_date_{series_name}"
             if "source_date" in aggregated.columns:
                 aggregated = aggregated.rename(columns={"source_date": source_date_col})
+
+            # ── World Bank Upsampling: Linear Interpolation → Daily ───────────
+            # World Bank data is annual; market data is daily.  Without
+            # interpolation, 364 of every 365 rows would be NULL after the
+            # asof-join, causing Bad Fitting in the ML stage.
+            # Linear interpolation fills intra-year gaps WITHOUT introducing
+            # look-ahead bias because the 21-day publication lag in
+            # mixed_frequency.py remains the primary LAB guardrail.
+            if len(aggregated) >= 2 and source_date_col in aggregated.columns:
+                _daily_idx = pd.date_range(
+                    start=master_df["date"].min(),
+                    end=master_df["date"].max(),
+                    freq="B",
+                )
+                _anchor_src = (
+                    aggregated[["date", source_date_col]]
+                    .set_index("date")[source_date_col]
+                )
+                _interp_frame = (
+                    aggregated[["date", series_name]]
+                    .set_index("date")
+                    .reindex(_daily_idx)
+                )
+                _interp_frame[series_name] = (
+                    _interp_frame[series_name]
+                    .interpolate(method="linear", limit_direction="forward")
+                    .ffill()
+                )
+                # Keep the most-recent annual anchor date for staleness tracking.
+                _interp_frame[source_date_col] = (
+                    _anchor_src.reindex(_daily_idx).ffill()
+                )
+                aggregated = (
+                    _interp_frame
+                    .reset_index()
+                    .rename(columns={"index": "date"})
+                    .sort_values("date")
+                )
+
             master_df = pd.merge_asof(
                 master_df,
                 aggregated[["date", series_name, source_date_col]],
@@ -320,6 +372,26 @@ class GoldLayer:
         if broken_sources:
             raise AnalysisError("Gold source integration failure: joined master table has zero usable coverage for " + ", ".join(broken_sources))
 
+        # ── Post-join null density report ───────────────────────────────────
+        # Measures data "holes" after all Macro + WorldBank merges.
+        # High null% in a macro column = convergence failure that will corrupt
+        # ML fitting.  Report it in the contract for Auditor visibility.
+        _signal_cols = [
+            c for c in master_df.columns
+            if not str(c).startswith("__age_days_") and not str(c).startswith("__source_date_")
+        ]
+        post_join_null_density: Dict[str, float] = {
+            col: round(float(master_df[col].isnull().mean() * 100), 2)
+            for col in _signal_cols
+        }
+        _high_null_cols = {k: v for k, v in post_join_null_density.items() if v > 20.0}
+        if _high_null_cols:
+            self.logger.warning(
+                f"Post-join null density alert: {len(_high_null_cols)} columns "
+                f"exceed 20% missing after macro/WB merge. "
+                f"Columns: {list(_high_null_cols.keys())[:8]}"
+            )
+
         # Persist explicit schema contract so Auditor validates against what Gold emitted.
         contract_payload = {
             "schema_version": "gold-contract.v1",
@@ -340,6 +412,12 @@ class GoldLayer:
             "join_tolerance_days": {
                 "fred": fred_staleness_days,
                 "worldbank": worldbank_staleness_days,
+            },
+            "post_join_null_density_pct": post_join_null_density,
+            "join_strategy": {
+                "fred": "merge_asof_backward",
+                "worldbank": "linear_interpolation_then_merge_asof",
+                "log_return_clip": f"±ln(1.25)≈±{float(np.log(1.25)):.4f}",
             },
         }
         contract_file = self.gold_path / "master_table_contract.json"
@@ -368,6 +446,59 @@ class GoldLayer:
 
     def _analysis_df(self, ticker: Optional[str]) -> pd.DataFrame:
         return filter_to_ticker(self.df, ticker=ticker)
+
+    def compute_risk_parity_weights(
+        self,
+        lookback_days: int = 252,
+    ) -> Dict[str, float]:
+        """Compute inverse-volatility (risk-parity) portfolio weights.
+
+        Replaces equal-weighting for the 30-ticker universe.  Each ticker's
+        weight is proportional to 1/σ_annualised, normalised to sum to 1.0.
+
+        This stabilises the Calmar ratio by over-weighting low-volatility
+        names and under-weighting speculative high-vol names.
+
+        Returns
+        -------
+        dict  {ticker: weight}  — weights sum to 1.0.
+              Empty dict if insufficient data.
+        """
+        if self.df.empty or "log_return" not in self.df.columns or "ticker" not in self.df.columns:
+            return {}
+
+        work = self.df.copy()
+        work["date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = work.sort_values("date")
+
+        cutoff = work["date"].max() - pd.Timedelta(days=lookback_days)
+        recent = work[work["date"] >= cutoff]
+
+        tickers = recent["ticker"].dropna().unique().tolist()
+        if not tickers:
+            return {}
+
+        vols: Dict[str, float] = {}
+        for t in tickers:
+            returns = pd.to_numeric(
+                recent[recent["ticker"] == t]["log_return"], errors="coerce"
+            ).dropna()
+            if len(returns) >= 20:
+                vols[t] = float(returns.std(ddof=1) * np.sqrt(252))
+
+        if not vols:
+            return {}
+
+        inv_vols = {t: 1.0 / max(v, 1e-8) for t, v in vols.items()}
+        total = sum(inv_vols.values())
+        weights = {t: round(iv / total, 8) for t, iv in inv_vols.items()}
+
+        self.logger.info(
+            f"Risk-Parity Weights: {len(weights)} tickers, lookback={lookback_days}d. "
+            f"Min={min(weights.values()):.4f} Max={max(weights.values()):.4f} "
+            f"(Equal weight would be {1.0/max(len(weights),1):.4f})"
+        )
+        return weights
 
     def _resolve_analysis_factors(
         self,

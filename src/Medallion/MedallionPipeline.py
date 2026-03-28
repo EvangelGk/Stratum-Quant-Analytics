@@ -94,6 +94,8 @@ class MedallionPipeline:
 
     def _is_stage_done(self, stage: str) -> bool:
         payload = self._load_checkpoint()
+        # 'quota_paused' means the stage DID NOT complete — it must be re-run.
+        # Only 'success' allows skipping in resume mode.
         if payload.get(stage, {}).get("status") != "success":
             return False
         if stage == "bronze":
@@ -103,6 +105,21 @@ class MedallionPipeline:
         if stage == "gold":
             return (self.gold_path / "master_table.parquet").exists()
         return False
+
+    @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        """Detect AI-provider quota / rate-limit errors from any upstream library.
+
+        When a quota is hit mid-run we write a 'quota_paused' checkpoint so the
+        pipeline can resume from the last completed stage instead of proposing a
+        half-baked fix that breaks the pipeline.
+        """
+        msg = str(exc).lower()
+        quota_signals = (
+            "quota", "rate limit", "ratelimit", "429", "resource_exhausted",
+            "too many requests", "billing", "credits", "insufficient_quota",
+        )
+        return any(sig in msg for sig in quota_signals)
 
     def _run_stage_with_retry(self, stage_name: str, stage_fn: Any) -> None:
         attempts = max(1, int(getattr(self.config, "pipeline_stage_retry_attempts", 1)))
@@ -114,6 +131,22 @@ class MedallionPipeline:
                 return
             except Exception as exc:
                 last_error = exc
+                # Quota errors: pause cleanly so the next run can resume from
+                # the last GOOD checkpoint rather than re-running everything.
+                if self._is_quota_error(exc):
+                    self._write_checkpoint(
+                        stage_name,
+                        "quota_paused",
+                        {
+                            "attempt": attempt,
+                            "error": str(exc)[:300],
+                            "resume_hint": (
+                                f"Set pipeline_resume_from_checkpoint=True to skip "
+                                f"already-completed stages and resume from '{stage_name}'."
+                            ),
+                        },
+                    )
+                    raise  # Surface to caller; do not silently swallow quota errors.
                 self._write_checkpoint(
                     stage_name,
                     "failed",

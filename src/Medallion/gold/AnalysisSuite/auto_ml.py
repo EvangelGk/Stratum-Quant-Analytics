@@ -13,6 +13,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import RobustScaler
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
@@ -111,6 +112,31 @@ def auto_ml_regression(
         x_test = test_df[model_features]
         y_test = test_df[target]
 
+        # ── NaN guard ────────────────────────────────────────────────────────
+        # Financial data has fat tails; NaNs after prepare_supervised_frame
+        # indicate a failed outer-join / ffill in the macro merge.
+        if x_train.isnull().any().any() or x_test.isnull().any().any():
+            raise DataValidationError(
+                "NaN values in model features after prepare_supervised_frame. "
+                "Ensure the Gold-layer outer-join + ffill completed correctly."
+            )
+
+        # ── RobustScaler: resistant to fat tails in financial data ───────────
+        # Standard scaling fails when outliers dominate σ.  RobustScaler uses
+        # median / IQR, which is stable even with extreme daily moves.
+        # Fitted ONLY on train split to prevent test-set leakage.
+        _final_scaler = RobustScaler()
+        x_train_scaled = pd.DataFrame(
+            _final_scaler.fit_transform(x_train),
+            columns=x_train.columns,
+            index=x_train.index,
+        )
+        x_test_scaled = pd.DataFrame(
+            _final_scaler.transform(x_test),
+            columns=x_test.columns,
+            index=x_test.index,
+        )
+
         seed = 42 if random_state is None else int(random_state)
         candidates = {
             "Ridge": Ridge(alpha=0.5),
@@ -139,13 +165,25 @@ def auto_ml_regression(
         for name, estimator in candidates.items():
             fold_r2 = []
             fold_mae = []
-            for train_idx, valid_idx in splitter.split(x_train):
-                fold_x_train = x_train.iloc[train_idx]
+            for train_idx, valid_idx in splitter.split(x_train_scaled):
+                fold_x_train = x_train_scaled.iloc[train_idx]
                 fold_y_train = y_train.iloc[train_idx]
-                fold_x_valid = x_train.iloc[valid_idx]
+                fold_x_valid = x_train_scaled.iloc[valid_idx]
                 fold_y_valid = y_train.iloc[valid_idx]
-                estimator.fit(fold_x_train, fold_y_train)
-                fold_predictions = estimator.predict(fold_x_valid)
+                # Per-fold scaling prevents look-ahead leakage from validation set.
+                _fold_scaler = RobustScaler()
+                fold_x_train_s = pd.DataFrame(
+                    _fold_scaler.fit_transform(fold_x_train),
+                    columns=fold_x_train.columns,
+                    index=fold_x_train.index,
+                )
+                fold_x_valid_s = pd.DataFrame(
+                    _fold_scaler.transform(fold_x_valid),
+                    columns=fold_x_valid.columns,
+                    index=fold_x_valid.index,
+                )
+                estimator.fit(fold_x_train_s, fold_y_train)
+                fold_predictions = estimator.predict(fold_x_valid_s)
                 fold_r2.append(float(r2_score(fold_y_valid, fold_predictions)))
                 fold_mae.append(float(mean_absolute_error(fold_y_valid, fold_predictions)))
 
@@ -163,8 +201,8 @@ def auto_ml_regression(
                 best_name = name
 
         best_model = candidates[best_name]
-        best_model.fit(x_train, y_train)
-        holdout_predictions = best_model.predict(x_test)
+        best_model.fit(x_train_scaled, y_train)
+        holdout_predictions = best_model.predict(x_test_scaled)
 
         if hasattr(best_model, "feature_importances_"):
             raw_values = np.asarray(getattr(best_model, "feature_importances_"), dtype=float)
@@ -173,7 +211,7 @@ def auto_ml_regression(
         else:
             perm = permutation_importance(
                 best_model,
-                x_test,
+                x_test_scaled,
                 y_test,
                 n_repeats=10,
                 random_state=seed,
@@ -216,6 +254,7 @@ def auto_ml_regression(
             "source_importance": aggregate_source_importance(feature_importance),
             "predictions": prediction_frame,
             "validation_scheme": "walk_forward_time_series_split",
+            "feature_scaling": "RobustScaler(per_fold+final_holdout)",
             "regime_feature": {
                 "enabled": "volatility_regime_high" in panel.columns,
                 "window_days": 30,

@@ -30,13 +30,15 @@ def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> floa
     arr = np.asarray(returns, dtype=float)
     if arr.size == 0:
         return 0.0
-    clipped = np.clip(arr, -0.9999, None)
-    log_sum = float(np.sum(np.log1p(clipped)))
+    # arr ARE log-returns — direct nansum is the correct compounding formula.
+    # np.log1p(arr) would double-transform (treating log-returns as simple returns).
+    log_sum = float(np.nansum(arr))
     if not np.isfinite(log_sum):
         return 0.0
     years = max(arr.size / float(periods_per_year), 1.0 / float(periods_per_year))
     ann = float(np.exp(log_sum / years) - 1.0)
-    return float(np.clip(ann, -0.99, 99.0))
+    # Hard cap: +2500% annualised is impossible for a real strategy
+    return float(np.clip(ann, -0.99, 25.0))
 
 
 def _effective_periods_per_year(metadata: Dict[str, Any], target: str) -> int:
@@ -98,13 +100,33 @@ def backtest_pre2020_holdout(
         model = Ridge(alpha=1.0)
         model.fit(train_df[features], train_df[target])
         predictions = model.predict(test_df[features])
-        actual = pd.to_numeric(test_df[target], errors="coerce").fillna(0.0)
+
+        # CRITICAL: Use 1-day log-returns from the original df — NOT the 21-day
+        # forward cumulative target produced by prepare_supervised_frame when
+        # align_target_to_features=True.  The transformed target counts each daily
+        # return ~21 times, causing np.exp(cumsum(...)) to produce 10^44 equity curves.
+        _orig = (
+            df[[date_col, "log_return"]]
+            .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
+            .dropna(subset=[date_col, "log_return"])
+            .set_index(date_col)
+        )
+        _test_dates = pd.to_datetime(test_df[date_col].values)
+        _raw_lr = _orig["log_return"].reindex(_test_dates)
+        raw_arr = np.asarray(_raw_lr, dtype=float)
+        actual_arr = np.nan_to_num(raw_arr, nan=0.0, posinf=0.0, neginf=0.0)
+        actual_arr = np.clip(actual_arr, -0.15, 0.15)  # ±15% daily cap
 
         # Trade returns: go long when signal >= 0, short when signal < 0.
         signal = np.where(np.asarray(predictions, dtype=float) >= 0.0, 1.0, -1.0)
-        actual_arr = np.asarray(actual, dtype=float)
+        # Trim to equal length in case reindex dropped any dates.
+        _min_len = min(len(signal), len(actual_arr))
+        signal = signal[:_min_len]
+        actual_arr = actual_arr[:_min_len]
+        predictions = predictions[:_min_len]
         strategy_returns = signal * actual_arr
         benchmark_returns = actual_arr
+        actual = pd.Series(actual_arr)
 
         te = _tracking_error(actual, predictions)
         # MDD is a risk metric for the strategy holding the actual position,
@@ -241,12 +263,12 @@ def _compute_strategy_metrics(
     daily_vol = float(np.std(r, ddof=1)) if n > 1 else 0.0
     ann_vol = daily_vol * ann_factor
 
-    # Geometric annualised return via log-sum (avoids overflow on long series)
-    clipped = np.clip(r, -0.9999, None)
-    log_sum = float(np.nansum(np.log1p(clipped)))
+    # Geometric annualised return: r are log-returns → direct nansum.
+    # np.log1p would double-transform (treating log-returns as simple returns).
+    log_sum = float(np.nansum(r))
     years = max(n / 252.0, 1.0 / 252.0)
     ann_return = float(np.exp(log_sum / years) - 1.0)
-    ann_return = float(np.clip(ann_return, -0.99, 99.0))
+    ann_return = float(np.clip(ann_return, -0.99, 25.0))  # +2500% hard cap
 
     # ── Sharpe Ratio (risk-free = 0) ─────────────────────────────────────────
     sharpe = float(np.mean(r) / daily_vol * ann_factor) if daily_vol > 1e-12 else None
@@ -359,7 +381,14 @@ def run_strategy_backtest(
 
     # ── 1. Log returns (forward-fill prices first to remove weekend gaps) ────
     px = prices.ffill().dropna()
-    log_ret = np.log(px / px.shift(1))  # daily log returns
+    # Guard: replace zero/negative prices (bad data) with NaN so log() is safe
+    px = px.where(px > 0.0, other=np.nan).ffill().dropna()
+    # Clip extreme single-day log-returns.
+    # ±15% log-return (≈±16% simple) is already a 5-sigma event for most
+    # large-cap stocks.  Values beyond this are almost certainly bad YFinance
+    # data (unadjusted splits, delisting artefacts, API errors).
+    raw_log = np.log(px / px.shift(1))
+    log_ret = raw_log.clip(lower=-0.15, upper=0.15)
 
     # ── 2. Rolling Z-score (no global scaling → zero data-leakage) ──────────
     roll_mean = px.rolling(window=rolling_window, min_periods=rolling_window).mean()
