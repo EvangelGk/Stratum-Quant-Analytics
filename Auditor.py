@@ -1100,26 +1100,35 @@ class ScenarioAuditor:
         }
 
     def _print_summary(self, report: Dict[str, Any]) -> None:
-        status_icon = {"PASS": "✅", "WARN": "⚠️", "CRITICAL": "❌"}
-        check_icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
-        print("\n" + "=" * 60)
-        print("STRATUM QUANT ANALYTICS - SYSTEM AUDIT REPORT")
-        print("=" * 60)
+        import sys
+
+        status_icon = {"PASS": "[OK]", "WARN": "[WARN]", "CRITICAL": "[FAIL]"}
+        check_icon = {"pass": "[OK]", "warn": "[WARN]", "fail": "[FAIL]"}
+        lines = [
+            "",
+            "=" * 60,
+            "STRATUM QUANT ANALYTICS - SYSTEM AUDIT REPORT",
+            "=" * 60,
+        ]
         overall_status = str(report.get("status", "UNKNOWN")).upper()
-        print(f"Status: {status_icon.get(overall_status, 'ℹ️')} {overall_status}")
-        print(f"Decision Ready: {report.get('decision_ready', False)}")
-        print(f"User: {report.get('user_id', 'unknown')}")
-        print(f"Rows: {report.get('row_count', 0)} | Columns: {report.get('column_count', 0)}")
+        lines.append(f"Status: {status_icon.get(overall_status, '[?]')} {overall_status}")
+        lines.append(f"Decision Ready: {report.get('decision_ready', False)}")
+        lines.append(f"User: {report.get('user_id', 'unknown')}")
+        lines.append(f"Rows: {report.get('row_count', 0)} | Columns: {report.get('column_count', 0)}")
         for name, result in report.get("checks", {}).items():
             mark = "PASS" if result.get("passed") else "FAIL"
             status = result.get("status", "info")
             status_norm = str(status).lower()
-            icon = check_icon.get(status_norm, "ℹ️")
-            print(f"- {name.capitalize():<12} -> {icon} {mark} ({status})")
-        print("=" * 60)
+            icon = check_icon.get(status_norm, "[?]")
+            lines.append(f"- {name.capitalize():<12} -> {icon} {mark} ({status})")
+        lines.append("=" * 60)
         for line in report.get("auditor_judgement", {}).get("summary", []):
-            print(f"* {line}")
-        print("=" * 60 + "\n")
+            lines.append(f"* {line}")
+        lines.append("=" * 60)
+        output = "\n".join(lines) + "\n"
+        # Write with utf-8 to avoid charmap errors on Windows cp1252 terminals.
+        sys.stdout.buffer.write(output.encode("utf-8", errors="replace"))
+        sys.stdout.buffer.flush()
 
 
 if __name__ == "__main__":
