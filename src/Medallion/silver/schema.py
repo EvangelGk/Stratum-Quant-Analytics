@@ -6,12 +6,20 @@ from pandera.pandas import Check, Column, DataFrameSchema
 
 
 # --- Reusable Checks (Senior Practice: DRY) ---
-def z_score_check(series: pd.Series, threshold: float = 3.5) -> bool:
-    """Ελέγχει αν υπάρχουν τιμές που ξεφεύγουν στατιστικά (Outliers)."""
-    if series.std() == 0:
+def z_score_check(series: pd.Series, threshold: float = 0.95) -> bool:
+    """Check that no single-day return exceeds ±95%.
+
+    A daily price change beyond ±95% is almost certainly a data error
+    (bad API tick, unadjusted split, fat-finger). Using absolute return cap
+    instead of Z-score because financial returns are fat-tailed and
+    non-normal — Z-score at 3.5σ incorrectly flags legitimate moves
+    for volatile or trending stocks.
+    The Silver layer's own winsorization handles soft outliers.
+    """
+    if len(series) < 2:
         return True
-    z_scores = (series - series.mean()).abs() / series.std()
-    return cast(bool, (z_scores <= threshold).all())
+    daily_ret = series.pct_change().dropna()
+    return cast(bool, (daily_ret.abs() <= threshold).all())
 
 
 # --- 1. Financials Schema (yFinance) ---

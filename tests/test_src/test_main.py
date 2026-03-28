@@ -1,3 +1,4 @@
+import pytest
 import src.main as main_module
 
 
@@ -26,8 +27,10 @@ def test_main_handles_missing_api_key(monkeypatch, capsys):
 
     monkeypatch.setattr(main_module.ProjectConfig, "load_from_env", failing_load)
 
-    # Run main; it should handle the error and print a message
-    main_module.main()
+    # Run main; it should handle the error, print a message, and exit with code 1
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main()
+    assert exc_info.value.code == 1
     captured = capsys.readouterr()
     assert "Unexpected Application Error" in captured.out or "CRITICAL ERROR" in captured.out or "Configuration error: missing FRED API key." in captured.out
 

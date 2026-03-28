@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -487,7 +487,7 @@ class ProjectConfig:
 
     # Cross-asset universe covering 5 GICS sectors — 30 large-cap tickers.
     # Listed largest-cap-first; overridable via TARGET_TICKERS env variable.
-    _DEFAULT_UNIVERSE: List[str] = [
+    _DEFAULT_UNIVERSE: ClassVar[List[str]] = [
         # Technology (6)
         "AAPL",
         "MSFT",
