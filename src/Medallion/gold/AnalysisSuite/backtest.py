@@ -17,7 +17,9 @@ def _tracking_error(actual: pd.Series, predicted: np.ndarray) -> float:
 
 
 def _max_drawdown_from_returns(returns: np.ndarray) -> float:
-    equity_curve = np.cumprod(1.0 + returns)
+    # Log returns: correct equity curve is exp(cumsum), NOT cumprod(1+r)
+    arr = np.asarray(returns, dtype=float)
+    equity_curve = np.exp(np.cumsum(arr))
     peaks = np.maximum.accumulate(equity_curve)
     drawdowns = (equity_curve / np.maximum(peaks, 1e-12)) - 1.0
     return float(np.min(drawdowns))
@@ -267,7 +269,8 @@ def _compute_strategy_metrics(
     sortino = float(np.mean(r) / down_std * ann_factor) if (down_std and down_std > 1e-12) else None
 
     # ── Max Drawdown  (peak-to-trough on cumulative equity curve) ────────────
-    cum = pd.Series(r).add(1.0).cumprod()
+    # r are log returns; correct equity = exp(cumsum), NOT cumprod(1+r)
+    cum = pd.Series(np.exp(np.cumsum(r)))
     running_max = cum.cummax()
     drawdown = (cum / running_max) - 1.0
     max_dd = float(drawdown.min())
@@ -320,6 +323,7 @@ def run_strategy_backtest(
     vol_window: int = 14,
     vol_ma_window: int = 20,
     trend_sma_window: int = 200,
+    stop_loss_pct: float = 0.30,
 ) -> Dict[str, Any]:
     """
     Bias-free, vectorised mean-reversion strategy backtest.
@@ -409,6 +413,23 @@ def run_strategy_backtest(
     trade_cost = position_change.astype(float) * friction
     strategy_ret = strategy_ret - trade_cost
 
+    # ── 7b. Portfolio stop-loss — flatten position when running drawdown
+    #        exceeds stop_loss_pct from the most-recent equity peak.
+    #        Uses the PREVIOUS day's equity (shift(1)) to avoid look-ahead.
+    if stop_loss_pct > 0.0:
+        log_cum = strategy_ret.cumsum()
+        log_peak = log_cum.cummax()
+        # drawdown in log space: log(equity/peak) = log_cum - log_peak
+        log_dd = log_cum - log_peak
+        stop_active = log_dd.shift(1).fillna(0.0) < -stop_loss_pct
+        # Zero out signal on all days the stop is active
+        signal = signal.where(~stop_active, other=0.0)
+        # Recompute returns and trade costs with the stopped signal
+        strategy_ret = signal * log_ret
+        position_change = signal.diff().fillna(0.0).abs() > 0.5
+        trade_cost = position_change.astype(float) * friction
+        strategy_ret = strategy_ret - trade_cost
+
     # ── 8. Drop NaN rows produced by rolling windows + shift ─────────────────
     valid_mask = (
         strategy_ret.notna()
@@ -436,9 +457,14 @@ def run_strategy_backtest(
     # Benchmark metrics (no friction)
     bm_metrics = _compute_strategy_metrics(benchmark_ret, pd.Series(0, index=benchmark_ret.index))
 
-    # ── 11. Equity curves (cumulative product of (1 + daily_ret)) ────────────
-    equity_curve = (strategy_ret + 1.0).cumprod()
-    bm_curve = (benchmark_ret + 1.0).cumprod()
+    # ── 11. Equity curves from log returns: exp(cumsum) is exact;
+    #        (1+r).cumprod() is only an approximation and blows up over time ──
+    equity_curve = pd.Series(
+        np.exp(strategy_ret.values.cumsum()), index=strategy_ret.index
+    )
+    bm_curve = pd.Series(
+        np.exp(benchmark_ret.values.cumsum()), index=benchmark_ret.index
+    )
 
     # ── 12. Rolling 30-day Sharpe for chart ──────────────────────────────────
     r_s = strategy_ret
@@ -457,6 +483,7 @@ def run_strategy_backtest(
             "vol_window": vol_window,
             "vol_ma_window": vol_ma_window,
             "trend_sma_window": trend_sma_window,
+            "stop_loss_pct": stop_loss_pct,
         },
         "metrics": metrics,
         "benchmark_metrics": bm_metrics,

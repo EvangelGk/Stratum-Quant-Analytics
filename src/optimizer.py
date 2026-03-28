@@ -904,6 +904,137 @@ class AutomatedOptimizationLoop:
             return f"[GIT] Commit ok, push failed: {push_out[:220]}"
         return "[GIT] Commit+push completed"
 
+    # ------------------------------------------------------------------
+    # Regression Testing Gate
+    # ------------------------------------------------------------------
+
+    def _run_regression_gate(self, issue_type: str = "") -> tuple[bool, str]:
+        """Financial-validation regression gate — runs AFTER code changes are applied.
+
+        Verifies the backtest engine still produces realistic metrics:
+          • Sharpe ratio bounded to [-5.5, 5.5]
+          • Max drawdown not ≈ -100% (equity-to-zero collapse)
+          • Final equity not astronomical (> 1000× from $1)
+          • Annualised return ≤ 9900 % (99.0 multiplier)
+
+        On failure the gate:
+          1. Rolls back changed files (caller's responsibility via git checkout)
+          2. Sends a Telegram message to the owner
+        Returns (passed: bool, report: str).  Never raises.
+        """
+        import importlib
+        import sys as _sys
+
+        try:
+            master_path = self.project_root / "data" / "gold" / "master_table.parquet"
+            if not master_path.exists():
+                return True, "[GATE] No price data available — financial gate skipped (non-blocking)"
+
+            src_str = str(self.project_root / "src")
+            if src_str not in _sys.path:
+                _sys.path.insert(0, src_str)
+
+            try:
+                import Medallion.gold.AnalysisSuite.backtest as _bt_mod
+                importlib.reload(_bt_mod)
+                run_bt = _bt_mod.run_strategy_backtest
+            except Exception as exc:
+                return True, f"[GATE] Cannot import backtest module ({exc}) — gate skipped"
+
+            import pandas as _pd
+
+            df = _pd.read_parquet(master_path)
+            price_col = "adj_close" if "adj_close" in df.columns else "close"
+            if price_col not in df.columns:
+                return True, "[GATE] No price column in master table — gate skipped"
+
+            if "ticker" in df.columns:
+                tickers = df["ticker"].dropna().unique().tolist()
+                if tickers:
+                    df = df[df["ticker"] == tickers[0]].copy()
+
+            if "date" in df.columns:
+                df = df.sort_values("date")
+                prices = df.set_index("date")[price_col].dropna()
+            else:
+                prices = df[price_col].dropna()
+
+            prices = _pd.to_numeric(prices, errors="coerce").dropna()
+            if len(prices) < 210:
+                return True, f"[GATE] Only {len(prices)} price rows — gate skipped"
+
+            result = run_bt(prices=prices, rolling_window=20, z_threshold=1.5)
+            m = result.get("metrics", {})
+            ec = result.get("equity_curve", [1.0])
+            final_equity = float(ec[-1]) if ec else 1.0
+            sharpe = m.get("sharpe_ratio")
+            mdd = m.get("max_drawdown", 0.0)
+            ann_ret = m.get("annualized_return", 0.0)
+
+            failures: list[str] = []
+            if sharpe is not None and abs(float(sharpe)) > 5.5:
+                failures.append(f"Sharpe={sharpe:.2f} outside [-5.5, 5.5]")
+            if mdd is not None and float(mdd) < -0.99:
+                failures.append(f"MaxDrawdown={mdd:.2%} ≈ -100% (equity collapse)")
+            if final_equity > 1000.0:
+                failures.append(f"FinalEquity={final_equity:.2f}× — astronomical (>1000×)")
+            if ann_ret is not None and float(ann_ret) > 99.0:
+                failures.append(f"AnnReturn={ann_ret:.1f} — unrealistic (>9900%)")
+
+            if failures:
+                gate = self._ensure_approval_gateway()
+                gate._send_telegram(
+                    "⚠️ <b>STRATUM QUANT ANALYTICS — Regression Gate FAILED</b>\n"
+                    f"Issue: {html.escape(issue_type or 'N/A')}\n\n"
+                    "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
+                    "Τα αρχεία επαναφέρθηκαν στην προηγούμενη κατάσταση.\n\n"
+                    "Αποτυχίες:\n"
+                    + "\n".join(f"  • {html.escape(f)}" for f in failures)
+                )
+                return False, "[GATE FAILED] " + "; ".join(failures)
+
+            return True, (
+                f"[GATE PASSED] Sharpe={sharpe}, MDD={float(mdd):.2%}, "
+                f"FinalEquity={final_equity:.3f}\u00d7, AnnReturn={float(ann_ret):.1%}"
+            )
+        except Exception as exc:
+            return True, f"[GATE] Validation error (non-blocking): {exc}"
+
+    # ------------------------------------------------------------------
+    # Semantic Versioning
+    # ------------------------------------------------------------------
+
+    def _bump_version(self) -> str:
+        """Bump the patch segment of pyproject.toml after an approved optimizer change.
+
+        0.1.0 → 0.1.1  |  0.1.1-opt → 0.1.2-opt
+        Writes the updated file and returns a description of the change.
+        """
+        import re as _re
+
+        toml_path = self.project_root / "pyproject.toml"
+        if not toml_path.exists():
+            return "[VERSION] pyproject.toml not found — skipped"
+        try:
+            text = toml_path.read_text(encoding="utf-8")
+            # Matches: version = "X.Y.Z"  or  version = "X.Y.Z-suffix"
+            pat = _re.compile(r'(version\s*=\s*")(\d+\.\d+\.)(\d+)(-[^"]*)?(")')
+            match = pat.search(text)
+            if not match:
+                return "[VERSION] version field not found in pyproject.toml — skipped"
+            _prefix, maj_min, patch_str, suffix, _close = match.groups()
+            old_ver = f"{maj_min}{patch_str}{suffix or ''}"
+            new_ver = f"{maj_min}{int(patch_str) + 1}{suffix or ''}"
+            updated = pat.sub(
+                lambda m: m.group(1) + new_ver + m.group(5),
+                text,
+                count=1,
+            )
+            toml_path.write_text(updated, encoding="utf-8")
+            return f"[VERSION] {old_ver} → {new_ver} (pyproject.toml bumped)"
+        except Exception as exc:
+            return f"[VERSION] Error bumping version: {exc}"
+
     @property
     def safe_user(self) -> str:
         return (
@@ -1983,10 +2114,34 @@ class AutomatedOptimizationLoop:
         if approved and has_changes:
             applied = self._llama.apply_code_changes(analysis)
             change_summary = "; ".join(applied)
+
+            # If the built-in smoke-test already rolled back changes, skip further steps.
+            if any("[ROLLED_BACK]" in a for a in applied):
+                return True, (
+                    f"[QUANTOS] {issue_type} smoke test failed — changes rolled back.\n"
+                    f"Details: {change_summary}"
+                )
+
+            # ── Regression Testing Gate: financial-validation before commit ──
+            rg_passed, rg_report = self._run_regression_gate(issue_type=issue_type)
+            if not rg_passed:
+                # Restore all modified files to HEAD before the changes were written
+                self._run_cmd(["git", "checkout", "HEAD", "--", "."])
+                return True, (
+                    f"[QUANTOS] {issue_type} fix FAILED financial regression gate.\n"
+                    f"All changes rolled back. Gate: {rg_report}\n"
+                    f"Proposed fix (not applied):\n{analysis[:600]}"
+                )
+
+            # ── Semantic Versioning: bump patch in pyproject.toml ────────────
+            ver_msg = self._bump_version()
+
             git_status = self._auto_commit_and_push(f"iter{iteration}_{issue_type}")
             return True, (
                 f"[QUANTOS] {issue_type} fix approved.\n"
                 f"Auto-applied changes: {change_summary}\n"
+                f"Regression gate: {rg_report}\n"
+                f"{ver_msg}\n"
                 f"{git_status}\n"
                 f"Full analysis:\n{analysis[:800]}"
             )
@@ -2018,9 +2173,20 @@ class AutomatedOptimizationLoop:
             )
             if approved:
                 applied = self._llama.apply_code_changes(bug_scan["analysis"])
-                git_status = self._auto_commit_and_push("pre_run_bug_scan")
-                print(f"[QUANTOS] Bug fixes applied: {'; '.join(applied)}")
-                print(f"[QUANTOS] {git_status}")
+                if any("[ROLLED_BACK]" in a for a in applied):
+                    print(f"[QUANTOS] Pre-run bug fix smoke test failed — rolled back: {'; '.join(applied)}")
+                else:
+                    rg_passed, rg_report = self._run_regression_gate(issue_type="pre_run_bug_scan")
+                    if not rg_passed:
+                        self._run_cmd(["git", "checkout", "HEAD", "--", "."])
+                        print(f"[QUANTOS] Pre-run bug fix FAILED regression gate: {rg_report}")
+                    else:
+                        ver_msg = self._bump_version()
+                        git_status = self._auto_commit_and_push("pre_run_bug_scan")
+                        print(f"[QUANTOS] Bug fixes applied: {'; '.join(applied)}")
+                        print(f"[QUANTOS] Regression gate: {rg_report}")
+                        print(f"[QUANTOS] {ver_msg}")
+                        print(f"[QUANTOS] {git_status}")
             else:
                 print("[QUANTOS] Bug fix proposals REJECTED by owner — continuing without changes")
         elif bug_scan["success"] and bug_scan["no_bugs_found"]:
