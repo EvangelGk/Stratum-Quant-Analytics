@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -320,7 +321,7 @@ def main() -> None:
         config_contract = config.to_serializable_dict()
         config_hash = _hash_payload(config_contract)
         code_version = os.getenv("GIT_COMMIT_SHA", "unversioned")
-        pyproject_hash = _hash_file_if_exists(Path("pyproject.toml"))
+        pyproject_hash = _hash_file_if_exists(PROJECT_ROOT / "pyproject.toml")
         logger.info(
             MAIN_CONFIG_LOADED.format(config_details=f"mode={config.mode.value}")
         )
