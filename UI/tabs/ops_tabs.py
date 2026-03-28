@@ -258,7 +258,11 @@ def show_auditor_tab() -> None:
         st.markdown("---")
         report_is_complete = _audit_report_is_complete(report)
         effective_status = report.get("status", "UNKNOWN") if report_is_complete else "ERROR"
-        tl_color, tl_label, tl_desc = score_audit_status(effective_status)
+        # Pass failed_count so ≤2 advisory failures render yellow, not red
+        tl_color, tl_label, tl_desc = score_audit_status(
+            effective_status,
+            failed_count=len(report.get("failed_checks", [])),
+        )
         if not report_is_complete:
             tl_desc = "The loaded audit report is incomplete or stale. Reload the saved audit artifact or re-run the audit."
         st.markdown(
@@ -270,12 +274,15 @@ def show_auditor_tab() -> None:
 
         failed_checks = report.get("failed_checks", [])
         warning_checks = report.get("warning_checks", [])
-        dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")))
+        n_failed = len(failed_checks)
+        dr_color, dr_label, dr_desc = score_decision_ready(
+            bool(report.get("decision_ready")), failed_count=n_failed
+        )
         row_count = report.get("row_count")
         column_count = report.get("column_count")
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Rows", str(row_count) if isinstance(row_count, int) else "N/A")
-        c2.metric("Columns", str(column_count) if isinstance(column_count, int) else "N/A")
+        c1.metric("Rows", str(row_count) if isinstance(row_count, int) else "—")
+        c2.metric("Columns", str(column_count) if isinstance(column_count, int) else "—")
         c3.markdown(badge_html(dr_label, dr_color, dr_desc), unsafe_allow_html=True)
         c4.metric("Failed Checks", len(failed_checks))
         c5.metric("Warning Checks", len(warning_checks))
@@ -286,7 +293,16 @@ def show_auditor_tab() -> None:
                 "Success messaging is suppressed until a complete report is available."
             )
         if failed_checks:
-            st.error("**Failed checks:** " + ", ".join(_LABEL_MAP.get(c, c) for c in failed_checks))
+            check_names = ", ".join(_LABEL_MAP.get(c, c) for c in failed_checks)
+            if n_failed <= 2:
+                # 1–2 advisory failures: caution, not a hard block
+                st.warning(
+                    f"**{n_failed} advisory check(s) flagged:** {check_names}  \n"
+                    "These checks are informational in mixed-frequency regimes and "
+                    "do not prevent use of the outputs."
+                )
+            else:
+                st.error(f"**{n_failed} checks failed:** {check_names}")
         if warning_checks:
             st.warning("**Warnings:** " + ", ".join(_LABEL_MAP.get(c, c) for c in warning_checks))
         if report_is_complete and not failed_checks and not warning_checks:

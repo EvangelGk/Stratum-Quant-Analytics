@@ -528,6 +528,10 @@ def main() -> None:
     role = _render_sidebar()
     show_kpis()
 
+    # Load latest backtest artifact into session state once per rerun so that
+    # Pipeline → Auditor → Edge Arsenal share the same payload snapshot.
+    _load_backtest_payload_to_session()
+
     pages = [
         "🤖 Quantos Assistant",
         "💎 Edge Arsenal",
@@ -580,6 +584,77 @@ def main() -> None:
 
     # Render footer with license attribution
     _render_footer()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pillar 3 — Session State: Backtest Payload Handshake
+# ──────────────────────────────────────────────────────────────────────────────
+# How secrets work in this app
+# ─────────────────────────────
+# All API keys (FRED_API_KEY, GEMINI_API_KEY, GROQ_API_KEY) are resolved by
+# `get_secret()` in secret_store.py, which checks (in priority order):
+#   1. st.secrets  — Streamlit Cloud dashboard (Settings → Secrets)
+#   2. os.environ  — injected by Docker / GitHub Actions
+#   3. .streamlit/secrets.toml — local dev file
+#   4. .env        — fallback dotenv file
+#
+# Streamlit Cloud deployment:
+#   Go to App → Settings → Secrets and add each key as:
+#       FRED_API_KEY = "your-key"
+#       GEMINI_API_KEY = "your-key"
+#       GROQ_API_KEY  = "your-key"
+#   New users sharing the deployment automatically inherit these secrets.
+#   Never commit real keys to .streamlit/secrets.toml in a public repo.
+
+
+def _load_backtest_payload_to_session() -> None:
+    """
+    Read the latest pipeline output artifact and push the backtest payload into
+    ``st.session_state["backtest_payload"]``.
+
+    This creates a **single source of truth** shared by the Pipeline, Auditor,
+    and Edge Arsenal modules — they all read from session_state rather than each
+    independently hitting disk, which guarantees consistency within a Streamlit
+    rerun cycle.
+
+    The load is **skipped** when:
+    * The artifact file has not changed since the last load (tracked via a
+      content-hash stored in ``st.session_state["_backtest_payload_hash"]``).
+    * The artifact file does not exist yet.
+
+    Called once per ``main()`` invocation before any tabs are rendered.
+    """
+    try:
+        artifact_path = OUTPUT_DIR / "default" / "analysis_results.json"
+        # Respect DATA_USER_ID when set
+        user_id = (
+            st.secrets.get("DATA_USER_ID", "")
+            or ""
+        ).strip()
+        if user_id:
+            safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in user_id)
+            candidate = OUTPUT_DIR / safe / "analysis_results.json"
+            if candidate.exists():
+                artifact_path = candidate
+
+        if not artifact_path.exists():
+            return
+
+        import hashlib as _hashlib
+        raw = artifact_path.read_bytes()
+        file_hash = _hashlib.md5(raw, usedforsecurity=False).hexdigest()
+
+        # Skip re-parse if the file hasn't changed since last load
+        if st.session_state.get("_backtest_payload_hash") == file_hash:
+            return
+
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
+        st.session_state["backtest_payload"] = payload
+        st.session_state["_backtest_payload_hash"] = file_hash
+        st.session_state["backtest_payload_loaded_at"] = datetime.utcnow().isoformat() + "Z"
+    except Exception:
+        # Non-fatal: tabs handle a missing / empty backtest_payload gracefully.
+        pass
 
 
 def _render_footer() -> None:

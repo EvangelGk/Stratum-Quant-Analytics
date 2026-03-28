@@ -1,13 +1,20 @@
 name: Optimizer Scheduler
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Pillar 4 — Always-On Scheduler
+# Runs automatically every 24 h (00:00 UTC) or on-demand.
+# After a successful run, commits new output artifacts back to the repo so the
+# Streamlit web app always displays fresh results without a manual push.
+# ──────────────────────────────────────────────────────────────────────────────
+
 on:
   schedule:
-    - cron: '0 0 * * *'  # Every 24 hours at 00:00 UTC
-  workflow_dispatch:
+    - cron: '0 0 * * *'   # Every 24 hours at 00:00 UTC
+  workflow_dispatch:       # Manual trigger from Actions UI
 
 concurrency:
   group: optimizer-scheduler
-  cancel-in-progress: false
+  cancel-in-progress: false  # Never cancel a running job — let it finish
 
 jobs:
   run-optimizer:
@@ -15,24 +22,38 @@ jobs:
     timeout-minutes: 120
 
     permissions:
-      contents: write
+      contents: write   # Required to push artifact commits back to the repo
 
     env:
       PYTHONUNBUFFERED: "1"
-      OPTIMIZER_AUTO_GIT_PUSH: "0"
+      PYTHONPATH: "${{ github.workspace }}/src:${{ github.workspace }}"
+      # Pipeline runs in ACTUAL mode during scheduled execution
+      ENVIRONMENT: "actual"
+      # Secrets injected from repository Settings → Secrets and variables → Actions
+      FRED_API_KEY:     ${{ secrets.FRED_API_KEY }}
+      GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY:     ${{ secrets.GROQ_API_KEY }}
+      # DATA_USER_ID is intentionally omitted — src/main.py falls back to
+      # "default" when the variable is unset, which is correct for CI runs.
+      RANDOM_SEED:      "42"
+      ENFORCE_REPRODUCIBILITY: "true"
 
     steps:
+      # ── 1. Checkout (full history so git push works cleanly) ───────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Python
+      # ── 2. Python environment ──────────────────────────────────────────────
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
+      # ── 3. Install dependencies ────────────────────────────────────────────
       - name: Install dependencies
         shell: bash
         run: |
@@ -40,8 +61,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run optimizer and commit artifacts
+      # ── 4. Execute pipeline + grid-search optimizer ────────────────────────
+      - name: Run pipeline and optimizer
         shell: bash
         run: |
           set -euo pipefail
           python scripts/scheduler_batch.py
+
+      # ── 5. Commit and push new artifacts ──────────────────────────────────
+      # Only runs if there are actual changes — idempotent on no-diff runs.
+      - name: Commit and push output artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage all new / updated artifacts
+          git add output/ data/gold/ || true
+
+          # Exit cleanly if nothing changed (keeps history clean)
+          if git diff --cached --quiet; then
+            echo "No artifact changes to commit — skipping push."
+            exit 0
+          fi
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          git commit -m "ci(scheduler): automated optimizer run ${TIMESTAMP} [skip ci]"
+
+          # Push with retry to survive transient network blips
+          for attempt in 1 2 3; do
+            git push origin HEAD && break || {
+              echo "Push attempt ${attempt} failed — retrying in 10 s..."
+              sleep 10
+            }
+          done
+
+      # ── 6. Upload artifacts to GitHub Actions for debugging ────────────────
+      - name: Upload output artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimizer-outputs-${{ github.run_id }}
+          path: |
+            output/
+            logs/
+            data/users/
+          retention-days: 14
+          if-no-files-found: ignore

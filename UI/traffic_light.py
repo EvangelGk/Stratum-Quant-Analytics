@@ -33,20 +33,58 @@ def badge_html(label: str, color: str = "green", tooltip: str = "") -> str:
 # Domain-specific scorers — each returns (color, short_label, business_desc)
 # ---------------------------------------------------------------------------
 
-def score_audit_status(status: str) -> tuple[str, str, str]:
+def score_audit_status(
+    status: str, failed_count: int = 0
+) -> tuple[str, str, str]:
+    """
+    Traffic-light for overall audit status.
+
+    Severity ladder (realistic, not make-believe):
+    * PASS                           → green
+    * WARN  (any count)              → yellow
+    * FAIL/CRITICAL/ERROR, ≤2 fails  → yellow caution
+      (≤2 advisories — especially governance — do not block production)
+    * FAIL/CRITICAL/ERROR, >2 fails  → red action required
+    """
     s = str(status).upper()
     if s == "PASS":
         return "green", "✅ All Clear", "All audit checks passed — system is production-ready."
     if s == "WARN":
         return "yellow", "⚠️ Review Needed", "Some checks flagged warnings — review before relying on output."
     if s in {"CRITICAL", "FAIL", "ERROR"}:
-        return "red", "❌ Action Required", "One or more critical checks failed — pipeline output should not be used."
+        if failed_count <= 2:
+            return (
+                "yellow",
+                "⚠️ Caution",
+                f"{failed_count} advisory check(s) flagged — outputs are usable with awareness. "
+                "Governance and threshold checks are often advisory in mixed-frequency regimes.",
+            )
+        return (
+            "red",
+            "❌ Action Required",
+            f"{failed_count} checks failed — pipeline output should not be used without investigation.",
+        )
     return "yellow", "⚠️ Incomplete Context", "Audit context is partial; review artifacts and refresh before final decisions."
 
 
-def score_decision_ready(ready: bool) -> tuple[str, str, str]:
+def score_decision_ready(
+    ready: bool, failed_count: int = 0
+) -> tuple[str, str, str]:
+    """
+    Traffic-light for the decision-ready gate.
+
+    * ready=True            → green
+    * ready=False, ≤2 fails → yellow (advisory issues, outputs usable with caution)
+    * ready=False, >2 fails → red
+    """
     if ready:
         return "green", "✅ Decision Ready", "Analytical outputs are complete and validated."
+    if failed_count <= 2:
+        return (
+            "yellow",
+            "⚠️ Limited Confidence",
+            f"{failed_count} advisory check(s) raised — outputs can be used with caution and awareness.",
+        )
     return "red", "❌ Not Ready", "Pipeline output is incomplete or blocked by quality gates."
 
 
