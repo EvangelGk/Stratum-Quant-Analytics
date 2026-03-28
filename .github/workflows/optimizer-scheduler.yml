@@ -89,9 +89,12 @@ jobs:
           ENVIRONMENT: "actual"
           RANDOM_SEED: "42"
           ENFORCE_REPRODUCIBILITY: "true"
-          FRED_API_KEY:    ${{ secrets.FRED_API_KEY }}
-          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
+          FRED_API_KEY:              ${{ secrets.FRED_API_KEY }}
+          GEMINI_API_KEY:            ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:              ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_BOT_TOKEN:        ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:          ${{ secrets.TELEGRAM_CHAT_ID }}
+          FULL_STACK_AUDIT_TIMEOUT:  "300"
         run: |
           set -euo pipefail
           python scripts/scheduler_batch.py
@@ -108,6 +111,7 @@ jobs:
 
           git add output/ 2>/dev/null || true
           git add data/gold/ 2>/dev/null || true
+          git add data/optimizer_history.json 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No artifact changes detected — skipping commit and push."
