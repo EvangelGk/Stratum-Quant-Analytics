@@ -119,6 +119,10 @@ class ScenarioAuditor:
         report["checks"]["outputs"] = _safe_check("outputs", self._check_outputs)
         report["checks"]["thresholds"] = _safe_check("thresholds", self._check_threshold_design)
         report["checks"]["governance"] = _safe_check("governance", self._check_governance)
+        # Senior-grade sanity check: mathematically impossible results mean
+        # the pipeline has a fundamental error (look-ahead bias, bad data,
+        # wrong cumulative return formula).  Strategic Edge Score → 0.
+        report["checks"]["astronomical"] = _safe_check("astronomical", self._check_astronomical_results, df)
 
         # Important: warning checks should not be treated as hard failures.
         failed_checks: List[str] = []
@@ -910,6 +914,97 @@ class ScenarioAuditor:
             "interpretation": theory_notes,
         }
 
+    def _check_astronomical_results(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """Sanity check for mathematically impossible metrics.
+
+        Rules (any one triggers strategic_edge_score = 0):
+        ─────────────────────────────────────────────────
+        • Annualised return estimate > 200 %  → "Astronomical Result"
+        • Proxy Sharpe > 4.0                  → "Mathematically Impossible"
+        • Cumulative equity multiplier > 1000 → "Equity Curve Explosion"
+        • Max drawdown ≤ −99.9 %              → "Mathematically Impossible"
+        """
+        issues: List[str] = []
+        flags: List[str] = []
+        strategic_edge_score = 100.0
+
+        if "log_return" in df.columns:
+            series = pd.to_numeric(df["log_return"], errors="coerce").dropna()
+            if len(series) >= 252:
+                # Geometric annualised return from daily log-returns
+                ann_return = float(np.exp(series.mean() * 252) - 1)
+                std_daily = float(series.std(ddof=1))
+                ann_vol = float(std_daily * np.sqrt(252))
+
+                if ann_return > 2.0:  # > 200 % annualised
+                    flags.append(
+                        f"ASTRONOMICAL_ANNUAL_RETURN: {ann_return:.1%} "
+                        f"(check look-ahead bias or bad data in pipeline)"
+                    )
+                    issues.append("annual_return_gt_200pct")
+                    strategic_edge_score = 0.0
+
+                if ann_vol > 1e-8:
+                    proxy_sharpe = ann_return / ann_vol
+                    if proxy_sharpe > 4.0:
+                        flags.append(
+                            f"MATHEMATICALLY_IMPOSSIBLE_SHARPE: {proxy_sharpe:.2f} > 4.0 "
+                            f"(Sharpe > 3 is rare even for top HFs; > 4 = calculation error)"
+                        )
+                        issues.append("sharpe_gt_4_mathematically_impossible")
+                        strategic_edge_score = 0.0
+
+            if len(series) >= 30:
+                cum_log = float(series.sum())
+                final_multiplier = float(np.exp(cum_log))
+                if final_multiplier > 1000.0:  # 100 000 % cumulative gain
+                    flags.append(
+                        f"EQUITY_CURVE_EXPLOSION: cumulative multiplier = {final_multiplier:.2e} "
+                        f"(fix: use np.exp(log_returns.cumsum()) NOT (1+r).cumprod())"
+                    )
+                    issues.append("equity_curve_explosion")
+                    strategic_edge_score = 0.0
+
+        # Check governance report for explicit drawdown figures
+        gov_file = self._latest_governance_file()
+        if gov_file:
+            gov = self._read_json(gov_file)
+            report = gov.get("report", {}) if isinstance(gov, dict) else {}
+            for key in ("maximum_drawdown", "max_drawdown"):
+                mdd_val = (report.get(key) or (report.get("backtest") or {}).get(key))
+                if mdd_val is not None:
+                    try:
+                        mdd = float(mdd_val)
+                        if mdd <= -0.999:
+                            flags.append(
+                                f"MATHEMATICALLY_IMPOSSIBLE_MAX_DRAWDOWN: {mdd:.4f} "
+                                f"(−100 % wipe-out cannot coexist with positive returns)"
+                            )
+                            issues.append("max_drawdown_equals_100pct")
+                            strategic_edge_score = 0.0
+                    except (TypeError, ValueError):
+                        pass
+                    break
+
+        passed = len(issues) == 0
+        return {
+            "passed": passed,
+            "status": "pass" if passed else "fail",
+            "issues": issues,
+            "flags": flags,
+            "strategic_edge_score": strategic_edge_score,
+            "interpretation": (
+                "All metrics within realistic bounds — no gravity-defying numbers detected."
+                if passed
+                else (
+                    "CRITICAL: Mathematically impossible metrics detected. "
+                    "Strategic Edge Score forced to 0. "
+                    "Root causes: look-ahead bias, cumulative return formula error, "
+                    "or bad YFinance data that bypassed Winsorisation."
+                )
+            ),
+        }
+
     def _safe_ratio(self, observed: int, expected: int) -> float:
         if expected <= 0:
             return 1.0
@@ -929,11 +1024,22 @@ class ScenarioAuditor:
         thresholds = report["checks"].get("thresholds", {})
         integration = report["checks"].get("integration", {})
         outputs = report["checks"].get("outputs", {})
+        astronomical = report["checks"].get("astronomical", {})
 
         failed_checks = report.get("failed_checks", [])
         warn_checks = report.get("warning_checks", [])
         n_failed = len(failed_checks)
         status = str(report.get("status", "UNKNOWN")).upper()
+
+        # Strategic Edge Score: starts at 100, forced to 0 on impossible metrics.
+        strategic_edge_score = float(astronomical.get("strategic_edge_score", 100.0))
+        if strategic_edge_score == 0.0:
+            # Impossible results override all other scores.
+            pass
+        elif n_failed > 3:
+            strategic_edge_score = max(0.0, strategic_edge_score - (n_failed - 3) * 10.0)
+        elif status == "WARN":
+            strategic_edge_score = min(strategic_edge_score, 75.0)
 
         # ── Realistic judgement thresholds ──────────────────────────────────
         # ≤2 advisory issues do NOT block decision-making in mixed-frequency
@@ -974,11 +1080,22 @@ class ScenarioAuditor:
                 "Silver null thresholds are using baseline values. They will adapt automatically once quality history accumulates across pipeline runs."
             )
 
+        if astronomical.get("flags"):
+            summary_lines.append(
+                f"ASTRONOMICAL ALERTS: {'; '.join(str(f) for f in astronomical['flags'][:3])}"
+            )
+        if strategic_edge_score == 0.0:
+            summary_lines.append(
+                "Strategic Edge Score: 0 — pipeline has mathematically impossible results. "
+                "Do NOT use these results for decision-making."
+            )
+
         return {
             "is_information_reasonable": is_info_ok,
-            "can_support_decisions": can_decide,
+            "can_support_decisions": can_decide and strategic_edge_score > 0.0,
             "n_failed": n_failed,
             "n_warnings": len(warn_checks),
+            "strategic_edge_score": round(strategic_edge_score, 1),
             "summary": summary_lines,
         }
 

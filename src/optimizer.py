@@ -2730,8 +2730,19 @@ class TelegramHITL:
         audit: Dict[str, Any],
         current_score: float,
         projected_score: float,
+        execution_risk: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Phase 1 — formatted Full Audit Report."""
+        """Phase 1 — formatted Full Audit Report.
+
+        Parameters
+        ----------
+        execution_risk : optional dict with keys:
+            affects_historical_consistency (bool)  — does any proposed change
+                alter how historical data is processed / labelled?
+            lookahead_bias_status (str)             — 'clean' | 'risk' | 'unknown'
+            survivor_bias_note   (str)              — free-text note
+            r_squared            (float | None)     — ML fit R² for context
+        """
         if not self._load():
             return False
 
@@ -2765,6 +2776,22 @@ class TelegramHITL:
                 f"New sectors: {', '.join(exp.get('new_sectors', [])[:4])}"
             )
 
+        # ── Execution Risk & Bias Check block ────────────────────────────────
+        exec_risk = execution_risk or {}
+        affects_history = bool(exec_risk.get("affects_historical_consistency", False))
+        la_status = str(exec_risk.get("lookahead_bias_status", "unknown"))
+        surv_note = str(exec_risk.get("survivor_bias_note", "Use rolling Sharpe to assess — see 12m window in backtest output."))
+        r2_val = exec_risk.get("r_squared")
+        r2_txt = f"{r2_val:.4f}" if isinstance(r2_val, (int, float)) else "N/A"
+        la_icon = "🟢" if la_status == "clean" else ("🔴" if la_status == "risk" else "⚪")
+        exec_risk_blk = (
+            f"\n\n🔐 <b>EXECUTION RISK ASSESSMENT</b>\n"
+            f"• Affects historical consistency: {'🔴 YES — backward-incompatible change' if affects_history else '🟢 NO'}\n"
+            f"• Look-ahead bias: {la_icon} {html.escape(la_status)}\n"
+            f"• Survivor bias: {html.escape(surv_note[:120])}\n"
+            f"• Model fit R²: <code>{r2_txt}</code>"
+        )
+
         msg = (
             "───────────────────\n"
             "🤖 <b>OPTIMIZER AUDIT REPORT 📊</b>\n"
@@ -2779,7 +2806,8 @@ class TelegramHITL:
             f"• Logic Integrity: {le} {len(issues)} issue(s) detected\n\n"
             f"❌ <b>CRITICAL ISSUES FOUND</b>{issues_txt}\n\n"
             f"💡 <b>PROPOSED OPTIMIZATIONS</b>{props_txt}"
-            f"{expansion_blk}\n\n"
+            f"{expansion_blk}"
+            f"{exec_risk_blk}\n\n"
             f"🚀 <b>PROJECTED IMPACT</b>\n"
             f"• Strategic Edge Score: {current_score:.0f}% → {projected_score:.0f}%\n"
             "───────────────────"
@@ -2794,8 +2822,15 @@ class TelegramHITL:
         new_code: str,
         filename: str,
         description: str,
+        affects_historical_consistency: Optional[bool] = None,
     ) -> str:
         """Phase 2+3 — send diff + [✅ ACCEPT & PUSH] / [❌ REJECT] buttons.
+
+        Parameters
+        ----------
+        affects_historical_consistency : if True, the change alters how
+            historical data is processed; the Telegram message will flag this
+            as a backward-incompatible change requiring extra review.
 
         Returns 'fs_accept', 'fs_reject', or 'timeout'.
         """
@@ -2820,6 +2855,22 @@ class TelegramHITL:
         # 🔴 for financial math, 🟡 for docs/cleanup
         tag = "🔴" if any(k in description.lower() for k in self._FINANCE_KW) else "🟡"
 
+        # Historical consistency flag
+        if affects_historical_consistency is None:
+            # Auto-detect: changes to Silver/Gold/Bronze = backward-incompatible
+            _history_keywords = ("silver", "gold", "bronze", "log_return", "winsoriz", "clip", "lag", "shift", "merge_asof")
+            affects_historical_consistency = any(
+                kw in filename.lower() or kw in description.lower()
+                for kw in _history_keywords
+            )
+        hist_warn = (
+            "\n⚠️ <b>HISTORICAL CONSISTENCY RISK:</b> This change affects how "
+            "historical data is processed. Backtest results before and after "
+            "this patch are NOT directly comparable."
+            if affects_historical_consistency
+            else "\n✅ <b>Historical consistency:</b> Change does not affect historical data processing."
+        )
+
         msg = (
             "───────────────────\n"
             f"📝 <b>PROPOSED CODE CHANGE</b> {tag}\n"
@@ -2827,6 +2878,7 @@ class TelegramHITL:
             f"📁 File: <code>{html.escape(filename)}</code>\n"
             f"📋 Change: {html.escape(description[:200])}\n\n"
             f"<pre>{html.escape(shown[:2200])}</pre>\n"
+            f"{hist_warn}\n"
             "───────────────────\n"
             "❓ <b>Do you accept these changes?</b>\n"
             "(Approval triggers automated GitHub commit &amp; pipeline rerun)"
