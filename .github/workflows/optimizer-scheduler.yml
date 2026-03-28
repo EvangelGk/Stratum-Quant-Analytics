@@ -7,9 +7,11 @@ name: Optimizer Scheduler
 # Streamlit web app always displays fresh results without a manual push.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   FRED_API_KEY    – St. Louis Fed FRED API key
-#   GEMINI_API_KEY  – Google AI Studio key (AI briefing, optional)
-#   GROQ_API_KEY    – Groq LLM key (AI briefing, optional)
+#   FRED_API_KEY          – St. Louis Fed FRED API key
+#   GEMINI_API_KEY        – Google AI Studio key (AI briefing, optional)
+#   GROQ_API_KEY          – Groq LLM key (AI briefing, optional)
+#   TELEGRAM_BOT_TOKEN    – Telegram bot token from @BotFather
+#   TELEGRAM_CHAT_ID      – Your personal Telegram chat ID
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -31,22 +33,46 @@ jobs:
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
-      # fetch-depth: 1 is sufficient — we only need the latest commit to push.
-      # Full history (0) was wasteful and slowed the job unnecessarily.  [FIX #5]
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 2. Python environment ───────────────────────────────────────────────
+      # ── 2. Notify Telegram: run started ────────────────────────────────────
+      - name: Telegram — run started
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TRIGGER="${{ github.event_name }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="$(cat <<EOF
+          🚀 <b>STRATUM QUANT ANALYTICS</b>
+          Optimizer Scheduler <b>started</b>
+
+          🕐 ${TIMESTAMP}
+          ▸ Trigger: ${TRIGGER}
+          ▸ Run #${{ github.run_number }}
+
+          <a href="${RUN_URL}">View live logs →</a>
+          EOF
+          )" > /dev/null
+
+      # ── 3. Python environment ───────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      # ── 3. Install dependencies ─────────────────────────────────────────────
+      # ── 4. Install dependencies ─────────────────────────────────────────────
       - name: Install dependencies
         shell: bash
         run: |
@@ -54,10 +80,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── 4. Execute pipeline + grid-search optimizer ─────────────────────────
-      # Secrets are scoped to this step only — least-privilege principle.  [FIX #1-3]
-      # Add FRED_API_KEY, GEMINI_API_KEY, GROQ_API_KEY in:
-      #   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+      # ── 5. Execute pipeline + grid-search optimizer ─────────────────────────
       - name: Run pipeline and optimizer
         shell: bash
         env:
@@ -66,7 +89,6 @@ jobs:
           ENVIRONMENT: "actual"
           RANDOM_SEED: "42"
           ENFORCE_REPRODUCIBILITY: "true"
-          # ↓ Register these three secrets in GitHub repo Settings to activate
           FRED_API_KEY:    ${{ secrets.FRED_API_KEY }}
           GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
@@ -74,9 +96,7 @@ jobs:
           set -euo pipefail
           python scripts/scheduler_batch.py
 
-      # ── 5. Commit and push new artifacts ────────────────────────────────────
-      # Guard: only runs when the pipeline step above succeeded.  [FIX #4]
-      # The || true idiom is removed; we test git diff explicitly.  [FIX #6]
+      # ── 6. Commit and push new artifacts ────────────────────────────────────
       - name: Commit and push output artifacts
         if: success()
         shell: bash
@@ -86,11 +106,9 @@ jobs:
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage artifacts — a missing directory is not an error; we handle it below.
           git add output/ 2>/dev/null
           git add data/gold/ 2>/dev/null
 
-          # Only commit when there are actual staged changes (keeps history clean).
           if git diff --cached --quiet; then
             echo "No artifact changes detected — skipping commit and push."
             exit 0
@@ -99,7 +117,6 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           git commit -m "ci(scheduler): automated optimizer run ${TIMESTAMP} [skip ci]"
 
-          # Retry push up to 3 times to survive transient network blips.
           push_ok=false
           for attempt in 1 2 3; do
             if git push origin HEAD; then
@@ -115,7 +132,7 @@ jobs:
             exit 1
           fi
 
-      # ── 6. Upload artifacts to GitHub Actions for debugging ─────────────────
+      # ── 7. Upload artifacts to GitHub Actions for debugging ─────────────────
       - name: Upload output artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -127,3 +144,56 @@ jobs:
             data/users/
           retention-days: 14
           if-no-files-found: ignore
+
+      # ── 8. Notify Telegram: SUCCESS ─────────────────────────────────────────
+      - name: Telegram — success
+        if: success()
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="$(cat <<EOF
+          ✅ <b>STRATUM QUANT ANALYTICS</b>
+          Optimizer run <b>completed successfully</b>
+
+          🕐 ${TIMESTAMP}
+          ▸ Run #${{ github.run_number }}
+          ▸ Fresh artifacts committed to repo
+          ▸ Streamlit app will auto-refresh
+
+          <a href="${RUN_URL}">View full report →</a>
+          EOF
+          )" > /dev/null
+
+      # ── 9. Notify Telegram: FAILURE ─────────────────────────────────────────
+      - name: Telegram — failure
+        if: failure()
+        shell: bash
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="HTML" \
+            -d text="$(cat <<EOF
+          ❌ <b>STRATUM QUANT ANALYTICS</b>
+          Optimizer run <b>FAILED</b>
+
+          🕐 ${TIMESTAMP}
+          ▸ Run #${{ github.run_number }}
+          ▸ Action required — check logs
+
+          <a href="${RUN_URL}">Investigate →</a>
+          EOF
+          )" > /dev/null
