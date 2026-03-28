@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
-
 import os
 import threading
 from pathlib import Path

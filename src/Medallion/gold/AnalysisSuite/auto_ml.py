@@ -4,13 +4,18 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    RandomForestRegressor,
+)
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import (
     add_volatility_regime_feature,
     aggregate_source_importance,
@@ -177,10 +182,7 @@ def auto_ml_regression(
             raw_values = np.abs(np.asarray(perm.importances_mean, dtype=float))
 
         total_importance = float(np.sum(raw_values)) or 1.0
-        feature_importance = {
-            feature: float(value / total_importance)
-            for feature, value in zip(model_features, raw_values)
-        }
+        feature_importance = {feature: float(value / total_importance) for feature, value in zip(model_features, raw_values)}
 
         prediction_frame = pd.DataFrame(
             {

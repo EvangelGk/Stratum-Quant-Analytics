@@ -4,8 +4,8 @@ import pandas as pd
 import statsmodels.api as sm
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
-from .mixed_frequency import prepare_supervised_frame, resolve_target_horizon
 
+from .mixed_frequency import prepare_supervised_frame, resolve_target_horizon
 
 PRESET_SCENARIOS: Dict[str, Dict[str, Any]] = {
     "geopolitical_conflict": {
@@ -140,9 +140,7 @@ def resolve_stress_scenario(
         "name": scenario_key,
         "description": scenario.get("description", "custom scenario"),
         "factor_shocks": base_shocks,
-        "correlation_breakdown_strength": float(
-            scenario.get("correlation_breakdown_strength", 0.25)
-        ),
+        "correlation_breakdown_strength": float(scenario.get("correlation_breakdown_strength", 0.25)),
         "mc_bias": scenario.get("mc_bias", {}),
         # sector_hint is None for non-sector-specific scenarios and for custom ones.
         # Downstream callers can use it to filter shocks to tickers in that sector.
@@ -201,9 +199,7 @@ def stress_test(
             start_date, end_date = anchor_windows[anchor_event]
             work_df = work_df.copy()
             work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
-            work_df = work_df[
-                work_df["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))
-            ].copy()
+            work_df = work_df[work_df["date"].between(pd.Timestamp(start_date), pd.Timestamp(end_date))].copy()
 
         scenario_payload = resolve_stress_scenario(
             scenario_name=scenario_name,
@@ -222,15 +218,7 @@ def stress_test(
         if sector_hint and direct_target_shock is not None:
             scope_matches = False
             if sector_column in work_df.columns:
-                scoped_values = (
-                    work_df[sector_column]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .str.lower()
-                    .unique()
-                    .tolist()
-                )
+                scoped_values = work_df[sector_column].dropna().astype(str).str.strip().str.lower().unique().tolist()
                 scope_matches = any(v == str(sector_hint).strip().lower() for v in scoped_values)
             sector_scope_match = bool(scope_matches)
             if not scope_matches:
@@ -249,9 +237,7 @@ def stress_test(
             macro_lag_days=macro_lag_days,
         )
         if len(panel) < 30:
-            raise DataValidationError(
-                "Insufficient transformed rows for stress test."
-            )
+            raise DataValidationError("Insufficient transformed rows for stress test.")
 
         results = {}
         for factor, shock in resolved_shocks.items():

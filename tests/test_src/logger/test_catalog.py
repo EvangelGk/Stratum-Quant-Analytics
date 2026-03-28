@@ -9,12 +9,8 @@ def test_catalog_logging_and_summary(tmp_path, monkeypatch):
 
     catalog = ApplicationCatalog(log_file="test_app.log")
     catalog.set_run_context("run-1", "corr-1")
-    catalog.log_operation(
-        "test_op", "test_component", {"foo": 1}, {"bar": 2}, "Test message"
-    )
-    catalog.log_data_operation(
-        "fetch", "yfinance", records=10, files=1, duration=0.1, success=True
-    )
+    catalog.log_operation("test_op", "test_component", {"foo": 1}, {"bar": 2}, "Test message")
+    catalog.log_data_operation("fetch", "yfinance", records=10, files=1, duration=0.1, success=True)
     catalog.log_error("test_component", "TestError", "failure", "test_op")
     catalog.log_sla_snapshot(
         "medallion",

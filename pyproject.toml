@@ -47,7 +47,7 @@ pre-commit = "^4.0.0"
 pytest-xdist = "^3.5.0"
 
 [tool.ruff]
-line-length = 88
+line-length = 160
 extend-exclude = ["notebooks/*.ipynb"]
 
 [tool.ruff.lint]
@@ -62,7 +62,7 @@ select = [
 quote-style = "double"
 
 [tool.black]
-line-length = 88
+line-length = 160
 
 [tool.mypy]
 python_version = "3.11"

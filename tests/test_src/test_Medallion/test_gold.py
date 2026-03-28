@@ -33,9 +33,7 @@ def test_run_all_analyses_with_stubbed_functions(monkeypatch):
     monkeypatch.setattr(gold_module, "lag_analysis", lambda df, a, b: {"lag_1": 0.1})
     monkeypatch.setattr(gold_module, "monte_carlo", lambda df, t, **kwargs: "mc")
     monkeypatch.setattr(gold_module, "stress_test", lambda df, m: {"shock": "ok"})
-    monkeypatch.setattr(
-        gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}}
-    )
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
 
     gold = gold_module.GoldLayer(DummyConfig())
     results = gold.run_all_analyses(
@@ -78,15 +76,9 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
 
     monkeypatch.setattr(gold_module, "correl_mtrx", lambda df: "corr")
     monkeypatch.setattr(gold_module, "lag_analysis", lambda df, f, lags: {"lag_1": 0.0})
-    monkeypatch.setattr(
-        gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}}
-    )
-    monkeypatch.setattr(
-        gold_module, "forecasting", lambda df, t, steps: pd.Series([0.0] * steps)
-    )
-    monkeypatch.setattr(
-        gold_module, "auto_ml_regression", lambda df, t, f: {"best_model": "X"}
-    )
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
+    monkeypatch.setattr(gold_module, "forecasting", lambda df, t, steps: pd.Series([0.0] * steps))
+    monkeypatch.setattr(gold_module, "auto_ml_regression", lambda df, t, f: {"best_model": "X"})
 
     # Stub the executor to avoid multiprocessing overhead
     class DummyFuture:
@@ -109,9 +101,7 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
         def submit(self, fn, *args, **kwargs):
             return DummyFuture(lambda: fn(*args, **kwargs))
 
-    monkeypatch.setattr(
-        gold_module.concurrent.futures, "ThreadPoolExecutor", DummyExecutor
-    )
+    monkeypatch.setattr(gold_module.concurrent.futures, "ThreadPoolExecutor", DummyExecutor)
 
     gold = gold_module.GoldLayer(DummyConfig())
     results = gold.run_all_analyses_parallel(
@@ -263,9 +253,7 @@ def test_governance_risk_band_warn(monkeypatch):
                 "log_return": [0.01, 0.01, 0.01, 0.01],
                 "inflation": [0.1, 0.2, 0.3, 0.4],
                 "energy_index": [0.2, 0.3, 0.4, 0.5],
-                "date": pd.to_datetime(
-                    ["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]
-                ),
+                "date": pd.to_datetime(["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]),
             }
         ),
     )
@@ -287,9 +275,7 @@ def test_governance_risk_band_warn(monkeypatch):
     monkeypatch.setattr(gold_module, "lag_analysis", lambda df, a, b: {"lag_1": 0.1})
     monkeypatch.setattr(gold_module, "monte_carlo", lambda df, t, **kwargs: "mc")
     monkeypatch.setattr(gold_module, "stress_test", lambda df, m: {"shock": "ok"})
-    monkeypatch.setattr(
-        gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}}
-    )
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
 
     cfg = DummyConfig()
     cfg.governance_hard_fail = True
@@ -325,9 +311,7 @@ def test_governance_decision_artifact_export(monkeypatch, tmp_path):
                 "log_return": [0.01, 0.01, 0.01, 0.01],
                 "inflation": [0.1, 0.2, 0.3, 0.4],
                 "energy_index": [0.2, 0.3, 0.4, 0.5],
-                "date": pd.to_datetime(
-                    ["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]
-                ),
+                "date": pd.to_datetime(["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]),
             }
         ),
     )
@@ -345,9 +329,7 @@ def test_governance_decision_artifact_export(monkeypatch, tmp_path):
     monkeypatch.setattr(gold_module, "lag_analysis", lambda df, a, b: {"lag_1": 0.1})
     monkeypatch.setattr(gold_module, "monte_carlo", lambda df, t, **kwargs: "mc")
     monkeypatch.setattr(gold_module, "stress_test", lambda df, m: {"shock": "ok"})
-    monkeypatch.setattr(
-        gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}}
-    )
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
 
     cfg = DummyConfig()
     cfg.governance_hard_fail = True
@@ -392,9 +374,7 @@ def test_read_governance_history(tmp_path):
             "gate": {"passed": True, "severity": "pass"},
             "report": {"model_risk_score": score},
         }
-        (gold.governance_path / f"governance_decision_{ts}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (gold.governance_path / f"governance_decision_{ts}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     history = gold.read_governance_history()
     assert len(history) == 2
@@ -422,9 +402,7 @@ def test_governance_trend_summary(tmp_path):
                 "walk_forward": {"avg_r2": 0.1},
             },
         }
-        (gold.governance_path / f"governance_decision_{1000000 + i}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (gold.governance_path / f"governance_decision_{1000000 + i}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     summary = gold.governance_trend_summary()
     assert summary["status"] == "ok"
@@ -463,9 +441,7 @@ def test_ticker_override_in_profile(monkeypatch):
         governance_model_risk_warn_threshold = 0.4
         governance_model_risk_fail_threshold = 0.6
         governance_walk_forward_windows = 4
-        governance_ticker_overrides = {
-            "AAPL": {"min_r2": 0.2, "max_model_risk_score": 0.3}
-        }
+        governance_ticker_overrides = {"AAPL": {"min_r2": 0.2, "max_model_risk_score": 0.3}}
         enforce_reproducibility = True
         random_seed = 42
 

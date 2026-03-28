@@ -17,9 +17,7 @@ class DataFactory:
     def __init__(self, fred_api_key: Optional[str] = None) -> None:
         self._disabled_reasons = {}
         if not fred_api_key:
-            self._disabled_reasons["fred"] = (
-                "FRED fetcher disabled: missing FRED_API_KEY credential"
-            )
+            self._disabled_reasons["fred"] = "FRED fetcher disabled: missing FRED_API_KEY credential"
         self._fetchers = {
             "yfinance": YFinanceFetcher(),
             "fred": FredFetcher(api_key=fred_api_key) if fred_api_key else None,

@@ -4,6 +4,7 @@ lab_sandbox.py — Real-time experiment workbench for Scenario Planner.
 Run with:   streamlit run lab_sandbox.py
 No commits needed — this is a standalone exploration tool.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,12 +18,14 @@ import streamlit as st
 # ── optional heavy deps ───────────────────────────────────────────────────────
 try:
     import yfinance as yf
+
     _HAS_YF = True
 except ImportError:
     _HAS_YF = False
 
 try:
     import fredapi
+
     _HAS_FRED = True
 except ImportError:
     _HAS_FRED = False
@@ -34,13 +37,15 @@ try:
     from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
+
     _HAS_SKLEARN = True
 except ImportError:
     _HAS_SKLEARN = False
 
 try:
     import plotly.express as px
-    import plotly.graph_objects as go
+    import plotly.graph_objects as go  # noqa: F401
+
     _HAS_PLOTLY = True
 except ImportError:
     _HAS_PLOTLY = False
@@ -79,6 +84,7 @@ PARAM_GRIDS = {
 
 
 # ── R² commentary ─────────────────────────────────────────────────────────────
+
 
 def quantos_r2_commentary(r2: float) -> str:
     """
@@ -121,6 +127,7 @@ def quantos_r2_commentary(r2: float) -> str:
 
 
 # ── data loaders ─────────────────────────────────────────────────────────────
+
 
 @st.cache_data(ttl=3600, show_spinner="Fetching price data…")
 def load_yfinance_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -174,9 +181,7 @@ def build_merged_frame(
     if price_df.empty or fred_df.empty:
         return pd.DataFrame()
     price_reset = price_df.reset_index().rename(columns={"Date": "date", "index": "date"})
-    fred_reset = fred_df.ffill(limit=lag_fill_limit).reset_index().rename(
-        columns={"index": "date", "DATE": "date"}
-    )
+    fred_reset = fred_df.ffill(limit=lag_fill_limit).reset_index().rename(columns={"index": "date", "DATE": "date"})
     price_reset["date"] = pd.to_datetime(price_reset["date"])
     fred_reset["date"] = pd.to_datetime(fred_reset["date"])
     merged = pd.merge_asof(
@@ -190,6 +195,7 @@ def build_merged_frame(
 
 
 # ── correlation heatmap ───────────────────────────────────────────────────────
+
 
 def compute_lag_correlations(
     merged: pd.DataFrame,
@@ -285,17 +291,20 @@ def render_heatmap_tab(sidebar: dict) -> None:
 
 # ── GridSearchCV tab ──────────────────────────────────────────────────────────
 
+
 def build_pipeline(model_name: str) -> Optional["Pipeline"]:
     if not _HAS_SKLEARN:
         return None
     model = MODEL_REGISTRY.get(model_name)
     if model is None:
         return None
-    return Pipeline([
-        ("imputer", SimpleImputer(strategy="mean")),
-        ("scaler", StandardScaler()),
-        ("model", model),
-    ])
+    return Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="mean")),
+            ("scaler", StandardScaler()),
+            ("model", model),
+        ]
+    )
 
 
 def run_grid_search(
@@ -455,6 +464,7 @@ def render_gridsearch_tab(sidebar: dict) -> None:
 
 # ── Diagnostics tab ───────────────────────────────────────────────────────────
 
+
 def render_diagnostics_tab() -> None:
     st.header("Pipeline Diagnostics")
 
@@ -472,7 +482,7 @@ def render_diagnostics_tab() -> None:
 
     analysis = _load(result_path)
     gov = _load(gov_path)
-    audit = _load(audit_path)
+    _load(audit_path)
 
     col1, col2 = st.columns(2)
 
@@ -568,13 +578,11 @@ def render_diagnostics_tab() -> None:
             st.write(f"- {lf}")
 
     if not any([oos_r2, baseline, fc, wf, freshness, stat, leakage]):
-        st.info(
-            "No diagnostic data found. Run the pipeline (main.py or the Streamlit UI) to generate output files, "
-            f"then check the `{OUTPUT_DIR}` directory."
-        )
+        st.info(f"No diagnostic data found. Run the pipeline (main.py or the Streamlit UI) to generate output files, then check the `{OUTPUT_DIR}` directory.")
 
 
 # ── sidebar ───────────────────────────────────────────────────────────────────
+
 
 def build_sidebar() -> dict:
     st.sidebar.title("Lab Sandbox Settings")
@@ -616,6 +624,7 @@ def build_sidebar() -> dict:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     st.set_page_config(
         page_title="Scenario Planner — Lab Sandbox",
@@ -623,21 +632,20 @@ def main() -> None:
         layout="wide",
     )
     st.title("🔬 Lab Sandbox — Real-time Experiment Workbench")
-    st.caption(
-        "Standalone exploration tool. No commits required. "
-        "Use the sidebar to configure data sources and model parameters."
-    )
+    st.caption("Standalone exploration tool. No commits required. Use the sidebar to configure data sources and model parameters.")
 
     if not _HAS_SKLEARN:
         st.error("scikit-learn is not installed. Run: pip install scikit-learn")
 
     sidebar = build_sidebar()
 
-    tab_heatmap, tab_gs, tab_diag = st.tabs([
-        "🌡️ Correlation Heatmap",
-        "🔍 GridSearchCV",
-        "📋 Diagnostics",
-    ])
+    tab_heatmap, tab_gs, tab_diag = st.tabs(
+        [
+            "🌡️ Correlation Heatmap",
+            "🔍 GridSearchCV",
+            "📋 Diagnostics",
+        ]
+    )
 
     with tab_heatmap:
         render_heatmap_tab(sidebar)

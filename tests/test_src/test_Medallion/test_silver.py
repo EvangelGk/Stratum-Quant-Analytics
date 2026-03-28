@@ -17,39 +17,27 @@ def test_standardize_and_impute_and_audit_columns(silver_layer):
 
     # Test _standardize: date alignment and unit normalization
     df = pd.DataFrame({"Date": ["2020-01-01", "2020-02-01"], "Value": [200.0, 300.0]})
-    standardized, unit_norm, temporal_aligned = silver_layer._standardize(
-        df.copy(), "fred", "inflation"
-    )
+    standardized, unit_norm, temporal_aligned = silver_layer._standardize(df.copy(), "fred", "inflation")
     assert temporal_aligned is True
     assert unit_norm is True
     assert standardized["value"].max() <= 3.0
 
     # Non-percentage indicators must not be divided by 100 automatically.
-    non_pct_df = pd.DataFrame(
-        {"Date": ["2020-01-01", "2020-02-01"], "Value": [200.0, 300.0]}
-    )
-    standardized_non_pct, non_pct_norm, _ = silver_layer._standardize(
-        non_pct_df.copy(), "fred", "energy_index"
-    )
+    non_pct_df = pd.DataFrame({"Date": ["2020-01-01", "2020-02-01"], "Value": [200.0, 300.0]})
+    standardized_non_pct, non_pct_norm, _ = silver_layer._standardize(non_pct_df.copy(), "fred", "energy_index")
     assert non_pct_norm is False
     assert standardized_non_pct["value"].max() >= 200.0
 
     # Test _impute: should fill missing values and compute imputed count
-    df2 = pd.DataFrame(
-        {"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]}
-    )
-    imputed_df, imputed_count, outliers, max_col_null_pct = silver_layer._impute(
-        df2.copy(), "fred"
-    )
+    df2 = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]})
+    imputed_df, imputed_count, outliers, max_col_null_pct = silver_layer._impute(df2.copy(), "fred")
     assert imputed_count >= 1
     assert outliers >= 0
     assert isinstance(max_col_null_pct, float)
     assert not imputed_df.isnull().any().any()
 
     # Test audit columns
-    audited = silver_layer._add_audit_columns(
-        imputed_df, "file", "fred", imputed_count, 2, 1, outliers
-    )
+    audited = silver_layer._add_audit_columns(imputed_df, "file", "fred", imputed_count, 2, 1, outliers)
     for col in [
         "processed_at",
         "silver_run_id",
@@ -74,9 +62,7 @@ def test_load_catalog_reads_file(silver_layer):
 
 
 def test_save_to_silver_creates_parquet(silver_layer):
-    df = pd.DataFrame(
-        {"date": pd.to_datetime(["2020-01-01"]), "value": [1.0], "category": ["A"]}
-    )
+    df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01"]), "value": [1.0], "category": ["A"]})
     silver_layer._save_to_silver(df, "file", "fred")
     out_path = silver_layer.processed_path / "fred" / "file_silver.parquet"
     assert out_path.exists()
@@ -84,17 +70,13 @@ def test_save_to_silver_creates_parquet(silver_layer):
 
 def test_preflight_contract_checks_raises_for_empty_df(silver_layer):
     with pytest.raises(ComplianceViolationError):
-        silver_layer._preflight_contract_checks(
-            pd.DataFrame(), "fred", "inflation", {"rows": 100, "path": "x"}
-        )
+        silver_layer._preflight_contract_checks(pd.DataFrame(), "fred", "inflation", {"rows": 100, "path": "x"})
 
 
 def test_preflight_contract_checks_raises_for_schema_drift(silver_layer):
     drifted = pd.DataFrame({"Date": ["2020-01-01"], "bad_col": [1]})
     with pytest.raises(Exception):
-        silver_layer._preflight_contract_checks(
-            drifted, "fred", "inflation", {"rows": 10, "path": "x"}
-        )
+        silver_layer._preflight_contract_checks(drifted, "fred", "inflation", {"rows": 10, "path": "x"})
 
 
 def test_dynamic_threshold_uses_history(silver_layer):

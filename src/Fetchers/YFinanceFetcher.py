@@ -10,6 +10,7 @@ from .BaseFetcher import BaseFetcher
 
 class YFinanceFetcher(BaseFetcher):
     import yfinance as yf
+
     CACHE_SCHEMA_VERSION = "v4"  # bumped: AUTO_ADJUST changed False→True
     CACHE_TTL_SECONDS: int = 86400  # Daily market data; 24-hour TTL
     FETCH_INTERVAL = "1d"
@@ -32,13 +33,8 @@ class YFinanceFetcher(BaseFetcher):
             "auto_adjust": self.AUTO_ADJUST,
             "normalizer": "ohlcv-v1",
         }
-        cache_profile_hash = hashlib.sha256(
-            json.dumps(cache_profile, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
-        key = (
-            f"yfinance_{self.CACHE_SCHEMA_VERSION}_"
-            f"{ticker}_{cache_profile_hash}"
-        )
+        cache_profile_hash = hashlib.sha256(json.dumps(cache_profile, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        key = f"yfinance_{self.CACHE_SCHEMA_VERSION}_{ticker}_{cache_profile_hash}"
         try:
             cached = self._get_cached(key)
             if cached is not None:
@@ -155,9 +151,7 @@ class YFinanceFetcher(BaseFetcher):
 
         work = df.copy()
         for col_name in list(dict.fromkeys(work.columns)):
-            duplicated_positions = [
-                idx for idx, name in enumerate(work.columns) if name == col_name
-            ]
+            duplicated_positions = [idx for idx, name in enumerate(work.columns) if name == col_name]
             if len(duplicated_positions) <= 1:
                 continue
             dup_block = work.iloc[:, duplicated_positions]

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
 Quick verification tool — run this before your next optimizer run to confirm
 that Telegram notifications are working correctly.
@@ -24,9 +24,10 @@ from pathlib import Path
 # Load .env from project root
 try:
     from dotenv import load_dotenv
+
     env_file = Path(__file__).parent / ".env"
     if env_file.exists():
-        load_dotenv(env_file, override=True)   # override=True: always re-read from file
+        load_dotenv(env_file, override=True)  # override=True: always re-read from file
         print(f"[INFO] Loaded .env from {env_file}")
     else:
         print(f"[WARN] No .env file found at {env_file}")
@@ -55,7 +56,7 @@ else:
 
 if not chat_id:
     print("[FAIL] TELEGRAM_CHAT_ID is empty in .env")
-    print(f"       → Message your bot in Telegram, then open:")
+    print("       → Message your bot in Telegram, then open:")
     print(f"         https://api.telegram.org/bot{bot_token}/getUpdates")
     print('         Find: "chat": {"id": YOUR_NUMBER}  and paste that number')
     sys.exit(1)
@@ -80,7 +81,7 @@ try:
         timeout=10,
     )
     if resp.status_code == 200:
-        print(f"[OK]  Message sent successfully! (HTTP 200)")
+        print("[OK]  Message sent successfully! (HTTP 200)")
         print("      Check your Telegram app now.")
     else:
         data = resp.json()
@@ -104,5 +105,3 @@ print()
 print("=" * 50)
 print("All checks passed. Notifications will work for the optimizer.")
 print("=" * 50)
-
-

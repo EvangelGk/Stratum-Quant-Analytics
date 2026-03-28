@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import prepare_supervised_frame
 
 
@@ -46,9 +47,7 @@ def lag_analysis(
     """
     try:
         if column not in df.columns or target not in df.columns:
-            raise DataValidationError(
-                f"Columns {column} or {target} not found in DataFrame."
-            )
+            raise DataValidationError(f"Columns {column} or {target} not found in DataFrame.")
 
         if lags < 1:
             raise DataValidationError("Lags must be at least 1.")
@@ -69,9 +68,7 @@ def lag_analysis(
         target_series = panel[target]
         factor_series = panel[column]
         for lag_days in range(0, lags + 1):
-            aligned = pd.concat(
-                [target_series, factor_series.shift(lag_days)], axis=1
-            ).dropna()
+            aligned = pd.concat([target_series, factor_series.shift(lag_days)], axis=1).dropna()
             if len(aligned) < 20:
                 correlation = None
             else:
@@ -82,17 +79,11 @@ def lag_analysis(
                 "correlation": correlation,
             }
             lag_table.append(row)
-            if isinstance(correlation, float) and abs(correlation) > abs(
-                float(best_row.get("correlation") or 0.0)
-            ):
+            if isinstance(correlation, float) and abs(correlation) > abs(float(best_row.get("correlation") or 0.0)):
                 best_row = row
 
         reference_row = next(
-            (
-                row
-                for row in lag_table
-                if int(row.get("lag_days", -1)) == int(reference_lag_days)
-            ),
+            (row for row in lag_table if int(row.get("lag_days", -1)) == int(reference_lag_days)),
             {"lag_days": reference_lag_days, "correlation": None},
         )
 

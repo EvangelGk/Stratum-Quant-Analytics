@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 import json
-from functools import lru_cache
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -124,11 +124,7 @@ def record_ui_snapshot() -> None:
             "output_files": [{"name": f.name, "size": f.stat().st_size} for f in output_files],
             "result_keys": summary.get("result_keys", []),
             "governance_risk": (summary.get("results", {}).get("governance_report", {}) or {}).get("model_risk_score"),
-            "quality_failed_files": sum(
-                1
-                for v in (quality.get("files", {}) or {}).values()
-                if isinstance(v, dict) and v.get("status") == "failed"
-            ),
+            "quality_failed_files": sum(1 for v in (quality.get("files", {}) or {}).values() if isinstance(v, dict) and v.get("status") == "failed"),
         }
     )
     snapshots = snapshots[-120:]
@@ -256,9 +252,7 @@ def build_explainability_lines() -> list[str]:
         static_ela = ela
     if isinstance(static_ela, (int, float)):
         direction = "increases" if static_ela >= 0 else "decreases"
-        lines.append(
-            f"Elasticity: {static_ela:.3f} (returns tend to {direction} as factor rises)."
-        )
+        lines.append(f"Elasticity: {static_ela:.3f} (returns tend to {direction} as factor rises).")
 
     if not lines:
         lines.append("No explainability signals available yet.")
@@ -300,13 +294,7 @@ def build_executive_report_html() -> str:
                             highlight = f"Matrix {shape[0]}x{shape[1]}"
             elif isinstance(value, (int, float)):
                 highlight = f"Value={value:.4f}" if isinstance(value, float) else f"Value={value}"
-            analysis_rows.append(
-                "<tr>"
-                f"<td>{key}</td>"
-                f"<td>{status}</td>"
-                f"<td>{highlight or '-'}</td>"
-                "</tr>"
-            )
+            analysis_rows.append(f"<tr><td>{key}</td><td>{status}</td><td>{highlight or '-'}</td></tr>")
 
     diff_html = "Not enough run history yet."
     if diff.get("status") == "ok":
@@ -323,11 +311,7 @@ def build_executive_report_html() -> str:
         f"<tbody>{''.join(analysis_rows) if analysis_rows else '<tr><td colspan=3>No analyses found.</td></tr>'}</tbody></table>"
     )
 
-    runtime_delta_text = (
-        f"{diff['duration_delta']:+.2f}s"
-        if diff.get("status") == "ok"
-        else "N/A"
-    )
+    runtime_delta_text = f"{diff['duration_delta']:+.2f}s" if diff.get("status") == "ok" else "N/A"
 
     return f"""
 <html>
@@ -357,7 +341,7 @@ def build_executive_report_html() -> str:
             </div>
 
             <div class='cards'>
-                <div class='card'><h3>Data Health</h3><div><b>{health['score']}/100</b> ({health['status']})</div></div>
+                <div class='card'><h3>Data Health</h3><div><b>{health["score"]}/100</b> ({health["status"]})</div></div>
                 <div class='card'><h3>Analyses</h3><div><b>{len(keys)}</b> generated outputs</div></div>
                 <div class='card'><h3>Runtime Delta</h3><div>{runtime_delta_text}</div></div>
             </div>
@@ -383,57 +367,55 @@ def build_executive_report_html() -> str:
 
 
 def build_executive_report_text() -> str:
-        health = compute_data_health()
-        diff = build_run_comparison()
-        summary = read_json(OUTPUT_DIR / "analysis_results.json")
-        keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
-        lines = [
-                "STRATUM QUANT ANALYTICS - Human Report Snapshot",
-                f"Generated: {datetime.now().isoformat()}",
-                "",
-                f"Data Health: {health['score']}/100 ({health['status']})",
-                f"Analyses generated: {len(keys)}",
-        ]
-        if diff.get("status") == "ok":
-                lines.append(
-                        f"Runtime: {diff['duration_prev']:.2f}s -> {diff['duration_curr']:.2f}s (delta {diff['duration_delta']:+.2f}s)"
-                )
-        lines.append("")
-        lines.append("Explainability")
-        for line in build_explainability_lines():
-                lines.append(f"- {line}")
-        lines.append("")
-        lines.append("Analyses")
-        for key in keys:
-                lines.append(f"- {key}")
-        return "\n".join(lines)
+    health = compute_data_health()
+    diff = build_run_comparison()
+    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
+    lines = [
+        "STRATUM QUANT ANALYTICS - Human Report Snapshot",
+        f"Generated: {datetime.now().isoformat()}",
+        "",
+        f"Data Health: {health['score']}/100 ({health['status']})",
+        f"Analyses generated: {len(keys)}",
+    ]
+    if diff.get("status") == "ok":
+        lines.append(f"Runtime: {diff['duration_prev']:.2f}s -> {diff['duration_curr']:.2f}s (delta {diff['duration_delta']:+.2f}s)")
+    lines.append("")
+    lines.append("Explainability")
+    for line in build_explainability_lines():
+        lines.append(f"- {line}")
+    lines.append("")
+    lines.append("Analyses")
+    for key in keys:
+        lines.append(f"- {key}")
+    return "\n".join(lines)
 
 
 def persist_human_report_files() -> dict[str, str]:
-        reports_dir = OUTPUT_DIR / "human_reports"
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    reports_dir = OUTPUT_DIR / "human_reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        html = build_executive_report_html()
-        text_report = build_executive_report_text()
+    html = build_executive_report_html()
+    text_report = build_executive_report_text()
 
-        html_latest = reports_dir / "executive_report_latest.html"
-        txt_latest = reports_dir / "executive_report_latest.txt"
-        html_versioned = reports_dir / f"executive_report_{stamp}.html"
-        txt_versioned = reports_dir / f"executive_report_{stamp}.txt"
+    html_latest = reports_dir / "executive_report_latest.html"
+    txt_latest = reports_dir / "executive_report_latest.txt"
+    html_versioned = reports_dir / f"executive_report_{stamp}.html"
+    txt_versioned = reports_dir / f"executive_report_{stamp}.txt"
 
-        html_latest.write_text(html, encoding="utf-8")
-        txt_latest.write_text(text_report, encoding="utf-8")
-        html_versioned.write_text(html, encoding="utf-8")
-        txt_versioned.write_text(text_report, encoding="utf-8")
+    html_latest.write_text(html, encoding="utf-8")
+    txt_latest.write_text(text_report, encoding="utf-8")
+    html_versioned.write_text(html, encoding="utf-8")
+    txt_versioned.write_text(text_report, encoding="utf-8")
 
-        return {
-                "reports_dir": str(reports_dir),
-                "html_latest": str(html_latest),
-                "txt_latest": str(txt_latest),
-                "html_versioned": str(html_versioned),
-                "txt_versioned": str(txt_versioned),
-        }
+    return {
+        "reports_dir": str(reports_dir),
+        "html_latest": str(html_latest),
+        "txt_latest": str(txt_latest),
+        "html_versioned": str(html_versioned),
+        "txt_versioned": str(txt_versioned),
+    }
 
 
 def build_smart_alerts() -> list[dict[str, str]]:
@@ -476,5 +458,3 @@ def correlation_strength_from_output() -> float | None:
         return float(curr_df[numeric_cols].abs().mean().mean())
     except Exception:
         return None
-
-

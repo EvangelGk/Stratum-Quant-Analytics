@@ -93,11 +93,13 @@ def _render_check_summary_table(report: dict, label_map: dict) -> None:
     for name, result in report.get("checks", {}).items():
         status_code = str(result.get("status", "warn"))
         n_issues = len(result.get("issues", [])) + len(result.get("reasons", []))
-        rows.append({
-            "Check": label_map.get(name, name.capitalize()),
-            "Result": icon_status.get(status_code, f"\u2753 {status_code}"),
-            "Advisory items": n_issues if n_issues else "\u2014",
-        })
+        rows.append(
+            {
+                "Check": label_map.get(name, name.capitalize()),
+                "Result": icon_status.get(status_code, f"\u2753 {status_code}"),
+                "Advisory items": n_issues if n_issues else "\u2014",
+            }
+        )
     if rows:
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
@@ -210,9 +212,7 @@ def show_auditor_tab() -> None:
             with st.spinner("Running audit..."):
                 fresh_report = run_and_cache_audit()
             if isinstance(fresh_report, dict) and str(fresh_report.get("status", "")).upper() == "ERROR":
-                st.session_state["audit_last_run_message"] = (
-                    "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
-                )
+                st.session_state["audit_last_run_message"] = "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
             else:
                 st.session_state["audit_last_run_message"] = "Audit re-run completed and saved."
             st.rerun()
@@ -243,14 +243,16 @@ def show_auditor_tab() -> None:
         tab_sources,
         tab_outputs,
         tab_export,
-    ) = st.tabs([
-        "\U0001f4cb Overview",
-        "\U0001f6e1\ufe0f Governance & Model",
-        "\U0001f4ca Data Quality",
-        "\U0001f517 Sources & Coverage",
-        "\u2699\ufe0f Outputs & Thresholds",
-        "\U0001f4e5 Export",
-    ])
+    ) = st.tabs(
+        [
+            "\U0001f4cb Overview",
+            "\U0001f6e1\ufe0f Governance & Model",
+            "\U0001f4ca Data Quality",
+            "\U0001f517 Sources & Coverage",
+            "\u2699\ufe0f Outputs & Thresholds",
+            "\U0001f4e5 Export",
+        ]
+    )
 
     # ── Tab 1 · Overview ─────────────────────────────────────────────────────
     with tab_overview:
@@ -266,8 +268,7 @@ def show_auditor_tab() -> None:
         if not report_is_complete:
             tl_desc = "The loaded audit report is incomplete or stale. Reload the saved audit artifact or re-run the audit."
         st.markdown(
-            badge_html(tl_label, tl_color, tl_desc)
-            + f"&nbsp; <span style='font-size:1.05rem;color:#555'>{tl_desc}</span>",
+            badge_html(tl_label, tl_color, tl_desc) + f"&nbsp; <span style='font-size:1.05rem;color:#555'>{tl_desc}</span>",
             unsafe_allow_html=True,
         )
         st.markdown("")
@@ -275,9 +276,7 @@ def show_auditor_tab() -> None:
         failed_checks = report.get("failed_checks", [])
         warning_checks = report.get("warning_checks", [])
         n_failed = len(failed_checks)
-        dr_color, dr_label, dr_desc = score_decision_ready(
-            bool(report.get("decision_ready")), failed_count=n_failed
-        )
+        dr_color, dr_label, dr_desc = score_decision_ready(bool(report.get("decision_ready")), failed_count=n_failed)
         row_count = report.get("row_count")
         column_count = report.get("column_count")
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -288,10 +287,7 @@ def show_auditor_tab() -> None:
         c5.metric("Warning Checks", len(warning_checks))
 
         if not report_is_complete:
-            st.warning(
-                "The audit report loaded in the UI is incomplete or stale. "
-                "Success messaging is suppressed until a complete report is available."
-            )
+            st.warning("The audit report loaded in the UI is incomplete or stale. Success messaging is suppressed until a complete report is available.")
         if failed_checks:
             check_names = ", ".join(_LABEL_MAP.get(c, c) for c in failed_checks)
             if n_failed <= 2:
@@ -342,9 +338,7 @@ def show_auditor_tab() -> None:
             with st.spinner("Running audit..."):
                 fresh_report = run_and_cache_audit()
             if isinstance(fresh_report, dict) and str(fresh_report.get("status", "")).upper() == "ERROR":
-                st.session_state["audit_last_run_message"] = (
-                    "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
-                )
+                st.session_state["audit_last_run_message"] = "Audit re-run failed: " + str(fresh_report.get("error", "unknown error"))
             else:
                 st.session_state["audit_last_run_message"] = "Audit re-run completed and saved."
             st.rerun()
@@ -457,10 +451,7 @@ def show_auditor_tab() -> None:
                     st.markdown(f"- {finding}")
 
             if gov.get("likely_over_strict"):
-                st.warning(
-                    "\U0001f52c Governance appears methodologically valid but conservative for "
-                    "this mixed-frequency data regime."
-                )
+                st.warning("\U0001f52c Governance appears methodologically valid but conservative for this mixed-frequency data regime.")
 
             interpretation = gov.get("interpretation", [])
             if interpretation:
@@ -538,14 +529,13 @@ def show_auditor_tab() -> None:
                     dyn_gap = result.get("allowed_gap")
                     if cfg_gap is not None and dyn_gap is not None and dyn_gap != cfg_gap:
                         cadence_name = (
-                            "monthly" if (result.get("detected_baseline_gap") or 0) >= 15
-                            else "weekly" if (result.get("detected_baseline_gap") or 0) >= 4
+                            "monthly"
+                            if (result.get("detected_baseline_gap") or 0) >= 15
+                            else "weekly"
+                            if (result.get("detected_baseline_gap") or 0) >= 4
                             else "daily"
                         )
-                        st.info(
-                            f"Auto-detected **{cadence_name}** cadence \u2014 threshold scaled "
-                            f"from {cfg_gap} \u2192 **{dyn_gap}** business days."
-                        )
+                        st.info(f"Auto-detected **{cadence_name}** cadence \u2014 threshold scaled from {cfg_gap} \u2192 **{dyn_gap}** business days.")
                     if result.get("duplicate_rows_removed", 0):
                         st.warning(f"Duplicate rows removed: {result.get('duplicate_rows_removed')}")
                     fg = result.get("failed_groups", [])
@@ -605,12 +595,14 @@ def show_auditor_tab() -> None:
                         coverage_rows = []
                         for source, value in metrics.items():
                             cov_c, cov_l, _ = score_source_coverage(value)
-                            coverage_rows.append({
-                                "Source": source,
-                                "Row coverage %": _fmt_pct(value),
-                                "Cell fill %": _fmt_pct(cell_fill.get(source) if isinstance(cell_fill, dict) else None),
-                                "Status": cov_l,
-                            })
+                            coverage_rows.append(
+                                {
+                                    "Source": source,
+                                    "Row coverage %": _fmt_pct(value),
+                                    "Cell fill %": _fmt_pct(cell_fill.get(source) if isinstance(cell_fill, dict) else None),
+                                    "Status": cov_l,
+                                }
+                            )
                         st.dataframe(pd.DataFrame(coverage_rows), width="stretch")
                     breadth = result.get("breadth", {})
                     if isinstance(breadth, dict) and breadth:
@@ -618,12 +610,14 @@ def show_auditor_tab() -> None:
                         b_rows = []
                         for source, payload_b in breadth.items():
                             if isinstance(payload_b, dict):
-                                b_rows.append({
-                                    "Source": source,
-                                    "Expected": payload_b.get("expected", 0),
-                                    "Observed": payload_b.get("observed", 0),
-                                    "Coverage ratio": payload_b.get("ratio", 0),
-                                })
+                                b_rows.append(
+                                    {
+                                        "Source": source,
+                                        "Expected": payload_b.get("expected", 0),
+                                        "Observed": payload_b.get("observed", 0),
+                                        "Coverage ratio": payload_b.get("ratio", 0),
+                                    }
+                                )
                         if b_rows:
                             st.dataframe(pd.DataFrame(b_rows), width="stretch")
 
@@ -732,10 +726,7 @@ def show_auditor_tab() -> None:
             "warning_checks": report.get("warning_checks", []),
             "decision_ready": report.get("decision_ready"),
             "auditor_judgement": report.get("auditor_judgement", {}),
-            "governance_advisory_reasons": [
-                _decode_reason(r)
-                for r in report.get("checks", {}).get("governance", {}).get("reasons", [])
-            ],
+            "governance_advisory_reasons": [_decode_reason(r) for r in report.get("checks", {}).get("governance", {}).get("reasons", [])],
             "governance_metrics": report.get("checks", {}).get("governance", {}).get("metrics", {}),
         },
         key_suffix="auditor",
@@ -774,12 +765,8 @@ def show_ops_tab(role: str) -> None:
         disabled=not ROLE_PERMISSIONS[role]["can_schedule"],
     )
     c1, c2 = st.columns(2)
-    hour = c1.number_input(
-        "Hour (24h)", min_value=0, max_value=23, value=hour_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"]
-    )
-    minute = c2.number_input(
-        "Minute", min_value=0, max_value=59, value=minute_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"]
-    )
+    hour = c1.number_input("Hour (24h)", min_value=0, max_value=23, value=hour_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"])
+    minute = c2.number_input("Minute", min_value=0, max_value=59, value=minute_default, step=1, disabled=not ROLE_PERMISSIONS[role]["can_schedule"])
     if st.button("Save schedule", disabled=not ROLE_PERMISSIONS[role]["can_schedule"]):
         payload = {
             "enabled": enabled,

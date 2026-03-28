@@ -5,6 +5,7 @@ import pandas as pd
 from scipy.stats import norm
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import filter_to_ticker
 
 
@@ -55,9 +56,7 @@ def monte_carlo(
     """
     try:
         if "ticker" not in df.columns or "close" not in df.columns:
-            raise DataValidationError(
-                "DataFrame must contain 'ticker' and 'close' columns."
-            )
+            raise DataValidationError("DataFrame must contain 'ticker' and 'close' columns.")
 
         scoped = filter_to_ticker(df, ticker=ticker)
         if scoped.empty:
@@ -74,17 +73,13 @@ def monte_carlo(
         if returns.empty:
             raise DataValidationError("Insufficient data to compute returns.")
 
-        current_daily_vol = float(
-            returns.ewm(span=30, min_periods=15).std().iloc[-1]
-        )
+        current_daily_vol = float(returns.ewm(span=30, min_periods=15).std().iloc[-1])
         base_mu = float(returns.mean())
         base_sigma = float(returns.std())
         if not np.isfinite(current_daily_vol) or current_daily_vol <= 0:
             current_daily_vol = base_sigma
         if not np.isfinite(current_daily_vol) or current_daily_vol <= 0:
-            raise DataValidationError(
-                "Cannot estimate daily volatility for Monte Carlo simulation."
-            )
+            raise DataValidationError("Cannot estimate daily volatility for Monte Carlo simulation.")
         scenario_label = str(macro_scenario or "auto_detected").lower()
 
         scenario_mu = base_mu
@@ -128,15 +123,12 @@ def monte_carlo(
         jump_shock = float(bias.get("jump_shock", 0.0))
 
         rng = np.random.default_rng(random_state)
-        shocks = np.exp(
-            (adjusted_mu - 0.5 * adjusted_sigma**2)
-            + adjusted_sigma * rng.normal(0, 1, (days, iterations))
-        )
+        shocks = np.exp((adjusted_mu - 0.5 * adjusted_sigma**2) + adjusted_sigma * rng.normal(0, 1, (days, iterations)))
         if jump_shock != 0.0:
             # Apply the jump to the first-day shock factor BEFORE cumprod so
             # the step-down propagates coherently through all subsequent paths.
             # Patching price_paths[0] after cumprod would leave day 2+ unaffected.
-            shocks[0, :] *= (1.0 + jump_shock)
+            shocks[0, :] *= 1.0 + jump_shock
 
         price_paths = last_price * shocks.cumprod(axis=0)
         if not np.isfinite(price_paths).all():

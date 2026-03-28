@@ -96,12 +96,8 @@ def show_scenario_builder_tab() -> None:
     )
     if selected_preset != "custom" and selected_preset in _PRESETS:
         preset_meta = _PRESETS[selected_preset]
-        st.info(
-            f"**{selected_preset.replace('_', ' ').title()}** — {preset_meta['description']}"
-        )
-        shocks_preview = ", ".join(
-            f"{k}: {v:+.1%}" for k, v in preset_meta["factor_shocks"].items()
-        )
+        st.info(f"**{selected_preset.replace('_', ' ').title()}** — {preset_meta['description']}")
+        shocks_preview = ", ".join(f"{k}: {v:+.1%}" for k, v in preset_meta["factor_shocks"].items())
         st.caption(f"Preset factor shocks: {shocks_preview}")
 
     st.divider()

@@ -1,4 +1,4 @@
-﻿# Directions Messages
+# Directions Messages
 # Live step-by-step guidance messages that appear during application execution
 
 APPLICATION_TITLE = """
@@ -304,5 +304,3 @@ AVAILABLE ANALYSES:
 
 Each analysis provides specific insights for scenario planning.
 """
-
-

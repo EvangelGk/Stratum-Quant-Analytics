@@ -1,4 +1,4 @@
-﻿import importlib
+import importlib
 import json
 import logging
 import os
@@ -25,12 +25,8 @@ def _load_project_symbol(module_name: str, symbol_name: str) -> Any:
 
 
 ProjectConfig = _load_project_symbol("Fetchers.ProjectConfig", "ProjectConfig")
-EXPECTED_SOURCES = _load_project_symbol(
-    "Medallion.silver.contracts", "EXPECTED_SOURCES"
-) or {"yfinance", "fred", "worldbank"}
-SOURCE_CONTRACTS = _load_project_symbol(
-    "Medallion.silver.contracts", "SOURCE_CONTRACTS"
-) or {}
+EXPECTED_SOURCES = _load_project_symbol("Medallion.silver.contracts", "EXPECTED_SOURCES") or {"yfinance", "fred", "worldbank"}
+SOURCE_CONTRACTS = _load_project_symbol("Medallion.silver.contracts", "SOURCE_CONTRACTS") or {}
 
 
 class ScenarioAuditor:
@@ -56,11 +52,7 @@ class ScenarioAuditor:
         self.quality_history_path = self.processed_path / "quality_history.jsonl"
         self.governance_dir = self.gold_dir / "governance"
         self.gold_contract_path = self.gold_dir / "master_table_contract.json"
-        self.gold_path = (
-            Path(gold_path)
-            if gold_path
-            else self.gold_dir / "master_table.parquet"
-        )
+        self.gold_path = Path(gold_path) if gold_path else self.gold_dir / "master_table.parquet"
         self.logger = logging.getLogger("ScenarioAuditor")
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
         self.config = self._load_config()
@@ -401,9 +393,7 @@ class ScenarioAuditor:
                 "zero_var_columns": [],
                 "all_zero_columns": [],
                 "issues": ["no_rows_in_gold_table"],
-                "interpretation": (
-                    "No analytical rows were produced, so density cannot support decision use."
-                ),
+                "interpretation": ("No analytical rows were produced, so density cannot support decision use."),
             }
 
         total_cells = max(df.shape[0] * df.shape[1], 1)
@@ -418,11 +408,7 @@ class ScenarioAuditor:
         }
         candidate_cols = [c for c in numeric_df.columns if c not in audit_columns]
         zero_var_cols = [col for col in candidate_cols if numeric_df[col].dropna().std() == 0]
-        all_zero_cols = [
-            col
-            for col in candidate_cols
-            if not numeric_df[col].dropna().empty and float(numeric_df[col].abs().sum()) == 0.0
-        ]
+        all_zero_cols = [col for col in candidate_cols if not numeric_df[col].dropna().empty and float(numeric_df[col].abs().sum()) == 0.0]
         row_non_null_pct = float(df.notnull().any(axis=1).mean() * 100.0) if len(df) else 0.0
         issues: List[str] = []
 
@@ -455,9 +441,7 @@ class ScenarioAuditor:
                 "row_non_null_pct": round(row_non_null_pct, 2),
                 "zero_var_count": len(zero_var_cols),
             },
-            "interpretation": (
-                "Checks whether the analytical table is dense enough to support modelling and whether numeric features are effectively dead."
-            ),
+            "interpretation": ("Checks whether the analytical table is dense enough to support modelling and whether numeric features are effectively dead."),
         }
 
     def _check_stats(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -506,9 +490,7 @@ class ScenarioAuditor:
             "status": status,
             "issues": issues,
             "metrics": metrics,
-            "interpretation": (
-                "Checks whether prices, returns and quality scores look economically plausible rather than purely syntactically valid."
-            ),
+            "interpretation": ("Checks whether prices, returns and quality scores look economically plausible rather than purely syntactically valid."),
         }
 
     def check_temporal_continuity(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -552,9 +534,7 @@ class ScenarioAuditor:
             }
 
         duplicate_rows = int(work.duplicated(subset=["date", "ticker"]).sum())
-        work = work.drop_duplicates(subset=["date", "ticker"]).sort_values(
-            ["ticker", "date"]
-        )
+        work = work.drop_duplicates(subset=["date", "ticker"]).sort_values(["ticker", "date"])
 
         per_group: Dict[str, Dict[str, Any]] = {}
         failed_groups: List[str] = []
@@ -563,10 +543,7 @@ class ScenarioAuditor:
         def _detect_cadence(dates: List[pd.Timestamp]) -> str:
             if len(dates) < 3:
                 return "business_day"
-            month_deltas = [
-                (dates[i].year - dates[i - 1].year) * 12 + (dates[i].month - dates[i - 1].month)
-                for i in range(1, len(dates))
-            ]
+            month_deltas = [(dates[i].year - dates[i - 1].year) * 12 + (dates[i].month - dates[i - 1].month) for i in range(1, len(dates))]
             valid_month_deltas = [delta for delta in month_deltas if delta >= 0]
             if valid_month_deltas and float(np.median(valid_month_deltas)) >= 1.0:
                 return "monthly"
@@ -588,8 +565,7 @@ class ScenarioAuditor:
                 # Month-based gap: consecutive monthly observations count as 1.
                 gaps = [
                     max(
-                        (dates[i].year - dates[i - 1].year) * 12
-                        + (dates[i].month - dates[i - 1].month),
+                        (dates[i].year - dates[i - 1].year) * 12 + (dates[i].month - dates[i - 1].month),
                         0,
                     )
                     for i in range(1, len(dates))
@@ -597,10 +573,7 @@ class ScenarioAuditor:
                 allowed_gap = 1
             else:
                 # Business-day gap: Friday -> Monday counts as 1 day.
-                gaps = [
-                    max(len(pd.bdate_range(start=dates[i - 1], end=dates[i])) - 1, 0)
-                    for i in range(1, len(dates))
-                ]
+                gaps = [max(len(pd.bdate_range(start=dates[i - 1], end=dates[i])) - 1, 0) for i in range(1, len(dates))]
                 allowed_gap = self.allowed_gap_days
             if gaps:
                 all_business_gaps.extend(gaps)
@@ -617,22 +590,14 @@ class ScenarioAuditor:
 
         max_gap_all = int(max(all_business_gaps)) if all_business_gaps else 0
         median_gap_all = float(np.median(all_business_gaps)) if all_business_gaps else 0.0
-        cadence_modes = [
-            payload.get("cadence")
-            for payload in per_group.values()
-            if isinstance(payload, dict) and payload.get("cadence")
-        ]
+        cadence_modes = [payload.get("cadence") for payload in per_group.values() if isinstance(payload, dict) and payload.get("cadence")]
         dominant_cadence = max(set(cadence_modes), key=cadence_modes.count) if cadence_modes else "unknown"
         overall_allowed_gap = 1 if dominant_cadence == "monthly" else self.allowed_gap_days
         warnings: List[str] = []
         if duplicate_rows > 0:
-            warnings.append(
-                f"deduplicated_rows:{duplicate_rows} based on ['date','ticker']"
-            )
+            warnings.append(f"deduplicated_rows:{duplicate_rows} based on ['date','ticker']")
         if median_gap_all == 0:
-            warnings.append(
-                "median_gap_is_zero; verify duplicate timestamps or intraday consolidation"
-            )
+            warnings.append("median_gap_is_zero; verify duplicate timestamps or intraday consolidation")
 
         # Median gap at zero with deduplications strongly suggests duplicate timestamp noise.
         duplicate_signal = duplicate_rows > 0 and median_gap_all == 0
@@ -658,8 +623,7 @@ class ScenarioAuditor:
         continuity["status"] = status
         continuity["metrics"] = continuity.get("per_group", {})
         continuity["interpretation"] = (
-            "Evaluates continuity with business-day gaps and configurable threshold. "
-            "A weekend-only break is not treated as a major gap."
+            "Evaluates continuity with business-day gaps and configurable threshold. A weekend-only break is not treated as a major gap."
         )
         return continuity
 
@@ -693,9 +657,7 @@ class ScenarioAuditor:
             "usable_outputs": usable,
             "blocked_outputs": blocked,
             "nullish_outputs": nullish,
-            "interpretation": (
-                "Checks whether the project emits decision-support artifacts rather than empty or fully blocked placeholders."
-            ),
+            "interpretation": ("Checks whether the project emits decision-support artifacts rather than empty or fully blocked placeholders."),
         }
 
     def _check_survivorship(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -705,9 +667,7 @@ class ScenarioAuditor:
                 "passed": True,
                 "status": "warn",
                 "issues": ["survivorship_check_skipped_missing_ticker"],
-                "interpretation": [
-                    "Ticker column missing; survivorship bias cannot be assessed in this run."
-                ],
+                "interpretation": ["Ticker column missing; survivorship bias cannot be assessed in this run."],
             }
 
         work = df.copy()
@@ -718,9 +678,7 @@ class ScenarioAuditor:
                 "passed": True,
                 "status": "warn",
                 "issues": ["survivorship_check_skipped_no_valid_rows"],
-                "interpretation": [
-                    "No valid ticker/date rows available for survivorship diagnostics."
-                ],
+                "interpretation": ["No valid ticker/date rows available for survivorship diagnostics."],
             }
 
         max_date = work["date"].max()
@@ -794,13 +752,9 @@ class ScenarioAuditor:
         contract_driven = bool(SOURCE_CONTRACTS)
         stationarity_context = gate.get("stationarity_context", {}) if isinstance(gate, dict) else {}
         walk_forward_context = gate.get("walk_forward_context", {}) if isinstance(gate, dict) else {}
-        governance_stationarity_dynamic = (
-            stationarity_context.get("applied_min_stationary_ratio")
-            != stationarity_context.get("base_min_stationary_ratio")
-        )
+        governance_stationarity_dynamic = stationarity_context.get("applied_min_stationary_ratio") != stationarity_context.get("base_min_stationary_ratio")
         governance_walk_forward_dynamic = (
-            walk_forward_context.get("applied_min_walk_forward_r2")
-            != walk_forward_context.get("base_min_walk_forward_r2")
+            walk_forward_context.get("applied_min_walk_forward_r2") != walk_forward_context.get("base_min_walk_forward_r2")
             or bool(walk_forward_context.get("metric_unstable"))
             or isinstance((report.get("walk_forward") or {}).get("clipped_avg_r2"), (int, float))
         )
@@ -832,10 +786,9 @@ class ScenarioAuditor:
             },
             "strictness_findings": strictness_findings,
             "interpretation": (
-                "Contract-driven thresholds are active. "
-                "Silver adaptive history accumulates across pipeline runs and improves threshold precision over time."
-                if not has_dynamic else
-                "Adaptive thresholds are active — Silver history and governance walk-forward are both dynamic."
+                "Contract-driven thresholds are active. Silver adaptive history accumulates across pipeline runs and improves threshold precision over time."
+                if not has_dynamic
+                else "Adaptive thresholds are active — Silver history and governance walk-forward are both dynamic."
             ),
         }
 
@@ -884,14 +837,10 @@ class ScenarioAuditor:
                 transform_method = str(meta.get("transformation", "")).lower()
                 if pub_lag < 45:
                     publication_lag_ok = False
-                    publication_lag_findings.append(
-                        f"{feature}:publication_lag_days={pub_lag}<45"
-                    )
+                    publication_lag_findings.append(f"{feature}:publication_lag_days={pub_lag}<45")
                 if not transform_method.startswith("release_"):
                     publication_lag_ok = False
-                    publication_lag_findings.append(
-                        f"{feature}:transformation={transform_method or 'unknown'}(expected release_* after lag->ffill)"
-                    )
+                    publication_lag_findings.append(f"{feature}:transformation={transform_method or 'unknown'}(expected release_* after lag->ffill)")
 
         if any("r2_metric_alert_walk_forward_below_threshold" in reason for reason in reasons):
             if isinstance(clipped_avg_r2, (int, float)) and isinstance(avg_r2, (int, float)):
@@ -928,25 +877,13 @@ class ScenarioAuditor:
         oos_r2_val = oos.get("r2")
         r2_in_noise_band = (
             not isinstance(oos_r2_val, (int, float))  # no data → advisory only
-            or float(oos_r2_val) >= -0.50             # expected noise band for macro models
+            or float(oos_r2_val) >= -0.50  # expected noise band for macro models
         )
-        model_risk_acceptable = (
-            not isinstance(model_risk_score, (int, float))
-            or float(model_risk_score) <= 0.70
-        )
+        model_risk_acceptable = not isinstance(model_risk_score, (int, float)) or float(model_risk_score) <= 0.70
         # Only a hard-fail when governance gate failed AND both R² AND model risk are problematic
-        is_hard_fail = (
-            not passed_gate
-            and not likely_over_strict
-            and not r2_in_noise_band
-            and not model_risk_acceptable
-        )
+        is_hard_fail = not passed_gate and not likely_over_strict and not r2_in_noise_band and not model_risk_acceptable
         passed = passed_gate or likely_over_strict or r2_in_noise_band or model_risk_acceptable
-        effective_status = (
-            "pass" if passed_gate
-            else "fail" if is_hard_fail
-            else "warn"
-        )
+        effective_status = "pass" if passed_gate else "fail" if is_hard_fail else "warn"
         return {
             "passed": passed,
             "status": effective_status,
@@ -1021,29 +958,20 @@ class ScenarioAuditor:
         if integration.get("issues"):
             summary_lines.append(f"Integration issues: {integration.get('issues')}")
         if outputs.get("blocked_outputs"):
-            summary_lines.append(
-                f"Blocked analyses: {outputs.get('blocked_outputs')}"
-            )
+            summary_lines.append(f"Blocked analyses: {outputs.get('blocked_outputs')}")
         if governance.get("likely_over_strict"):
-            summary_lines.append(
-                "Governance appears methodologically valid but may be conservative for the current mixed-frequency regime."
-            )
+            summary_lines.append("Governance appears methodologically valid but may be conservative for the current mixed-frequency regime.")
         if governance.get("publication_lag_findings"):
-            summary_lines.append(
-                f"Look-ahead lag findings: {governance.get('publication_lag_findings')}"
-            )
+            summary_lines.append(f"Look-ahead lag findings: {governance.get('publication_lag_findings')}")
         survivorship = report["checks"].get("survivorship", {})
         if survivorship.get("issues"):
-            summary_lines.append(
-                f"Survivorship flags: {survivorship.get('issues')}"
-            )
+            summary_lines.append(f"Survivorship flags: {survivorship.get('issues')}")
         if thresholds.get("dynamic_thresholds", {}).get("silver_dynamic_null_thresholds"):
             summary_lines.append("Silver null thresholds are dynamic/history-aware.")
         else:
             # Informational only — thresholds adapt after the first pipeline run builds history
             summary_lines.append(
-                "Silver null thresholds are using baseline values. "
-                "They will adapt automatically once quality history accumulates across pipeline runs."
+                "Silver null thresholds are using baseline values. They will adapt automatically once quality history accumulates across pipeline runs."
             )
 
         return {
@@ -1061,9 +989,7 @@ class ScenarioAuditor:
         print("STRATUM QUANT ANALYTICS - SYSTEM AUDIT REPORT")
         print("=" * 60)
         overall_status = str(report.get("status", "UNKNOWN")).upper()
-        print(
-            f"Status: {status_icon.get(overall_status, 'ℹ️')} {overall_status}"
-        )
+        print(f"Status: {status_icon.get(overall_status, 'ℹ️')} {overall_status}")
         print(f"Decision Ready: {report.get('decision_ready', False)}")
         print(f"User: {report.get('user_id', 'unknown')}")
         print(f"Rows: {report.get('row_count', 0)} | Columns: {report.get('column_count', 0)}")
@@ -1082,5 +1008,3 @@ class ScenarioAuditor:
 if __name__ == "__main__":
     auditor = ScenarioAuditor()
     auditor.run_audit()
-
-

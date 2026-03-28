@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR   = REPO_ROOT / "src"
+SRC_DIR = REPO_ROOT / "src"
 OUTPUT_DIR = REPO_ROOT / "output"
 
 
@@ -33,8 +33,7 @@ def _run(cmd: list[str], label: str) -> None:
     print(f"{'─' * 60}\n")
     result = subprocess.run(cmd, cwd=str(REPO_ROOT))
     if result.returncode != 0:
-        print(f"[scheduler_batch] ✗ {label} exited with code {result.returncode}",
-              file=sys.stderr)
+        print(f"[scheduler_batch] ✗ {label} exited with code {result.returncode}", file=sys.stderr)
         sys.exit(result.returncode)
     print(f"[scheduler_batch] ✓ {label} completed successfully.")
 
@@ -55,21 +54,20 @@ def run_grid_search() -> None:
     # available; otherwise skip gracefully so the pipeline commit still lands.
     master_path = REPO_ROOT / "data" / "gold" / "master_table.parquet"
     if not master_path.exists():
-        print(
-            "[scheduler_batch] Gold master_table.parquet not found — "
-            "skipping grid search (pipeline may not have produced price data)."
-        )
+        print("[scheduler_batch] Gold master_table.parquet not found — skipping grid search (pipeline may not have produced price data).")
         return
 
     # Run grid search inline (same process) so it shares the venv cleanly.
     try:
         import sys as _sys
+
         if str(SRC_DIR) not in _sys.path:
             _sys.path.insert(0, str(SRC_DIR))
         if str(REPO_ROOT) not in _sys.path:
             _sys.path.insert(0, str(REPO_ROOT))
 
         import pandas as pd
+
         from optimizer import grid_search_backtest  # type: ignore[import]
 
         df = pd.read_parquet(master_path)
@@ -96,10 +94,7 @@ def run_grid_search() -> None:
         prices = pd.to_numeric(prices, errors="coerce").dropna()
 
         if len(prices) < 210:
-            print(
-                f"[scheduler_batch] Only {len(prices)} price rows — "
-                "need ≥ 210 for 200-day trend SMA. Skipping grid search."
-            )
+            print(f"[scheduler_batch] Only {len(prices)} price rows — need ≥ 210 for 200-day trend SMA. Skipping grid search.")
             return
 
         print(f"[scheduler_batch] Running grid search on {len(prices)} price rows ...")
@@ -123,9 +118,7 @@ def run_grid_search() -> None:
         }
         summary_path = OUTPUT_DIR / "optimizer" / "grid_search_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(
-            json.dumps(summary, indent=2, default=str), encoding="utf-8"
-        )
+        summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
 
         print(f"[scheduler_batch] Grid search complete. Top result: {top5[0] if top5 else 'N/A'}")
         print(f"[scheduler_batch] Results written to {output_path}")

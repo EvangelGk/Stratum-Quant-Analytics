@@ -8,6 +8,7 @@ from scipy.stats import pearsonr
 from sklearn.linear_model import Ridge
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import prepare_supervised_frame
 
 
@@ -40,11 +41,7 @@ def _annualized_return(returns: np.ndarray, periods_per_year: int = 252) -> floa
 
 def _effective_periods_per_year(metadata: Dict[str, Any], target: str) -> int:
     target_meta = metadata.get(target) if isinstance(metadata, dict) else None
-    horizon = (
-        int((target_meta or {}).get("target_horizon_days", 1))
-        if isinstance(target_meta, dict)
-        else 1
-    )
+    horizon = int((target_meta or {}).get("target_horizon_days", 1)) if isinstance(target_meta, dict) else 1
     horizon = max(1, horizon)
     return max(1, int(round(252.0 / float(horizon))))
 
@@ -89,9 +86,7 @@ def backtest_pre2020_holdout(
         panel = panel.dropna(subset=[date_col]).sort_values(date_col)
 
         train_mask = panel[date_col] < pd.Timestamp("2020-01-01")
-        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (
-            panel[date_col] <= pd.Timestamp("2022-12-31")
-        )
+        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (panel[date_col] <= pd.Timestamp("2022-12-31"))
         train_df = panel.loc[train_mask].copy()
         test_df = panel.loc[test_mask].copy()
 
@@ -126,11 +121,7 @@ def backtest_pre2020_holdout(
 
         gross_profit = float(np.sum(wins)) if len(wins) else 0.0
         gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
-        profit_factor = (
-            float(gross_profit / gross_loss_abs)
-            if gross_loss_abs > 1e-12
-            else (None if gross_profit == 0.0 else float("inf"))
-        )
+        profit_factor = float(gross_profit / gross_loss_abs) if gross_loss_abs > 1e-12 else (None if gross_profit == 0.0 else float("inf"))
 
         periods_per_year = _effective_periods_per_year(metadata, target)
         ann_return = _annualized_return(strategy_returns, periods_per_year=periods_per_year)
@@ -138,11 +129,7 @@ def backtest_pre2020_holdout(
 
         active_returns = strategy_returns - benchmark_returns
         te_active = float(np.std(active_returns, ddof=1)) if len(active_returns) > 1 else None
-        ir = (
-            float(np.mean(active_returns) / te_active * np.sqrt(252.0))
-            if te_active is not None and te_active > 1e-12
-            else None
-        )
+        ir = float(np.mean(active_returns) / te_active * np.sqrt(252.0)) if te_active is not None and te_active > 1e-12 else None
 
         corr_r = None
         corr_p = None
@@ -228,6 +215,7 @@ def backtest_pre2020_holdout(
 # Pillar 1 — Advanced Vectorized Backtesting Engine
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _compute_strategy_metrics(
     strategy_returns: pd.Series,
     trade_flags: pd.Series,
@@ -302,9 +290,7 @@ def _compute_strategy_metrics(
         "sortino_ratio": round(sortino, 6) if sortino is not None else None,
         "max_drawdown": round(max_dd, 6),
         "profit_factor": (
-            round(profit_factor, 6)
-            if profit_factor is not None and np.isfinite(profit_factor)
-            else ("inf" if profit_factor == float("inf") else None)
+            round(profit_factor, 6) if profit_factor is not None and np.isfinite(profit_factor) else ("inf" if profit_factor == float("inf") else None)
         ),
         "calmar_ratio": round(calmar, 6),
         "total_trades": total_trades,
@@ -369,10 +355,7 @@ def run_strategy_backtest(
     if not isinstance(prices, pd.Series):
         raise DataValidationError("run_strategy_backtest expects a pd.Series of prices.")
     if len(prices) < max(rolling_window, trend_sma_window) + 2:
-        raise DataValidationError(
-            f"Not enough price rows ({len(prices)}) for the requested windows "
-            f"(rolling={rolling_window}, trend_sma={trend_sma_window})."
-        )
+        raise DataValidationError(f"Not enough price rows ({len(prices)}) for the requested windows (rolling={rolling_window}, trend_sma={trend_sma_window}).")
 
     # ── 1. Log returns (forward-fill prices first to remove weekend gaps) ────
     px = prices.ffill().dropna()
@@ -385,8 +368,8 @@ def run_strategy_backtest(
 
     # ── 3. Raw signal from Z-score thresholds ────────────────────────────────
     raw_signal = pd.Series(0.0, index=px.index)
-    raw_signal[z_score < -z_threshold] = 1.0   # long: price below rolling mean
-    raw_signal[z_score > z_threshold] = -1.0   # short: price above rolling mean
+    raw_signal[z_score < -z_threshold] = 1.0  # long: price below rolling mean
+    raw_signal[z_score > z_threshold] = -1.0  # short: price above rolling mean
 
     # ── 4a. Volatility filter — only trade when market is "active" ───────────
     if volatility_filter:
@@ -431,21 +414,14 @@ def run_strategy_backtest(
         strategy_ret = strategy_ret - trade_cost
 
     # ── 8. Drop NaN rows produced by rolling windows + shift ─────────────────
-    valid_mask = (
-        strategy_ret.notna()
-        & signal.notna()
-        & log_ret.notna()
-        & z_score.notna()
-    )
+    valid_mask = strategy_ret.notna() & signal.notna() & log_ret.notna() & z_score.notna()
     strategy_ret = strategy_ret[valid_mask]
-    signal_clean = signal[valid_mask]
     trades_clean = position_change[valid_mask]
     log_ret_clean = log_ret[valid_mask]
 
     if len(strategy_ret) < 10:
         raise DataValidationError(
-            "Too few valid rows after applying rolling windows and NaN removal "
-            f"({len(strategy_ret)} rows). Reduce rolling_window or supply more data."
+            f"Too few valid rows after applying rolling windows and NaN removal ({len(strategy_ret)} rows). Reduce rolling_window or supply more data."
         )
 
     # ── 9. Benchmark (buy-and-hold log returns) ───────────────────────────────
@@ -459,19 +435,12 @@ def run_strategy_backtest(
 
     # ── 11. Equity curves from log returns: exp(cumsum) is exact;
     #        (1+r).cumprod() is only an approximation and blows up over time ──
-    equity_curve = pd.Series(
-        np.exp(strategy_ret.values.cumsum()), index=strategy_ret.index
-    )
-    bm_curve = pd.Series(
-        np.exp(benchmark_ret.values.cumsum()), index=benchmark_ret.index
-    )
+    equity_curve = pd.Series(np.exp(strategy_ret.values.cumsum()), index=strategy_ret.index)
+    bm_curve = pd.Series(np.exp(benchmark_ret.values.cumsum()), index=benchmark_ret.index)
 
     # ── 12. Rolling 30-day Sharpe for chart ──────────────────────────────────
     r_s = strategy_ret
-    roll_sharpe = (
-        r_s.rolling(30, min_periods=30).mean()
-        / r_s.rolling(30, min_periods=30).std(ddof=1).replace(0.0, np.nan)
-    ) * np.sqrt(252.0)
+    roll_sharpe = (r_s.rolling(30, min_periods=30).mean() / r_s.rolling(30, min_periods=30).std(ddof=1).replace(0.0, np.nan)) * np.sqrt(252.0)
 
     return {
         "parameters": {

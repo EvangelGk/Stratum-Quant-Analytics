@@ -29,11 +29,7 @@ def test_main_handles_missing_api_key(monkeypatch, capsys):
     # Run main; it should handle the error and print a message
     main_module.main()
     captured = capsys.readouterr()
-    assert (
-        "Unexpected Application Error" in captured.out
-        or "CRITICAL ERROR" in captured.out
-        or "Configuration error: missing FRED API key." in captured.out
-    )
+    assert "Unexpected Application Error" in captured.out or "CRITICAL ERROR" in captured.out or "Configuration error: missing FRED API key." in captured.out
 
 
 def test_quick_diagnostics_handles_missing_files(tmp_path, monkeypatch):

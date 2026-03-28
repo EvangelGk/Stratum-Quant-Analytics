@@ -5,12 +5,11 @@ from src.Fetchers.ProjectConfig import ProjectConfig, RunMode
 
 def test_load_from_env_missing_key(monkeypatch):
     # Ensure dotenv does not reload any stored API keys
-    monkeypatch.setattr(
-        "src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr("src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
     with pytest.raises(ValueError):
         ProjectConfig.load_from_env()
+
 
 def test_default_macro_map_includes_vix(monkeypatch):
     monkeypatch.delenv("MACRO_SERIES_MAP", raising=False)

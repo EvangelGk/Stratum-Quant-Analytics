@@ -18,9 +18,7 @@ class WorldBankFetcher(BaseFetcher):
         super().__init__()
 
     # Fetching data from the World Bank API with caching.
-    def fetch(
-        self, indicator: str, country: str, start_date: str, end_date: str
-    ) -> pd.DataFrame:
+    def fetch(self, indicator: str, country: str, start_date: str, end_date: str) -> pd.DataFrame:
         cache_profile = {
             "schema": self.CACHE_SCHEMA_VERSION,
             "indicator": str(indicator),
@@ -29,9 +27,7 @@ class WorldBankFetcher(BaseFetcher):
             "end": str(end_date),
             "normalizer": "worldbank-v1",
         }
-        cache_hash = hashlib.sha256(
-            json.dumps(cache_profile, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
+        cache_hash = hashlib.sha256(json.dumps(cache_profile, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         key = f"worldbank_{self.CACHE_SCHEMA_VERSION}_{indicator}_{country}_{cache_hash}"
         cached = self._get_cached(key)
         if cached is not None:
@@ -41,9 +37,7 @@ class WorldBankFetcher(BaseFetcher):
         start_year = int(pd.to_datetime(start_date).year)
         end_year = int(pd.to_datetime(end_date).year)
 
-        data = wb.data.DataFrame(
-            indicator, country, time=range(start_year, end_year + 1)
-        )
+        data = wb.data.DataFrame(indicator, country, time=range(start_year, end_year + 1))
         df = self._normalize_worldbank_frame(data, indicator)
         if df.empty:
             # Do not cache empty payloads; missing/late series should be retried
@@ -52,9 +46,7 @@ class WorldBankFetcher(BaseFetcher):
         self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)
         return df
 
-    def _normalize_worldbank_frame(
-        self, data: pd.DataFrame, indicator: str
-    ) -> pd.DataFrame:
+    def _normalize_worldbank_frame(self, data: pd.DataFrame, indicator: str) -> pd.DataFrame:
         """Normalize World Bank output into economy/Date/Value schema."""
         if data is None or data.empty:
             return pd.DataFrame(columns=["economy", "Date", "Value"])
@@ -66,11 +58,7 @@ class WorldBankFetcher(BaseFetcher):
             df = df.rename(columns={"time": "Date", indicator: "Value"})
         else:
             # Wide format fallback with year columns (e.g., YR2020).
-            year_cols = [
-                col
-                for col in df.columns
-                if str(col).startswith("YR") or str(col).isdigit()
-            ]
+            year_cols = [col for col in df.columns if str(col).startswith("YR") or str(col).isdigit()]
             if year_cols and "economy" in df.columns:
                 df = df.melt(
                     id_vars="economy",
@@ -79,15 +67,9 @@ class WorldBankFetcher(BaseFetcher):
                     value_name="Value",
                 )
             else:
-                value_candidates = [
-                    col
-                    for col in df.columns
-                    if col not in {"economy", "time", "Date", "Value"}
-                ]
+                value_candidates = [col for col in df.columns if col not in {"economy", "time", "Date", "Value"}]
                 if "time" in df.columns and value_candidates:
-                    df = df.rename(
-                        columns={"time": "Date", value_candidates[0]: "Value"}
-                    )
+                    df = df.rename(columns={"time": "Date", value_candidates[0]: "Value"})
 
         if "economy" not in df.columns:
             warnings.warn(

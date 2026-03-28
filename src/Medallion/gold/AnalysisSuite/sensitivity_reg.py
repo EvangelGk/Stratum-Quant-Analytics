@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
 from itertools import combinations
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import aggregate_source_importance, prepare_supervised_frame
 
 
@@ -51,10 +52,7 @@ def _engineer_features(x: pd.DataFrame, base_factors: List[str]) -> pd.DataFrame
         for j in range(i + 1, len(interaction_candidates)):
             left = interaction_candidates[i]
             right = interaction_candidates[j]
-            engineered[f"{left}__x__{right}"] = (
-                pd.to_numeric(engineered[left], errors="coerce")
-                * pd.to_numeric(engineered[right], errors="coerce")
-            )
+            engineered[f"{left}__x__{right}"] = pd.to_numeric(engineered[left], errors="coerce") * pd.to_numeric(engineered[right], errors="coerce")
     return engineered
 
 
@@ -101,19 +99,22 @@ def _build_time_series_split(n_rows: int) -> TimeSeriesSplit:
 
 
 def _candidate_registry(seed: int) -> Dict[str, tuple[Pipeline, Dict[str, Any] | None]]:
-    linear_pipe = lambda estimator: Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-            ("model", estimator),
-        ]
-    )
-    tree_pipe = lambda estimator: Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("model", estimator),
-        ]
-    )
+    def linear_pipe(estimator: Any) -> Pipeline:
+        return Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                ("model", estimator),
+            ]
+        )
+
+    def tree_pipe(estimator: Any) -> Pipeline:
+        return Pipeline(
+            steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("model", estimator),
+            ]
+        )
 
     return {
         "Linear": (linear_pipe(LinearRegression()), None),
@@ -272,7 +273,7 @@ def _feature_search_space(
     max_evaluations: int,
     seed: int,
 ) -> List[List[str]]:
-    ordered = list(dict.fromkeys(features))[: max_features_considered]
+    ordered = list(dict.fromkeys(features))[:max_features_considered]
     n = len(ordered)
     if n <= 1:
         return [ordered]
@@ -358,9 +359,7 @@ def _select_feature_subset(
             }
         )
         # Prefer higher score; on ties prefer the smaller subset (lower overfit risk).
-        if (cv_r2 > best_score) or (
-            np.isclose(cv_r2, best_score, equal_nan=False) and len(subset) < len(best_subset)
-        ):
+        if (cv_r2 > best_score) or (np.isclose(cv_r2, best_score, equal_nan=False) and len(subset) < len(best_subset)):
             best_score = float(cv_r2)
             best_subset = list(subset)
 
@@ -439,9 +438,7 @@ def sensitivity_reg(
             "auto": "Auto",
         }
         if model_normalized not in model_alias:
-            raise DataValidationError(
-                "Model must be one of: 'OLS', 'Ridge', 'Lasso', 'ElasticNet', 'RandomForest', 'Auto'."
-            )
+            raise DataValidationError("Model must be one of: 'OLS', 'Ridge', 'Lasso', 'ElasticNet', 'RandomForest', 'Auto'.")
         selected_model = model_alias[model_normalized]
 
         if target not in df.columns:
@@ -449,9 +446,7 @@ def sensitivity_reg(
 
         missing_factors = [f for f in factors if f not in df.columns]
         if missing_factors:
-            raise DataValidationError(
-                f"Factor columns {missing_factors} not found in DataFrame."
-            )
+            raise DataValidationError(f"Factor columns {missing_factors} not found in DataFrame.")
 
         panel, metadata, selected_macro_lag_days, lag_scores = _select_best_macro_lag(
             df=df,
@@ -480,9 +475,7 @@ def sensitivity_reg(
         missing_before = {
             "rows_before_dropna": int(len(panel)),
             "target_missing": int(y.isna().sum()),
-            "feature_missing": {
-                factor: int(x_raw[factor].isna().sum()) for factor in x_raw.columns
-            },
+            "feature_missing": {factor: int(x_raw[factor].isna().sum()) for factor in x_raw.columns},
         }
 
         valid_mask = y.notna()
@@ -514,13 +507,8 @@ def sensitivity_reg(
         if selected_model == "OLS":
             design = sm.add_constant(x_final)
             fitted_model = sm.OLS(y, design).fit()
-            coefficients = {
-                factor: float(fitted_model.params.get(factor, 0.0)) for factor in x_final.columns
-            }
-            raw_importance = {
-                factor: float(abs(coefficients[factor]) * x_final[factor].std())
-                for factor in x_final.columns
-            }
+            coefficients = {factor: float(fitted_model.params.get(factor, 0.0)) for factor in x_final.columns}
+            raw_importance = {factor: float(abs(coefficients[factor]) * x_final[factor].std()) for factor in x_final.columns}
             cv_model = Pipeline(
                 steps=[
                     ("imputer", SimpleImputer(strategy="median")),
@@ -536,15 +524,10 @@ def sensitivity_reg(
                 # Coefficients express impact over the forward horizon used by
                 # prepare_supervised_frame.  Check target_horizon_days before
                 # interpreting a coefficient as an immediate point-in-time effect.
-                "target_horizon_days": int(
-                    metadata.get(target, {}).get("target_horizon_days", 1)
-                ),
+                "target_horizon_days": int(metadata.get(target, {}).get("target_horizon_days", 1)),
                 "coefficients": coefficients,
                 "intercept": float(fitted_model.params.get("const", 0.0)),
-                "p_values": {
-                    factor: float(fitted_model.pvalues.get(factor, np.nan))
-                    for factor in x_final.columns
-                },
+                "p_values": {factor: float(fitted_model.pvalues.get(factor, np.nan)) for factor in x_final.columns},
                 "r2": float(fitted_model.rsquared),
                 "adj_r2": float(fitted_model.rsquared_adj),
                 "cv_r2": float(np.mean(cv_scores)),
@@ -586,9 +569,7 @@ def sensitivity_reg(
         elif selected_model in registry:
             candidate_names = [selected_model]
         else:
-            raise DataValidationError(
-                "Model must be one of: 'OLS', 'Ridge', 'Lasso', 'ElasticNet', 'RandomForest', 'Auto'."
-            )
+            raise DataValidationError("Model must be one of: 'OLS', 'Ridge', 'Lasso', 'ElasticNet', 'RandomForest', 'Auto'.")
 
         candidate_scores: List[Dict[str, Any]] = []
         best_model_name = ""
@@ -628,31 +609,22 @@ def sensitivity_reg(
         raw_coef = getattr(model_step, "coef_", None)
         if raw_coef is not None:
             coef_array = np.asarray(raw_coef, dtype=float).reshape(-1)
-            coefficients = {
-                factor: float(coef_array[idx]) for idx, factor in enumerate(x_final.columns)
-            }
+            coefficients = {factor: float(coef_array[idx]) for idx, factor in enumerate(x_final.columns)}
         else:
             coefficients = {factor: 0.0 for factor in x_final.columns}
 
         intercept_value = float(getattr(model_step, "intercept_", 0.0))
 
-        raw_importance = {
-            factor: float(abs(coefficients[factor]) * x_final[factor].std())
-            for factor in x_final.columns
-        }
+        raw_importance = {factor: float(abs(coefficients[factor]) * x_final[factor].std()) for factor in x_final.columns}
         if all(abs(value) < 1e-12 for value in raw_importance.values()) and hasattr(model_step, "feature_importances_"):
             imp = np.asarray(getattr(model_step, "feature_importances_"), dtype=float)
-            raw_importance = {
-                factor: float(imp[idx]) for idx, factor in enumerate(x_final.columns)
-            }
+            raw_importance = {factor: float(imp[idx]) for idx, factor in enumerate(x_final.columns)}
 
         return {
             "model": best_model_name,
             "ticker": ticker,
             "target": target,
-            "target_horizon_days": int(
-                metadata.get(target, {}).get("target_horizon_days", 1)
-            ),
+            "target_horizon_days": int(metadata.get(target, {}).get("target_horizon_days", 1)),
             "coefficients": coefficients,
             "intercept": intercept_value,
             "r2": float(best_estimator.score(x_final, y)),

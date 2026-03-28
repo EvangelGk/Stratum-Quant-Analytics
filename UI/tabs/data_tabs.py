@@ -8,7 +8,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from UI.constants import GOLD_DIR, LOGS_DIR, OUTPUT_DIR, PROJECT_ROOT, RAW_DIR, PROCESSED_DIR
+from UI.constants import (
+    GOLD_DIR,
+    OUTPUT_DIR,
+    PROCESSED_DIR,
+    PROJECT_ROOT,
+    RAW_DIR,
+)
 from UI.content import ANALYSIS_HELP, LAYER_HELP
 from UI.helpers import load_session_history
 from UI.rendering import FETCHERS_MOD, MAIN_MOD, MEDALLION_MOD, render_logger_message
@@ -153,16 +159,16 @@ def _render_quant_insights(summary: dict) -> None:
         return
 
     # ── Build Insights rows — only include metrics that have actual values ────
-    _oos_r2   = (gov.get("out_of_sample") or {}).get("r2")
+    _oos_r2 = (gov.get("out_of_sample") or {}).get("r2")
     _mod_risk = gov.get("model_risk_score")
     _best_lag = lag.get("best_lag_days")
-    _elas_b   = elas.get("static_elasticity")
+    _elas_b = elas.get("static_elasticity")
 
     _top_pairs = [
-        ("OOS R²",          _oos_r2),
-        ("Model Risk",      _mod_risk),
+        ("OOS R²", _oos_r2),
+        ("Model Risk", _mod_risk),
         ("Best Lag (days)", _best_lag),
-        ("Elasticity β",    _elas_b),
+        ("Elasticity β", _elas_b),
     ]
     _top_available = [(lbl, val) for lbl, val in _top_pairs if val is not None]
 
@@ -175,9 +181,9 @@ def _render_quant_insights(summary: dict) -> None:
 
     if isinstance(backtest, dict) and backtest:
         _bt_pairs = [
-            ("Expectancy/Trade",  backtest.get("expectancy_per_trade")),
-            ("Profit Factor",     backtest.get("profit_factor")),
-            ("Calmar",            backtest.get("calmar_ratio")),
+            ("Expectancy/Trade", backtest.get("expectancy_per_trade")),
+            ("Profit Factor", backtest.get("profit_factor")),
+            ("Calmar", backtest.get("calmar_ratio")),
             ("Information Ratio", backtest.get("information_ratio")),
         ]
         _bt_available = [(lbl, val) for lbl, val in _bt_pairs if val is not None]
@@ -202,8 +208,7 @@ def _render_quant_insights(summary: dict) -> None:
             positive_signals.append(f"Positive Expectancy {float(exp):.4f}")
         if positive_signals:
             st.success(
-                "Dominant validated findings: " + " | ".join(positive_signals)
-                + ". These metrics demonstrate realized strategy edge even when R² is modest."
+                "Dominant validated findings: " + " | ".join(positive_signals) + ". These metrics demonstrate realized strategy edge even when R² is modest."
             )
 
     stress_results = stress.get("results", {}) if isinstance(stress, dict) else {}
@@ -457,14 +462,10 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
         with st.expander("Feature subset search (top combinations)", expanded=False):
             sdf = pd.DataFrame(top_subsets)
             if "subset" in sdf.columns:
-                sdf["subset"] = sdf["subset"].apply(
-                    lambda lst: ", ".join(str(x) for x in lst) if isinstance(lst, list) else str(lst)
-                )
+                sdf["subset"] = sdf["subset"].apply(lambda lst: ", ".join(str(x) for x in lst) if isinstance(lst, list) else str(lst))
             st.dataframe(sdf.head(15), width="stretch")
 
-    cdf = pd.DataFrame(
-        [{"factor": str(k), "coefficient": float(v)} for k, v in coeffs.items()]
-    )
+    cdf = pd.DataFrame([{"factor": str(k), "coefficient": float(v)} for k, v in coeffs.items()])
     cdf["abs_coef"] = cdf["coefficient"].abs()
     cdf = cdf.sort_values("abs_coef", ascending=False)
     fig = px.bar(
@@ -480,9 +481,7 @@ def _render_sensitivity_regression_payload(value: dict) -> None:
 
     top = cdf.iloc[0]
     direction = "increases" if float(top["coefficient"]) > 0 else "decreases"
-    st.success(
-        f"Dominant factor: **{top['factor']}**. When it rises, returns tend to **{direction}**."
-    )
+    st.success(f"Dominant factor: **{top['factor']}**. When it rises, returns tend to **{direction}**.")
 
 
 def _render_backtest_payload(value: dict) -> None:
@@ -508,8 +507,7 @@ def _render_backtest_payload(value: dict) -> None:
     if test_rows is not None:
         k2.metric("Test rows", str(int(test_rows)))
     if te is not None:
-        k3.metric("Tracking Error", f"{float(te):.4f}",
-                  help="Std dev of (predicted − actual) returns. Lower = tighter fit.")
+        k3.metric("Tracking Error", f"{float(te):.4f}", help="Std dev of (predicted − actual) returns. Lower = tighter fit.")
     if mdd is not None:
         _mdd = float(mdd)
         k4.metric(
@@ -526,31 +524,35 @@ def _render_backtest_payload(value: dict) -> None:
         p1, p2, p3, p4, p5 = st.columns(5)
         if sharpe is not None:
             _sh = float(sharpe)
-            p1.metric("Sharpe Ratio",
-                      f"{_sh:.2f}" if abs(_sh) <= 5.0 else ("≥ 5.0" if _sh > 0 else "≤ −5.0"),
-                      help=">0.5 acceptable · >1.0 strong · >2.0 exceptional")
+            p1.metric(
+                "Sharpe Ratio", f"{_sh:.2f}" if abs(_sh) <= 5.0 else ("≥ 5.0" if _sh > 0 else "≤ −5.0"), help=">0.5 acceptable · >1.0 strong · >2.0 exceptional"
+            )
         if calmar is not None:
             _cal = float(calmar)
-            p2.metric("Calmar Ratio",
-                      f"{_cal:.2f}×" if _cal <= 20.0 else "≥ 20×",
-                      help="Annualised return ÷ Max Drawdown. >1.0 = risk-adjusted profit. Values >20 are capped.")
+            p2.metric(
+                "Calmar Ratio",
+                f"{_cal:.2f}×" if _cal <= 20.0 else "≥ 20×",
+                help="Annualised return ÷ Max Drawdown. >1.0 = risk-adjusted profit. Values >20 are capped.",
+            )
         if profit_factor is not None and profit_factor != float("inf"):
             _pf = float(profit_factor)
-            p3.metric("Profit Factor",
-                      f"{_pf:.2f}×" if _pf <= 10.0 else "≥ 10×",
-                      help="Gross gains ÷ gross losses. >1.0 = profitable · >1.5 = strong")
+            p3.metric("Profit Factor", f"{_pf:.2f}×" if _pf <= 10.0 else "≥ 10×", help="Gross gains ÷ gross losses. >1.0 = profitable · >1.5 = strong")
         if expectancy is not None:
             _exp = float(expectancy)
-            p4.metric("Expectancy / Trade",
-                      f"{_exp:+.4f}",
-                      delta="Positive edge" if _exp > 0 else "Negative edge",
-                      delta_color="normal" if _exp > 0 else "inverse",
-                      help="Average daily log-return per trade. Positive = systematic edge.")
+            p4.metric(
+                "Expectancy / Trade",
+                f"{_exp:+.4f}",
+                delta="Positive edge" if _exp > 0 else "Negative edge",
+                delta_color="normal" if _exp > 0 else "inverse",
+                help="Average daily log-return per trade. Positive = systematic edge.",
+            )
         if info_ratio is not None:
             _ir = float(info_ratio)
-            p5.metric("Info Ratio",
-                      f"{_ir:.2f}" if abs(_ir) <= 5.0 else ("≥ 5.0" if _ir > 0 else "≤ −5.0"),
-                      help="Active return vs benchmark per unit of tracking error. >0.5 = adds value.")
+            p5.metric(
+                "Info Ratio",
+                f"{_ir:.2f}" if abs(_ir) <= 5.0 else ("≥ 5.0" if _ir > 0 else "≤ −5.0"),
+                help="Active return vs benchmark per unit of tracking error. >0.5 = adds value.",
+            )
 
     strong_flags: list[str] = []
     if isinstance(profit_factor, (int, float)) and profit_factor != float("inf") and float(profit_factor) >= 1.5:
@@ -575,12 +577,9 @@ def _render_backtest_payload(value: dict) -> None:
     if isinstance(p_val, (int, float)):
         c1, c2 = st.columns(2)
         if r_val is not None:
-            c1.metric("Pearson r", f"{float(r_val):.3f}",
-                      help="|r| > 0.15 is considered meaningful in macro-equity forecasting.")
+            c1.metric("Pearson r", f"{float(r_val):.3f}", help="|r| > 0.15 is considered meaningful in macro-equity forecasting.")
         _pv = float(p_val)
-        c2.metric("P-value", f"{_pv:.4f}",
-                  delta="Significant" if _pv < 0.05 else "Exploratory",
-                  delta_color="normal" if _pv < 0.05 else "off")
+        c2.metric("P-value", f"{_pv:.4f}", delta="Significant" if _pv < 0.05 else "Exploratory", delta_color="normal" if _pv < 0.05 else "off")
         if float(p_val) < 0.05:
             st.success("Statistical significance passed: p-value < 0.05")
         else:
@@ -677,9 +676,7 @@ def _render_elasticity_payload(value: dict) -> None:
     f3.metric("Macro Factor", str(_mf) if _mf else "—")
 
     direction = "rises" if isinstance(static_el, (int, float)) and static_el >= 0 else "falls"
-    st.success(
-        f"Simple insight: when the macro factor increases, returns tend to **{direction}**."
-    )
+    st.success(f"Simple insight: when the macro factor increases, returns tend to **{direction}**.")
 
     rolling = value.get("rolling_elasticity", [])
     if isinstance(rolling, list) and rolling:
@@ -878,8 +875,8 @@ def _render_governance_gate_payload(value: dict) -> None:
         return
     passed = _coerce_optional_bool(value.get("passed"))
     sev = str(value.get("severity", "unknown")).lower()
-    c, l, d = score_governance_gate(bool(passed), sev)
-    st.markdown(badge_html(l, c, d), unsafe_allow_html=True)
+    c, label, d = score_governance_gate(bool(passed), sev)
+    st.markdown(badge_html(label, c, d), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     if passed is not None:
         c1.metric("Gate Decision", "PASS" if passed else "FAIL")
@@ -955,12 +952,16 @@ def _render_stress_rerun_controls() -> None:
         index=0,
         key="stress_rerun_scenario",
     )
-    ticker_choice = c2.text_input(
-        "Ticker (optional)",
-        value="",
-        key="stress_rerun_ticker",
-        help="Leave blank to use the full analysis universe.",
-    ).strip().upper()
+    ticker_choice = (
+        c2.text_input(
+            "Ticker (optional)",
+            value="",
+            key="stress_rerun_ticker",
+            help="Leave blank to use the full analysis universe.",
+        )
+        .strip()
+        .upper()
+    )
 
     custom_shocks_raw = st.text_area(
         "Custom shocks JSON (optional)",
@@ -1015,8 +1016,7 @@ def _render_stress_payload(value: object) -> bool:
     if isinstance(value, str) and "Shock map not provided" in value:
         st.error("No stress scenario was applied in this run.")
         st.caption(
-            "stress_test was skipped because no shock map/scenario was provided to the pipeline. "
-            "Stress results are therefore unavailable for interpretation."
+            "stress_test was skipped because no shock map/scenario was provided to the pipeline. Stress results are therefore unavailable for interpretation."
         )
         return True
 
@@ -1097,8 +1097,7 @@ def _render_governance_consistency_panel(results: dict) -> None:
     if isinstance(report, dict) and isinstance(gate, dict):
         if gate_passed is True and gate_severity == "WARN":
             st.info(
-                "The governance gate passed with warnings. This means advisory model-risk signals were raised, "
-                "but policy did not block downstream analyses."
+                "The governance gate passed with warnings. This means advisory model-risk signals were raised, but policy did not block downstream analyses."
             )
         if report_status in {"FAIL", "ERROR", "CRITICAL"} and gate_passed:
             st.warning(
@@ -1106,9 +1105,7 @@ def _render_governance_consistency_panel(results: dict) -> None:
                 "This is only acceptable when the policy is advisory, not a hard-block."
             )
         elif report_status == "OK" and gate_passed is False:
-            st.warning(
-                "The Report is OK but the Gate blocked this run due to policy-level rules or thresholds."
-            )
+            st.warning("The Report is OK but the Gate blocked this run due to policy-level rules or thresholds.")
 
 
 def _render_analysis_payload(analysis_name: str, payload: object) -> None:
@@ -1232,9 +1229,7 @@ def show_analytics_tab() -> None:
         return
     st.markdown("---")
     st.markdown("### 🧩 Analysis Explorer")
-    st.caption(
-        "Select an analysis for a clean insight-first view with charts and plain-language interpretation."
-    )
+    st.caption("Select an analysis for a clean insight-first view with charts and plain-language interpretation.")
 
     analysis_names = sorted(set(artifacts.keys()) | {"stress_test"})
     selected_analysis = st.selectbox(

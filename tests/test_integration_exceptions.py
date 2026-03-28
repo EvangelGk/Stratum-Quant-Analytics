@@ -26,9 +26,7 @@ def test_silver_preflight_raises_compliance_on_empty_df(tmp_path):
     layer.processed_path.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ComplianceViolationError):
-        layer._preflight_contract_checks(
-            pd.DataFrame(), "fred", "inflation", {"rows": 100, "path": "x"}
-        )
+        layer._preflight_contract_checks(pd.DataFrame(), "fred", "inflation", {"rows": 100, "path": "x"})
 
 
 def test_silver_preflight_raises_schema_mismatch_on_drift(tmp_path):
@@ -40,9 +38,7 @@ def test_silver_preflight_raises_schema_mismatch_on_drift(tmp_path):
 
     drifted = pd.DataFrame({"Date": ["2020-01-01"], "unexpected": [1.0]})
     with pytest.raises(SchemaMismatchError):
-        layer._preflight_contract_checks(
-            drifted, "fred", "inflation", {"rows": 20, "path": "x"}
-        )
+        layer._preflight_contract_checks(drifted, "fred", "inflation", {"rows": 20, "path": "x"})
 
 
 def test_silver_process_entity_marks_failed_on_schema_mismatch(tmp_path):
@@ -53,9 +49,7 @@ def test_silver_process_entity_marks_failed_on_schema_mismatch(tmp_path):
     layer.processed_path.mkdir(parents=True, exist_ok=True)
 
     bad_file = layer.raw_path / "bad.parquet"
-    pd.DataFrame({"Date": ["2020-01-01"], "unexpected": [1.0]}).to_parquet(
-        bad_file, index=False
-    )
+    pd.DataFrame({"Date": ["2020-01-01"], "unexpected": [1.0]}).to_parquet(bad_file, index=False)
 
     layer._process_entity("bad", {"path": str(bad_file), "source": "fred", "rows": 20})
     assert layer.quality_reports["bad"]["status"] == "failed"

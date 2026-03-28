@@ -3,6 +3,7 @@ Unit tests for src/ai_agent.py — ScenarioAIAgent.
 
 All Ollama HTTP calls are mocked via unittest.mock so no live server is needed.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,6 @@ from src.exceptions.AIAgentExceptions import (
     LLMUnavailableError,
     ModelNotFoundError,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -438,9 +438,7 @@ def test_gemini_generate_returns_text(agent_online: ScenarioAIAgent, monkeypatch
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "candidates": [{"content": {"parts": [{"text": "Test answer"}]}}]
-    }
+    mock_resp.json.return_value = {"candidates": [{"content": {"parts": [{"text": "Test answer"}]}}]}
 
     with patch("src.ai_agent.requests.post", return_value=mock_resp):
         result = agent_online._gemini_generate("hello")
@@ -530,9 +528,7 @@ def test_generate_dispatches_to_gemini_for_online(agent_online: ScenarioAIAgent,
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "candidates": [{"content": {"parts": [{"text": "online answer"}]}}]
-    }
+    mock_resp.json.return_value = {"candidates": [{"content": {"parts": [{"text": "online answer"}]}}]}
 
     with patch("src.ai_agent.requests.post", return_value=mock_resp):
         result = agent_online._generate("hello")

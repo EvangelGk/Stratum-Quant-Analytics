@@ -83,9 +83,7 @@ def test_process_and_save_accepts_lowercase_yfinance_columns(bronze_layer):
     )
 
     bronze_layer._process_and_save(df, "lowercase_test", "yfinance")
-    parquet_path = os.path.join(
-        bronze_layer.base_path, "yfinance", "lowercase_test.parquet"
-    )
+    parquet_path = os.path.join(bronze_layer.base_path, "yfinance", "lowercase_test.parquet")
     assert os.path.exists(parquet_path)
 
 

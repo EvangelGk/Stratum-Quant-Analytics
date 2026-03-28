@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import build_stationary_panel
 
 
@@ -52,11 +53,7 @@ def correl_mtrx(
             "initial_rows",
             "initial_nulls",
         }
-        numeric_columns = [
-            column
-            for column in df.select_dtypes(include=[np.number]).columns
-            if column not in exclude_columns
-        ]
+        numeric_columns = [column for column in df.select_dtypes(include=[np.number]).columns if column not in exclude_columns]
         numeric_df, _ = build_stationary_panel(
             df=df,
             columns=numeric_columns,

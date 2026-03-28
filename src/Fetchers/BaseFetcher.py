@@ -29,7 +29,5 @@ class BaseFetcher(ABC):
     def _get_cached(self, key: str) -> Optional[pd.DataFrame]:
         return self.cache.get(key)
 
-    def _set_cached(
-        self, key: str, data: pd.DataFrame, expire: int = 86400
-    ) -> None:  # 24 hours
+    def _set_cached(self, key: str, data: pd.DataFrame, expire: int = 86400) -> None:  # 24 hours
         self.cache.set(key, data, expire=expire)

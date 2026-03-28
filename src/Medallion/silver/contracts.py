@@ -145,9 +145,7 @@ GOLD_COLUMN_MAP: Dict[str, str] = {
 }
 
 # Columns that GoldLayer guarantees to be present regardless of macro/WB config
-GOLD_REQUIRED_COLUMNS: frozenset = frozenset(
-    GOLD_COLUMN_MAP[k] for k in ("date", "ticker", "close", "log_return", "volume")
-)
+GOLD_REQUIRED_COLUMNS: frozenset = frozenset(GOLD_COLUMN_MAP[k] for k in ("date", "ticker", "close", "log_return", "volume"))
 
 
 def get_series_contract(source: str, entity_name: Optional[str] = None) -> SeriesContract:

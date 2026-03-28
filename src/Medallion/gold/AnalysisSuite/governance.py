@@ -9,6 +9,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from statsmodels.tsa.stattools import adfuller, kpss
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import add_volatility_regime_feature, prepare_supervised_frame
 from .sensitivity_reg import (
     _build_time_series_split,
@@ -19,9 +20,7 @@ from .sensitivity_reg import (
 )
 
 
-def _benjamini_hochberg(
-    p_values: Dict[str, float], alpha: float = 0.05
-) -> Dict[str, bool]:
+def _benjamini_hochberg(p_values: Dict[str, float], alpha: float = 0.05) -> Dict[str, bool]:
     if not p_values:
         return {}
 
@@ -143,7 +142,7 @@ def _compute_baseline_suite(
 
     y_train_clean = y_train_num.dropna()
     if len(y_train_clean) >= 2:
-        recent_mean = float(y_train_clean.iloc[-min(5, len(y_train_clean)):].mean())
+        recent_mean = float(y_train_clean.iloc[-min(5, len(y_train_clean)) :].mean())
     else:
         recent_mean = train_mean
     _safe_metrics("recent_mean_predictor", np.full(len(y_test_num), recent_mean, dtype=float))
@@ -516,12 +515,7 @@ def _compute_model_risk_score(
     perf_r2 = walk_forward_avg_r2 if walk_forward_avg_r2 is not None else oos_r2
     performance_component = min(1.0, max(0.0, _score_from_r2(perf_r2)))
 
-    score = (
-        0.35 * leakage_component
-        + 0.25 * stationarity_component
-        + 0.20 * stability_component
-        + 0.20 * performance_component
-    )
+    score = 0.35 * leakage_component + 0.25 * stationarity_component + 0.20 * stability_component + 0.20 * performance_component
     return float(min(max(score, 0.0), 1.0))
 
 
@@ -617,9 +611,7 @@ def governance_report(
             min_train_rows=min_train_rows,
             requested_macro_lag_days=int(macro_lag_days),
             min_target_horizon_days=int(max(1, min_target_horizon_days)),
-            max_target_horizon_days=(
-                int(max_target_horizon_days) if max_target_horizon_days is not None else None
-            ),
+            max_target_horizon_days=(int(max_target_horizon_days) if max_target_horizon_days is not None else None),
         )
 
         work_df = add_volatility_regime_feature(
@@ -629,11 +621,7 @@ def governance_report(
             window=30,
             threshold_quantile=0.75,
         )
-        extra_regime_features = [
-            feature
-            for feature in ("volatility_regime_high", "rolling_vol_30d")
-            if feature in work_df.columns
-        ]
+        extra_regime_features = [feature for feature in ("volatility_regime_high", "rolling_vol_30d") if feature in work_df.columns]
         model_factors = list(dict.fromkeys(valid_factors + extra_regime_features))
 
         if len(work_df) < max(min_train_rows + 5, 30):
@@ -680,12 +668,7 @@ def governance_report(
             except Exception:
                 kpss_stat, kpss_p_value = np.nan, np.nan
 
-            is_stationary = bool(
-                pd.notna(adf_p_value)
-                and adf_p_value < 0.05
-                and pd.notna(kpss_p_value)
-                and kpss_p_value > 0.05
-            )
+            is_stationary = bool(pd.notna(adf_p_value) and adf_p_value < 0.05 and pd.notna(kpss_p_value) and kpss_p_value > 0.05)
             stationarity[col] = {
                 "status": "ok",
                 "adf_stat": float(adf_stat),
@@ -837,18 +820,10 @@ def governance_report(
         rolling_std = work_df[target].rolling(rolling_window).std().dropna()
         regime_shift = {
             "window": int(rolling_window),
-            "max_rolling_mean": (
-                float(rolling_mean.max()) if not rolling_mean.empty else None
-            ),
-            "min_rolling_mean": (
-                float(rolling_mean.min()) if not rolling_mean.empty else None
-            ),
-            "max_rolling_std": (
-                float(rolling_std.max()) if not rolling_std.empty else None
-            ),
-            "min_rolling_std": (
-                float(rolling_std.min()) if not rolling_std.empty else None
-            ),
+            "max_rolling_mean": (float(rolling_mean.max()) if not rolling_mean.empty else None),
+            "min_rolling_mean": (float(rolling_mean.min()) if not rolling_mean.empty else None),
+            "max_rolling_std": (float(rolling_std.max()) if not rolling_std.empty else None),
+            "min_rolling_std": (float(rolling_std.min()) if not rolling_std.empty else None),
         }
 
         target_train_mean = float(y_train.mean())
@@ -884,32 +859,19 @@ def governance_report(
         )
 
         stationarity_known = [
-            values.get("is_stationary")
-            for values in stationarity.values()
-            if isinstance(values, dict) and values.get("is_stationary") is not None
+            values.get("is_stationary") for values in stationarity.values() if isinstance(values, dict) and values.get("is_stationary") is not None
         ]
         # When no series has enough observations for ADF/KPSS, the ratio is
         # genuinely unknown — use None so downstream scoring applies a
         # neutral (0.5) penalty instead of the worst-case 0.0.
-        stationary_ratio: float | None = (
-            float(
-                sum(1 for value in stationarity_known if value)
-                / len(stationarity_known)
-            )
-            if stationarity_known
-            else None
-        )
+        stationary_ratio: float | None = float(sum(1 for value in stationarity_known if value) / len(stationarity_known)) if stationarity_known else None
         model_risk_score = _compute_model_risk_score(
             leakage_flags_count=len(leakage_flags),
             factors_count=len(model_factors),
             stationarity_ratio=stationary_ratio,
             normalized_shift=float(normalized_shift),
             oos_r2=oos_r2,
-            walk_forward_avg_r2=(
-                walk_forward.get("clipped_avg_r2", walk_forward.get("avg_r2"))
-                if walk_forward.get("status") == "ok"
-                else None
-            ),
+            walk_forward_avg_r2=(walk_forward.get("clipped_avg_r2", walk_forward.get("avg_r2")) if walk_forward.get("status") == "ok" else None),
         )
         trend_volatility = _trend_and_volatility_diagnostics(
             y_true=y_test,
@@ -921,10 +883,7 @@ def governance_report(
         raw_coef = getattr(model_step, "coef_", None)
         if raw_coef is not None:
             coef_arr = np.asarray(raw_coef, dtype=float).reshape(-1)
-            coeffs = {
-                factor: float(coef_arr[idx])
-                for idx, factor in enumerate(retained_features)
-            }
+            coeffs = {factor: float(coef_arr[idx]) for idx, factor in enumerate(retained_features)}
         else:
             coeffs = {factor: 0.0 for factor in retained_features}
 
@@ -937,22 +896,14 @@ def governance_report(
             if isinstance(meta, dict) and key != target and key in valid_factors
         ]
         inferred_target_horizon = int(
-            (
-                (transform_metadata.get(target) or {}).get("target_horizon_days")
-                if isinstance(transform_metadata.get(target), dict)
-                else 1
-            )
-            or 1
+            ((transform_metadata.get(target) or {}).get("target_horizon_days") if isinstance(transform_metadata.get(target), dict) else 1) or 1
         )
         freshness_alignment = {
             "status": "ok",
             "target_horizon_days": inferred_target_horizon,
             "max_publication_lag_days": max(freshness_publication_lags) if freshness_publication_lags else 0,
             "freshness_warn_days": int(max(1, freshness_warn_days)),
-            "lag_alignment_ok": bool(
-                not freshness_publication_lags
-                or max(freshness_publication_lags) <= max(1, freshness_warn_days)
-            ),
+            "lag_alignment_ok": bool(not freshness_publication_lags or max(freshness_publication_lags) <= max(1, freshness_warn_days)),
         }
 
         return {
@@ -989,9 +940,7 @@ def governance_report(
             "multiple_testing": {
                 "method": "benjamini_hochberg",
                 "alpha": 0.05,
-                "significant_factors": [
-                    factor for factor, is_sig in bh_significant.items() if is_sig
-                ],
+                "significant_factors": [factor for factor, is_sig in bh_significant.items() if is_sig],
             },
             "walk_forward": walk_forward,
             "model_risk_score": model_risk_score,
@@ -1016,9 +965,7 @@ def governance_report(
                 "max_vif": float(max(vif_map.values())) if vif_map else None,
                 "transformations": transform_metadata,
                 "min_target_horizon_days": int(max(1, min_target_horizon_days)),
-                "max_target_horizon_days": (
-                    int(max_target_horizon_days) if max_target_horizon_days is not None else None
-                ),
+                "max_target_horizon_days": (int(max_target_horizon_days) if max_target_horizon_days is not None else None),
                 "walk_forward_tune_per_window": bool(walk_forward_tune_per_window),
                 "factor_concentration_warn_threshold": float(factor_concentration_warn_threshold),
             },

@@ -15,6 +15,7 @@ of the underlying AnalysisSuite modules.  When adding parameters to
 ``stress_test``, ``monte_carlo``, ``correl_mtrx`` or ``backtest``, update the
 wrappers here as well so there is no interface divergence over time.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -25,7 +26,11 @@ from src.Medallion.gold.AnalysisSuite.backtest import backtest_pre2020_holdout
 from src.Medallion.gold.AnalysisSuite.correl_mtrx import correl_mtrx
 from src.Medallion.gold.AnalysisSuite.feature_decay import feature_decay_analysis
 from src.Medallion.gold.AnalysisSuite.monte_carlo import monte_carlo
-from src.Medallion.gold.AnalysisSuite.stress_test import PRESET_SCENARIOS, resolve_stress_scenario, stress_test
+from src.Medallion.gold.AnalysisSuite.stress_test import (
+    PRESET_SCENARIOS,
+    resolve_stress_scenario,
+    stress_test,
+)
 
 
 def run_stress_pack(
@@ -38,10 +43,7 @@ def run_stress_pack(
 ) -> Dict[str, Any]:
     """High-level stress pack entrypoint used by UI/reporting layers."""
     if not allow_non_governed_run:
-        raise ValueError(
-            "run_stress_pack requires allow_non_governed_run=True because it bypasses "
-            "GoldLayer governance gate and audit path."
-        )
+        raise ValueError("run_stress_pack requires allow_non_governed_run=True because it bypasses GoldLayer governance gate and audit path.")
     scenario = resolve_stress_scenario(scenario_name=scenario_name, shock_map=custom_shocks)
     stress = stress_test(
         df=df,
@@ -79,10 +81,7 @@ def run_pre2020_backtest(
     allow_non_governed_run: bool = False,
 ) -> Dict[str, Any]:
     if not allow_non_governed_run:
-        raise ValueError(
-            "run_pre2020_backtest requires allow_non_governed_run=True because it bypasses "
-            "GoldLayer governance gate and audit path."
-        )
+        raise ValueError("run_pre2020_backtest requires allow_non_governed_run=True because it bypasses GoldLayer governance gate and audit path.")
     return backtest_pre2020_holdout(
         df=df,
         target=target,

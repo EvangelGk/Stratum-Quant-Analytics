@@ -5,9 +5,7 @@ from src.Fetchers.ProjectConfig import ProjectConfig, RunMode
 
 def test_load_from_env_missing_key(monkeypatch):
     # Ensure dotenv does not reload any stored API keys
-    monkeypatch.setattr(
-        "src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr("src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
     with pytest.raises(ValueError):
         ProjectConfig.load_from_env()
@@ -22,9 +20,7 @@ def test_default_macro_map_includes_vix(monkeypatch):
 
 
 def test_load_from_env_success(monkeypatch):
-    monkeypatch.setattr(
-        "src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr("src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setenv("FRED_API_KEY", "dummy")
     monkeypatch.setenv("ENVIRONMENT", "actual")
     monkeypatch.setenv("DATA_USER_ID", "user_alpha")
@@ -52,9 +48,7 @@ def test_load_from_env_success(monkeypatch):
 
 
 def test_validate_runtime_constraints_fails_on_invalid_ratio(monkeypatch):
-    monkeypatch.setattr(
-        "src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr("src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setenv("FRED_API_KEY", "dummy")
     monkeypatch.setenv("SILVER_MIN_ROWS_RATIO", "2.5")
 

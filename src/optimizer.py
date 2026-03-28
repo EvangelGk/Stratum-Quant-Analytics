@@ -1,10 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
-
+import difflib
+import html
+import itertools
 import json
 import os
-import html
 import subprocess
 import sys
 import time
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 import requests
 
 try:
@@ -23,8 +25,8 @@ except ModuleNotFoundError:
 
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig, RunMode
-from Medallion.MedallionPipeline import MedallionPipeline
 from Medallion.gold.AnalysisSuite.sensitivity_reg import sensitivity_reg
+from Medallion.MedallionPipeline import MedallionPipeline
 from Medallion.silver import contracts as silver_contracts
 
 bootstrap_env_from_secrets(override=False)
@@ -63,46 +65,29 @@ class LlamaQuantAnalyzer:
 
     # Maps diagnostic issue types → relevant source files to include in prompt
     ISSUE_FILE_MAP: Dict[str, List[str]] = {
-        "NEGATIVE_R2":        ["Medallion/gold/AnalysisSuite/sensitivity_reg.py",
-                                "Medallion/gold/AnalysisSuite/governance.py"],
-        "DATA_GAPS":          ["Fetchers/FredFetcher.py",
-                                "Fetchers/WorldBankFetcher.py",
-                                "Fetchers/YFinanceFetcher.py"],
-        "EXCESS_DRAWDOWN":    ["Medallion/gold/AnalysisSuite/stress_test.py"],
-        "MULTICOLLINEARITY":  ["Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
+        "NEGATIVE_R2": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py", "Medallion/gold/AnalysisSuite/governance.py"],
+        "DATA_GAPS": ["Fetchers/FredFetcher.py", "Fetchers/WorldBankFetcher.py", "Fetchers/YFinanceFetcher.py"],
+        "EXCESS_DRAWDOWN": ["Medallion/gold/AnalysisSuite/stress_test.py"],
+        "MULTICOLLINEARITY": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
         "REGIME_INSTABILITY": ["Medallion/gold/AnalysisSuite/elasticity.py"],
-        "OUTLIERS":           ["Medallion/silver/silver.py",
-                                "Medallion/silver/contracts.py"],
-        "SCALING_ISSUE":      ["Medallion/gold/AnalysisSuite/elasticity.py"],
-        "POOR_RISK_ADJ":      ["Medallion/gold/AnalysisSuite/governance.py",
-                                "Medallion/gold/AnalysisSuite/monte_carlo.py"],
-        "LOOKAHEAD_BIAS":     ["Medallion/gold/AnalysisSuite/governance.py",
-                    "Medallion/gold/AnalysisSuite/backtest.py"],
-        "STALE_DATA":         ["Fetchers/FredFetcher.py",
-                    "Fetchers/WorldBankFetcher.py",
-                    "Fetchers/YFinanceFetcher.py"],
-        "DIST_SHIFT":         ["Medallion/gold/AnalysisSuite/governance.py",
-                    "Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
-        "RESIDUAL_AUTOCORR":  ["Medallion/gold/AnalysisSuite/governance.py"],
-        "CI_QUALITY":         ["Medallion/gold/AnalysisSuite/governance.py"],
-        "SIGN_INSTABILITY":   ["Medallion/gold/AnalysisSuite/elasticity.py"],
-        "UNCERTAINTY_GAP":    ["Medallion/gold/AnalysisSuite/monte_carlo.py",
-                    "Medallion/gold/AnalysisSuite/governance.py"],
-        "PIPELINE_ROBUSTNESS": ["Medallion/silver/contracts.py",
-                "Medallion/silver/silver.py",
-                "Fetchers/Factory.py"],
-        "TEMPORAL_INTEGRITY": ["Medallion/gold/AnalysisSuite/governance.py",
-            "Medallion/gold/AnalysisSuite/backtest.py"],
-        "BACKTEST_REALISM": ["Medallion/gold/AnalysisSuite/backtest.py",
-            "Medallion/gold/AnalysisSuite/governance.py"],
-        "EXPLAINABILITY_RISK": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py",
-            "Medallion/gold/AnalysisSuite/elasticity.py"],
-        "FEATURE_SHIFT": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py",
-            "Medallion/gold/AnalysisSuite/governance.py"],
+        "OUTLIERS": ["Medallion/silver/silver.py", "Medallion/silver/contracts.py"],
+        "SCALING_ISSUE": ["Medallion/gold/AnalysisSuite/elasticity.py"],
+        "POOR_RISK_ADJ": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/monte_carlo.py"],
+        "LOOKAHEAD_BIAS": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/backtest.py"],
+        "STALE_DATA": ["Fetchers/FredFetcher.py", "Fetchers/WorldBankFetcher.py", "Fetchers/YFinanceFetcher.py"],
+        "DIST_SHIFT": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
+        "RESIDUAL_AUTOCORR": ["Medallion/gold/AnalysisSuite/governance.py"],
+        "CI_QUALITY": ["Medallion/gold/AnalysisSuite/governance.py"],
+        "SIGN_INSTABILITY": ["Medallion/gold/AnalysisSuite/elasticity.py"],
+        "UNCERTAINTY_GAP": ["Medallion/gold/AnalysisSuite/monte_carlo.py", "Medallion/gold/AnalysisSuite/governance.py"],
+        "PIPELINE_ROBUSTNESS": ["Medallion/silver/contracts.py", "Medallion/silver/silver.py", "Fetchers/Factory.py"],
+        "TEMPORAL_INTEGRITY": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/backtest.py"],
+        "BACKTEST_REALISM": ["Medallion/gold/AnalysisSuite/backtest.py", "Medallion/gold/AnalysisSuite/governance.py"],
+        "EXPLAINABILITY_RISK": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py", "Medallion/gold/AnalysisSuite/elasticity.py"],
+        "FEATURE_SHIFT": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py", "Medallion/gold/AnalysisSuite/governance.py"],
         "RESIDUAL_HETERO": ["Medallion/gold/AnalysisSuite/governance.py"],
         "COVERAGE_CALIBRATION": ["Medallion/gold/AnalysisSuite/governance.py"],
-        "SHAP_STABILITY": ["Medallion/gold/AnalysisSuite/governance.py",
-            "Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
+        "SHAP_STABILITY": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
         "COEFF_CI_OVERLAP": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
     }
 
@@ -391,6 +376,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
         changed_files: List[Path] = []
         # Split on FILE: markers
         import re
+
         blocks = re.split(r"FILE:\s*", analysis)
         for block in blocks[1:]:  # skip preamble
             lines = block.strip().splitlines()
@@ -418,16 +404,12 @@ Apply these changes automatically to the project files? (YES/NO)"""
                     continue
 
                 if full_path not in changed_files and len(changed_files) >= self.MAX_PATCH_FILES:
-                    applied.append(
-                        f"[BLOCKED] {rel_path}: max changed files exceeded ({self.MAX_PATCH_FILES})"
-                    )
+                    applied.append(f"[BLOCKED] {rel_path}: max changed files exceeded ({self.MAX_PATCH_FILES})")
                     continue
 
                 original = full_path.read_text(encoding="utf-8")
                 if old_code not in original:
-                    applied.append(
-                        f"[SKIP] Old code not found in {rel_path} — may already be fixed or Llama hallucinated"
-                    )
+                    applied.append(f"[SKIP] Old code not found in {rel_path} — may already be fixed or Llama hallucinated")
                     continue
                 updated = original.replace(old_code, new_code, 1)
 
@@ -440,9 +422,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
 
                 delta_size = abs(len(new_code) - len(old_code))
                 if (total_changed_chars + delta_size) > self.MAX_PATCH_TOTAL_CHARS:
-                    applied.append(
-                        f"[BLOCKED] {rel_path}: max patch size exceeded ({self.MAX_PATCH_TOTAL_CHARS} chars)"
-                    )
+                    applied.append(f"[BLOCKED] {rel_path}: max patch size exceeded ({self.MAX_PATCH_TOTAL_CHARS} chars)")
                     continue
 
                 if full_path not in backups:
@@ -469,9 +449,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
                 if proc.returncode != 0:
                     for p, txt in backups.items():
                         p.write_text(txt, encoding="utf-8")
-                    applied.append(
-                        "[ROLLED_BACK] Mandatory tests failed; reverted all applied Llama changes"
-                    )
+                    applied.append("[ROLLED_BACK] Mandatory tests failed; reverted all applied Llama changes")
             except Exception as e:
                 for p, txt in backups.items():
                     p.write_text(txt, encoding="utf-8")
@@ -489,10 +467,7 @@ Apply these changes automatically to the project files? (YES/NO)"""
             lines.append(f"  - {issue}")
         var_cvar = diagnostics.get("var_cvar") or {}
         if var_cvar:
-            lines.append(
-                f"VaR95={var_cvar.get('var_95')}  CVaR95={var_cvar.get('cvar_95')}  "
-                f"VaR99={var_cvar.get('var_99')}  CVaR99={var_cvar.get('cvar_99')}"
-            )
+            lines.append(f"VaR95={var_cvar.get('var_95')}  CVaR95={var_cvar.get('cvar_95')}  VaR99={var_cvar.get('var_99')}  CVaR99={var_cvar.get('cvar_99')}")
         risk = diagnostics.get("risk_adjusted_returns") or {}
         if risk:
             lines.append(f"Sharpe={risk.get('sharpe')}  Sortino={risk.get('sortino')}")
@@ -540,9 +515,7 @@ class ApprovalGateway:
             "requested_at": datetime.utcnow().isoformat() + "Z",
             "approved_at": None,
         }
-        self._queue_path.write_text(
-            json.dumps(entry, indent=2, default=str), encoding="utf-8"
-        )
+        self._queue_path.write_text(json.dumps(entry, indent=2, default=str), encoding="utf-8")
         self._emit_pending_approval_notice(entry)
         # Use file polling if forced non-interactive OR if running in non-interactive environment
         if self._force_non_interactive or not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -551,9 +524,7 @@ class ApprovalGateway:
             approved = self._prompt_interactive(description, details)
         entry["status"] = "YES" if approved else "NO"
         entry["approved_at"] = datetime.utcnow().isoformat() + "Z"
-        self._queue_path.write_text(
-            json.dumps(entry, indent=2, default=str), encoding="utf-8"
-        )
+        self._queue_path.write_text(json.dumps(entry, indent=2, default=str), encoding="utf-8")
         self._clear_pending_alert_file()
         return approved
 
@@ -571,8 +542,7 @@ class ApprovalGateway:
             f"Queue     : {self._queue_path}\n"
             f"Respond   : YES/NO in terminal OR run {approval_cmd}\n"
             "-" * 76 + "\n"
-            f"FULL DETAILS:\n{details_text}\n"
-            + "!" * 76
+            f"FULL DETAILS:\n{details_text}\n" + "!" * 76
         )
         print(banner)
         self._notify_desktop_popup(entry)
@@ -599,10 +569,7 @@ class ApprovalGateway:
         try:
             escaped_title = title.replace("'", "''")
             escaped_body = body.replace("'", "''")
-            cmd = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                f"[System.Windows.Forms.MessageBox]::Show('{escaped_body}','{escaped_title}')"
-            )
+            cmd = f"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('{escaped_body}','{escaped_title}')"
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", cmd],
                 capture_output=True,
@@ -616,6 +583,7 @@ class ApprovalGateway:
         """Load .env from project root the first time notifications are attempted."""
         try:
             from dotenv import load_dotenv as _load_dotenv
+
             # Use __file__ to reliably locate the project root (src/../.env)
             _project_root = Path(__file__).resolve().parent.parent
             _env_path = _project_root / ".env"
@@ -685,7 +653,7 @@ class ApprovalGateway:
 
         approval_script = Path(__file__).resolve().parent.parent / "respond_to_approval.py"
         message = (
-            "\U0001F6A8 <b>STRATUM QUANT ANALYTICS — Approval Required</b>\n"
+            "\U0001f6a8 <b>STRATUM QUANT ANALYTICS — Approval Required</b>\n"
             f"<b>Action:</b> {html.escape(action)}\n"
             f"<b>Timeout:</b> {self._timeout}s\n"
             f"<b>Queue:</b> {html.escape(str(self._queue_path))}\n"
@@ -730,11 +698,7 @@ class ApprovalGateway:
             return
         self._load_env_once()
         issue_list = "\n".join(f"  \u2022 {html.escape(str(i))}" for i in issues[:8])
-        text = (
-            "\U0001F916 <b>Optimizer run started</b>\n"
-            f"Found {len(issues)} issue(s):\n{issue_list}\n\n"
-            "Awaiting your approval if AI proposes code changes."
-        )
+        text = f"\U0001f916 <b>Optimizer run started</b>\nFound {len(issues)} issue(s):\n{issue_list}\n\nAwaiting your approval if AI proposes code changes."
         ok, detail = self._send_telegram(text)
         self._log_notification("Telegram/run_start", ok, detail)
         if not ok:
@@ -746,11 +710,8 @@ class ApprovalGateway:
         """Send a completion notification with final score."""
         self._load_env_once()
         issue_list = "\n".join(f"  \u2022 {html.escape(str(i))}" for i in issues[:6])
-        verdict = "\u2705 Target reached!" if "optimized" in status else f"\u26A0\uFE0F {html.escape(status)} (score {score:.0f}/100)"
-        text = (
-            f"\U0001F916 <b>Optimizer finished</b> — {verdict}\n"
-            + (f"Remaining issues:\n{issue_list}" if issues else "No outstanding issues.")
-        )
+        verdict = "\u2705 Target reached!" if "optimized" in status else f"\u26a0\ufe0f {html.escape(status)} (score {score:.0f}/100)"
+        text = f"\U0001f916 <b>Optimizer finished</b> — {verdict}\n" + (f"Remaining issues:\n{issue_list}" if issues else "No outstanding issues.")
         ok, detail = self._send_telegram(text)
         self._log_notification("Telegram/run_finish", ok, detail)
 
@@ -801,10 +762,7 @@ class ApprovalGateway:
             now = time.time()
             if now >= next_progress_log:
                 remaining = max(0, int(deadline - now))
-                print(
-                    f"[OPTIMIZER] Waiting for approval... {remaining}s left | "
-                    f"Queue: {self._queue_path}"
-                )
+                print(f"[OPTIMIZER] Waiting for approval... {remaining}s left | Queue: {self._queue_path}")
                 next_progress_log = now + 10
             time.sleep(2.0)
 
@@ -878,7 +836,7 @@ class AutomatedOptimizationLoop:
         Controlled by OPTIMIZER_AUTO_GIT_PUSH (default: 1).
         Never raises; returns a short status string for logs/adjustments.
         """
-        enabled = (os.getenv("OPTIMIZER_AUTO_GIT_PUSH", "1").strip().lower() not in {"0", "false", "no"})
+        enabled = os.getenv("OPTIMIZER_AUTO_GIT_PUSH", "1").strip().lower() not in {"0", "false", "no"}
         if not enabled:
             return "[GIT] Auto push disabled by OPTIMIZER_AUTO_GIT_PUSH"
 
@@ -936,6 +894,7 @@ class AutomatedOptimizationLoop:
 
             try:
                 import Medallion.gold.AnalysisSuite.backtest as _bt_mod
+
                 importlib.reload(_bt_mod)
                 run_bt = _bt_mod.run_strategy_backtest
             except Exception as exc:
@@ -988,15 +947,11 @@ class AutomatedOptimizationLoop:
                     f"Issue: {html.escape(issue_type or 'N/A')}\n\n"
                     "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
                     "Τα αρχεία επαναφέρθηκαν στην προηγούμενη κατάσταση.\n\n"
-                    "Αποτυχίες:\n"
-                    + "\n".join(f"  • {html.escape(f)}" for f in failures)
+                    "Αποτυχίες:\n" + "\n".join(f"  • {html.escape(f)}" for f in failures)
                 )
                 return False, "[GATE FAILED] " + "; ".join(failures)
 
-            return True, (
-                f"[GATE PASSED] Sharpe={sharpe}, MDD={float(mdd):.2%}, "
-                f"FinalEquity={final_equity:.3f}\u00d7, AnnReturn={float(ann_ret):.1%}"
-            )
+            return True, (f"[GATE PASSED] Sharpe={sharpe}, MDD={float(mdd):.2%}, FinalEquity={final_equity:.3f}\u00d7, AnnReturn={float(ann_ret):.1%}")
         except Exception as exc:
             return True, f"[GATE] Validation error (non-blocking): {exc}"
 
@@ -1037,10 +992,7 @@ class AutomatedOptimizationLoop:
 
     @property
     def safe_user(self) -> str:
-        return (
-            "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(self.user_id))
-            or "default"
-        )
+        return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(self.user_id)) or "default"
 
     @property
     def project_root(self) -> Path:
@@ -1052,15 +1004,7 @@ class AutomatedOptimizationLoop:
 
     @property
     def quality_report_path(self) -> Path:
-        return (
-            self.project_root
-            / "data"
-            / "users"
-            / self.safe_user
-            / "processed"
-            / "quality"
-            / "quality_report.json"
-        )
+        return self.project_root / "data" / "users" / self.safe_user / "processed" / "quality" / "quality_report.json"
 
     def _load_quality_report(self) -> Dict[str, Any]:
         if not self.quality_report_path.exists():
@@ -1175,11 +1119,6 @@ class AutomatedOptimizationLoop:
             score -= min(15.0, float(failed_count))
 
         gov = results.get("governance_report", {}) if isinstance(results.get("governance_report"), dict) else {}
-        oos_r2 = ((gov.get("out_of_sample") or {}).get("r2") if isinstance(gov, dict) else None)
-
-        sens = results.get("sensitivity_regression", {}) if isinstance(results.get("sensitivity_regression"), dict) else {}
-        sens_r2 = sens.get("r2") if isinstance(sens, dict) else None
-
         leakage_flags = gov.get("leakage_flags", []) if isinstance(gov, dict) else []
         if isinstance(leakage_flags, list):
             suspicious = [x for x in leakage_flags if "leakage" in str(x).lower() or "future" in str(x).lower()]
@@ -1237,9 +1176,7 @@ class AutomatedOptimizationLoop:
 
         shift_info = self._check_distribution_shift_proxy(results)
         if shift_info.get("shift_detected"):
-            inconsistencies.append(
-                f"DIST_SHIFT:std_ratio={shift_info.get('std_ratio')},mean_shift={shift_info.get('mean_shift')}"
-            )
+            inconsistencies.append(f"DIST_SHIFT:std_ratio={shift_info.get('std_ratio')},mean_shift={shift_info.get('mean_shift')}")
             score -= 6.0
 
         autocorr_info = self._check_residual_autocorrelation(results)
@@ -1344,10 +1281,7 @@ class AutomatedOptimizationLoop:
         extended = base_start - timedelta(days=365)
         self.start_date_override = extended.strftime("%Y-%m-%d")
         # Secondary API switching is unavailable in current architecture.
-        return (
-            "Fetchers adjustment: extended start_date by 365 days "
-            f"to {self.start_date_override}; secondary API fallback unavailable."
-        )
+        return f"Fetchers adjustment: extended start_date by 365 days to {self.start_date_override}; secondary API fallback unavailable."
 
     # ------------------------------------------------------------------
     # Quantitative Analysis Helpers (Senior Quant Analyst additions)
@@ -1356,12 +1290,7 @@ class AutomatedOptimizationLoop:
     def _compute_var_cvar(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """Extract VaR / CVaR at 95 % and 99 % from Monte Carlo output."""
         mc = results.get("monte_carlo") if isinstance(results.get("monte_carlo"), dict) else {}
-        dist: Any = (
-            mc.get("returns_distribution")
-            or mc.get("final_returns")
-            or mc.get("pct_returns")
-            or mc.get("simulated_final_prices")
-        )
+        dist: Any = mc.get("returns_distribution") or mc.get("final_returns") or mc.get("pct_returns") or mc.get("simulated_final_prices")
         empty: Dict[str, Any] = {"var_95": None, "cvar_95": None, "var_99": None, "cvar_99": None}
         if not isinstance(dist, list) or len(dist) < 10:
             return empty
@@ -1437,10 +1366,7 @@ class AutomatedOptimizationLoop:
         vif_data = sens.get("vif") or sens.get("variance_inflation_factors") or {}
         if not isinstance(vif_data, dict) or not vif_data:
             return {"vif_available": False, "high_vif_factors": [], "max_vif": None}
-        high_vif = [
-            f for f, v in vif_data.items()
-            if isinstance(v, (int, float)) and float(v) > 5.0
-        ]
+        high_vif = [f for f, v in vif_data.items() if isinstance(v, (int, float)) and float(v) > 5.0]
         max_vif = max(
             (float(v) for v in vif_data.values() if isinstance(v, (int, float))),
             default=None,
@@ -2010,7 +1936,7 @@ class AutomatedOptimizationLoop:
         return False, None
 
     def _heteroskedasticity_flag(self, residuals: np.ndarray, predictions: Any) -> tuple[bool, Optional[str]]:
-        e2 = residuals ** 2
+        e2 = residuals**2
         if isinstance(predictions, list):
             try:
                 x = np.array([float(v) for v in predictions if v is not None and np.isfinite(float(v))], dtype=float)
@@ -2047,7 +1973,7 @@ class AutomatedOptimizationLoop:
         issue_type: str,
     ) -> tuple[bool, str]:
         """Use Llama to analyze serious problems (with real source code) and request approval.
-        
+
         If approved → auto-applies the code changes from Llama's output.
         Returns (approved, adjustment_description).
         """
@@ -2080,11 +2006,7 @@ class AutomatedOptimizationLoop:
             return False, f"Skipped: {issue_type} is not a serious problem requiring approval"
 
         # Call Llama with full source code context
-        problem_text = (
-            f"SERIOUS: {issue_type} detected. "
-            f"Score: {diag['score']}/100. "
-            f"Issues: {diag['inconsistencies'][:3]}"
-        )
+        problem_text = f"SERIOUS: {issue_type} detected. Score: {diag['score']}/100. Issues: {diag['inconsistencies'][:3]}"
         llama_result = self._llama.analyze_problem(
             problem_description=problem_text,
             diagnostics=diag,
@@ -2117,10 +2039,7 @@ class AutomatedOptimizationLoop:
 
             # If the built-in smoke-test already rolled back changes, skip further steps.
             if any("[ROLLED_BACK]" in a for a in applied):
-                return True, (
-                    f"[QUANTOS] {issue_type} smoke test failed — changes rolled back.\n"
-                    f"Details: {change_summary}"
-                )
+                return True, (f"[QUANTOS] {issue_type} smoke test failed — changes rolled back.\nDetails: {change_summary}")
 
             # ── Regression Testing Gate: financial-validation before commit ──
             rg_passed, rg_report = self._run_regression_gate(issue_type=issue_type)
@@ -2146,16 +2065,10 @@ class AutomatedOptimizationLoop:
                 f"Full analysis:\n{analysis[:800]}"
             )
         elif approved:
-            return True, (
-                f"[QUANTOS] {issue_type} fix approved (no code changes to apply).\n"
-                f"Analysis:\n{analysis[:800]}"
-            )
+            return True, (f"[QUANTOS] {issue_type} fix approved (no code changes to apply).\nAnalysis:\n{analysis[:800]}")
         else:
             # Still include the full Llama analysis so the owner can review what was proposed
-            return False, (
-                f"[QUANTOS] {issue_type} REJECTED by owner — skipped.\n"
-                f"AI proposed the following (not applied):\n{analysis[:1200]}"
-            )
+            return False, (f"[QUANTOS] {issue_type} REJECTED by owner — skipped.\nAI proposed the following (not applied):\n{analysis[:1200]}")
 
     def run(self) -> Dict[str, Any]:
         final_results: Dict[str, Any] = {}
@@ -2215,11 +2128,7 @@ class AutomatedOptimizationLoop:
             quality = self._load_quality_report()
             diag = self._diagnose(results, quality)
 
-            detected_types = {
-                str(item).split(":", 1)[0]
-                for item in diag.get("inconsistencies", [])
-                if isinstance(item, str) and ":" in item
-            }
+            detected_types = {str(item).split(":", 1)[0] for item in diag.get("inconsistencies", []) if isinstance(item, str) and ":" in item}
             priority_order = [
                 "LOOKAHEAD_BIAS",
                 "TEMPORAL_INTEGRITY",
@@ -2251,25 +2160,14 @@ class AutomatedOptimizationLoop:
                     issue_type=selected_issue,
                 )
                 if approved and selected_issue == "DATA_GAPS":
-                    adjustments.append(
-                        f"[LLAMA AI] Fetchers adjustment: {self._apply_fetcher_adjustment(config)}\n"
-                        f"AI Recommendation:\n{analysis[:300]}"
-                    )
+                    adjustments.append(f"[LLAMA AI] Fetchers adjustment: {self._apply_fetcher_adjustment(config)}\nAI Recommendation:\n{analysis[:300]}")
                 elif approved and selected_issue == "OUTLIERS":
                     self._apply_pipeline_outlier_relaxation(delta=0.5)
-                    adjustments.append(
-                        "[LLAMA AI] Pipeline adjustment: relaxed Silver z-score thresholds by +0.5\n"
-                        f"AI Recommendation:\n{analysis[:300]}"
-                    )
+                    adjustments.append(f"[LLAMA AI] Pipeline adjustment: relaxed Silver z-score thresholds by +0.5\nAI Recommendation:\n{analysis[:300]}")
                 elif approved:
-                    adjustments.append(
-                        f"[LLAMA AI] {selected_issue} remediation approved.\n"
-                        f"AI Recommendation:\n{analysis[:300]}"
-                    )
+                    adjustments.append(f"[LLAMA AI] {selected_issue} remediation approved.\nAI Recommendation:\n{analysis[:300]}")
                 else:
-                    adjustments.append(
-                        f"[LLAMA AI] {selected_issue} remediation REJECTED by owner — skipped"
-                    )
+                    adjustments.append(f"[LLAMA AI] {selected_issue} remediation REJECTED by owner — skipped")
 
             if float(diag["score"]) >= self.target_score:
                 self.records.append(
@@ -2381,9 +2279,7 @@ class AutomatedOptimizationLoop:
                 structural_limits.append("Rolling elasticity CV > 200 %: regime shifts dominate factor sensitivity.")
 
         if not structural_limits and score < self.target_score:
-            structural_limits.append(
-                "Residual variance and regime shifts prevent stable high-confidence fit above target score."
-            )
+            structural_limits.append("Residual variance and regime shifts prevent stable high-confidence fit above target score.")
 
         return {
             "score": score,
@@ -2400,9 +2296,7 @@ class AutomatedOptimizationLoop:
 def main() -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Automated Quant Optimization Loop — owner-only tool."
-    )
+    parser = argparse.ArgumentParser(description="Automated Quant Optimization Loop — owner-only tool.")
     parser.add_argument(
         "--target-score",
         type=float,
@@ -2433,22 +2327,20 @@ if __name__ == "__main__":
 # Full-Stack Audit System
 # ──────────────────────────────────────────────────────────────────────────────
 
-import difflib
-
 # Curated ticker universe organised by GICS sector for diversification analysis.
 # Listed largest-cap-first so the first entry is the safest "add one" suggestion.
 _SECTOR_UNIVERSE: Dict[str, List[str]] = {
-    "Technology":             ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMD", "INTC"],
-    "Energy":                 ["XOM", "CVX", "COP", "SLB", "OKE", "PSX"],
-    "Healthcare":             ["JNJ", "UNH", "PFE", "ABBV", "MRK", "AMGN"],
-    "Financials":             ["JPM", "BAC", "GS", "MS", "WFC", "BLK"],
+    "Technology": ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMD", "INTC"],
+    "Energy": ["XOM", "CVX", "COP", "SLB", "OKE", "PSX"],
+    "Healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "AMGN"],
+    "Financials": ["JPM", "BAC", "GS", "MS", "WFC", "BLK"],
     "Consumer Discretionary": ["AMZN", "TSLA", "HD", "NKE", "MCD"],
-    "Industrials":            ["GE", "CAT", "HON", "BA", "LMT"],
-    "Consumer Staples":       ["WMT", "PG", "KO", "PEP", "COST"],
-    "Materials":              ["LIN", "FCX", "NEM", "APD"],
+    "Industrials": ["GE", "CAT", "HON", "BA", "LMT"],
+    "Consumer Staples": ["WMT", "PG", "KO", "PEP", "COST"],
+    "Materials": ["LIN", "FCX", "NEM", "APD"],
     "Communication Services": ["GOOGL", "META", "NFLX", "DIS", "T"],
-    "Utilities":              ["NEE", "DUK", "SO", "AEP"],
-    "Real Estate":            ["PLD", "AMT", "EQIX", "SPG"],
+    "Utilities": ["NEE", "DUK", "SO", "AEP"],
+    "Real Estate": ["PLD", "AMT", "EQIX", "SPG"],
 }
 
 
@@ -2518,49 +2410,53 @@ class DataFetchingAuditor:
 
         # ── Issue: insufficient ticker count ────────────────────────────────
         if len(tickers) < 5:
-            issues.append({
-                "priority": "🔴",
-                "title": "Insufficient Ticker Universe",
-                "description": (
-                    f"Only {len(tickers)} tickers ({', '.join(tickers or ['none'])}). "
-                    "Statistical robustness requires ≥10 tickers across multiple sectors."
-                ),
-            })
-            if expansion.get("recommended"):
-                proposals.append({
-                    "type": "data_expansion",
-                    "title": f"Add {len(expansion['recommended'])} tickers for sector diversification",
-                    "detail": (
-                        f"Recommended: {', '.join(expansion['recommended'][:5])} — "
-                        f"covers {', '.join(expansion.get('new_sectors', [])[:3])} sectors"
+            issues.append(
+                {
+                    "priority": "🔴",
+                    "title": "Insufficient Ticker Universe",
+                    "description": (
+                        f"Only {len(tickers)} tickers ({', '.join(tickers or ['none'])}). Statistical robustness requires ≥10 tickers across multiple sectors."
                     ),
-                })
+                }
+            )
+            if expansion.get("recommended"):
+                proposals.append(
+                    {
+                        "type": "data_expansion",
+                        "title": f"Add {len(expansion['recommended'])} tickers for sector diversification",
+                        "detail": (
+                            f"Recommended: {', '.join(expansion['recommended'][:5])} — covers {', '.join(expansion.get('new_sectors', [])[:3])} sectors"
+                        ),
+                    }
+                )
 
         # ── Issue: too little historical depth ───────────────────────────────
         start_date = self._get_start_date()
         if start_date:
             try:
                 from datetime import date as _date
+
                 years_of_data = _date.today().year - int(start_date.split("-")[0])
                 if years_of_data < self.MIN_YEARS_DATA:
-                    issues.append({
-                        "priority": "🔴",
-                        "title": "Insufficient Historical Depth",
-                        "description": (
-                            f"start_date={start_date} yields only {years_of_data} years. "
-                            "Minimum 10 years required for statistically robust backtesting "
-                            "across multiple market regimes."
-                        ),
-                    })
+                    issues.append(
+                        {
+                            "priority": "🔴",
+                            "title": "Insufficient Historical Depth",
+                            "description": (
+                                f"start_date={start_date} yields only {years_of_data} years. "
+                                "Minimum 10 years required for statistically robust backtesting "
+                                "across multiple market regimes."
+                            ),
+                        }
+                    )
                     target_start = f"{_date.today().year - 15}-01-01"
-                    proposals.append({
-                        "type": "config_change",
-                        "title": f"Set start_date → {target_start}",
-                        "detail": (
-                            "15 years covers GFC, post-QE bull market, COVID crash, "
-                            "and the 2022 rate-hike regime."
-                        ),
-                    })
+                    proposals.append(
+                        {
+                            "type": "config_change",
+                            "title": f"Set start_date → {target_start}",
+                            "detail": ("15 years covers GFC, post-QE bull market, COVID crash, and the 2022 rate-hike regime."),
+                        }
+                    )
             except (ValueError, IndexError):
                 pass
 
@@ -2571,30 +2467,30 @@ class DataFetchingAuditor:
             null_pct = float(stats.get("null_pct", 0.0))
             if null_pct > self.NULL_PCT_WARN:
                 priority = "🔴" if null_pct > self.NULL_PCT_FAIL else "🟡"
-                issues.append({
-                    "priority": priority,
-                    "title": f"Data Gaps in {ticker}",
-                    "description": (
-                        f"{null_pct:.1f}% null values, {stats.get('rows', 0)} rows, "
-                        f"{stats.get('years', 0):.1f} years of history."
-                    ),
-                })
+                issues.append(
+                    {
+                        "priority": priority,
+                        "title": f"Data Gaps in {ticker}",
+                        "description": (f"{null_pct:.1f}% null values, {stats.get('rows', 0)} rows, {stats.get('years', 0):.1f} years of history."),
+                    }
+                )
 
         # ── Issue: fetcher config may cause rate-limiting ────────────────────
         if fetcher_cfg.get("max_workers", 10) > 8:
-            issues.append({
-                "priority": "🟡",
-                "title": "max_workers may trigger rate-limiting",
-                "description": (
-                    f"max_workers={fetcher_cfg.get('max_workers')} — "
-                    "YFinance and FRED may throttle at >5 concurrent requests."
-                ),
-            })
-            proposals.append({
-                "type": "config_change",
-                "title": "Reduce max_workers=4, increase retry_delay_max=5s",
-                "detail": "Prevents IP-level 429 errors from YFinance and FRED APIs.",
-            })
+            issues.append(
+                {
+                    "priority": "🟡",
+                    "title": "max_workers may trigger rate-limiting",
+                    "description": (f"max_workers={fetcher_cfg.get('max_workers')} — YFinance and FRED may throttle at >5 concurrent requests."),
+                }
+            )
+            proposals.append(
+                {
+                    "type": "config_change",
+                    "title": "Reduce max_workers=4, increase retry_delay_max=5s",
+                    "detail": "Prevents IP-level 429 errors from YFinance and FRED APIs.",
+                }
+            )
 
         health_score = max(0.0, 100.0 - len(issues) * 10.0)
 
@@ -2626,6 +2522,7 @@ class DataFetchingAuditor:
         if master.exists():
             try:
                 import pandas as _pd
+
                 df = _pd.read_parquet(master)
                 if "ticker" in df.columns:
                     return sorted(df["ticker"].dropna().unique().tolist())
@@ -2655,19 +2552,14 @@ class DataFetchingAuditor:
             return {"_error": "master_table.parquet not found"}
         try:
             import pandas as _pd
+
             df = _pd.read_parquet(master)
             if "date" in df.columns:
                 df["date"] = _pd.to_datetime(df["date"], errors="coerce")
 
-            active = tickers or (
-                df["ticker"].dropna().unique().tolist() if "ticker" in df.columns else []
-            )
+            active = tickers or (df["ticker"].dropna().unique().tolist() if "ticker" in df.columns else [])
             for ticker in active:
-                tdf = (
-                    df[df["ticker"].astype(str).str.upper() == ticker.upper()].copy()
-                    if "ticker" in df.columns
-                    else df.copy()
-                )
+                tdf = df[df["ticker"].astype(str).str.upper() == ticker.upper()].copy() if "ticker" in df.columns else df.copy()
                 if tdf.empty:
                     result[ticker] = {"rows": 0, "null_pct": 100.0, "years": 0.0, "status": "MISSING"}
                     continue
@@ -2681,8 +2573,7 @@ class DataFetchingAuditor:
                 status = "OK" if null_pct < 5.0 and years >= self.MIN_YEARS_DATA else "WARN"
                 if null_pct > self.NULL_PCT_FAIL or years < 5:
                     status = "FAIL"
-                result[ticker] = {"rows": len(tdf), "null_pct": round(null_pct, 2),
-                                  "years": round(years, 1), "status": status}
+                result[ticker] = {"rows": len(tdf), "null_pct": round(null_pct, 2), "years": round(years, 1), "status": status}
         except Exception as exc:
             result["_error"] = str(exc)
         return result
@@ -2704,9 +2595,7 @@ class DataFetchingAuditor:
             "diversification_score": round(len(covered) / max(len(_SECTOR_UNIVERSE), 1) * 100, 1),
         }
 
-    def _suggest_ticker_expansion(
-        self, current: List[str], density: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _suggest_ticker_expansion(self, current: List[str], density: Dict[str, Any]) -> Dict[str, Any]:
         ts = {t.upper() for t in current}
         recommended: List[str] = []
         new_sectors: List[str] = []
@@ -2751,10 +2640,20 @@ class TelegramHITL:
     _TICKER_NO = "ticker_no"
 
     # Finance keywords that trigger 🔴 priority tag on the diff message
-    _FINANCE_KW = frozenset({
-        "sharpe", "calmar", "drawdown", "log_ret", "backtest",
-        "equity", "compounding", "cumprod", "cumsum", "sortino",
-    })
+    _FINANCE_KW = frozenset(
+        {
+            "sharpe",
+            "calmar",
+            "drawdown",
+            "log_ret",
+            "backtest",
+            "equity",
+            "compounding",
+            "cumprod",
+            "cumsum",
+            "sortino",
+        }
+    )
 
     def __init__(self, timeout_seconds: int = 300) -> None:
         self._timeout = timeout_seconds
@@ -2768,6 +2667,7 @@ class TelegramHITL:
         """Load credentials from env/.env. Returns True if both are set."""
         try:
             from dotenv import load_dotenv as _ld
+
             _ld(Path(__file__).resolve().parents[1] / ".env", override=False)
         except Exception:
             pass
@@ -2819,9 +2719,7 @@ class TelegramHITL:
                 cb = upd.get("callback_query", {})
                 data = str(cb.get("data", ""))
                 if data in valid:
-                    self._call("answerCallbackQuery",
-                               callback_query_id=cb.get("id", ""),
-                               text="Recorded ✓")
+                    self._call("answerCallbackQuery", callback_query_id=cb.get("id", ""), text="Recorded ✓")
                     return data
         return "timeout"
 
@@ -2846,20 +2744,13 @@ class TelegramHITL:
 
         issues_txt = ""
         for i, iss in enumerate(issues[:5], 1):
-            issues_txt += (
-                f"\n{i}. {iss.get('priority','⚪')} "
-                f"<b>{html.escape(iss.get('title',''))}</b>: "
-                f"{html.escape(iss.get('description','')[:200])}"
-            )
+            issues_txt += f"\n{i}. {iss.get('priority', '⚪')} <b>{html.escape(iss.get('title', ''))}</b>: {html.escape(iss.get('description', '')[:200])}"
         if not issues_txt:
             issues_txt = "\nNo critical issues detected. ✅"
 
         props_txt = ""
         for p in proposals[:4]:
-            props_txt += (
-                f"\n🛠 <b>{html.escape(p.get('title',''))}</b>\n"
-                f"   ↳ {html.escape(p.get('detail','')[:160])}"
-            )
+            props_txt += f"\n🛠 <b>{html.escape(p.get('title', ''))}</b>\n   ↳ {html.escape(p.get('detail', '')[:160])}"
         if not props_txt:
             props_txt = "\nNo changes proposed."
 
@@ -2911,11 +2802,15 @@ class TelegramHITL:
         if not self._load():
             return "timeout"
 
-        diff_lines = list(difflib.unified_diff(
-            old_code.splitlines(keepends=True),
-            new_code.splitlines(keepends=True),
-            fromfile=f"a/{filename}", tofile=f"b/{filename}", n=2,
-        ))
+        diff_lines = list(
+            difflib.unified_diff(
+                old_code.splitlines(keepends=True),
+                new_code.splitlines(keepends=True),
+                fromfile=f"a/{filename}",
+                tofile=f"b/{filename}",
+                n=2,
+            )
+        )
         MAX = 28
         if len(diff_lines) > MAX:
             shown = "".join(diff_lines[:MAX]) + f"\n… (+{len(diff_lines) - MAX} lines)"
@@ -2941,10 +2836,12 @@ class TelegramHITL:
 
         self._send(
             msg,
-            markup=self._keyboard([
-                ("✅ ACCEPT & PUSH", self._ACCEPT),
-                ("❌ REJECT",        self._REJECT),
-            ]),
+            markup=self._keyboard(
+                [
+                    ("✅ ACCEPT & PUSH", self._ACCEPT),
+                    ("❌ REJECT", self._REJECT),
+                ]
+            ),
         )
         return self._poll(self._timeout, frozenset({self._ACCEPT, self._REJECT}))
 
@@ -2966,13 +2863,14 @@ class TelegramHITL:
         )
         self._send(
             msg,
-            markup=self._keyboard([
-                ("✅ Yes, expand",      self._TICKER_YES),
-                ("❌ No, keep current", self._TICKER_NO),
-            ]),
+            markup=self._keyboard(
+                [
+                    ("✅ Yes, expand", self._TICKER_YES),
+                    ("❌ No, keep current", self._TICKER_NO),
+                ]
+            ),
         )
-        return self._poll(min(120, self._timeout),
-                          frozenset({self._TICKER_YES, self._TICKER_NO}))
+        return self._poll(min(120, self._timeout), frozenset({self._TICKER_YES, self._TICKER_NO}))
 
     def notify(self, text: str) -> bool:
         """Send a plain notification without buttons."""
@@ -3024,11 +2922,7 @@ class FullStackAuditOrchestrator:
         print("\n[Phase 2] Financial Logic Audit (AI scan) …")
         llama = LlamaQuantAnalyzer(src_root=self._src)
         bug_scan = llama.scan_for_bugs()
-        finance_issues = (
-            self._extract_finance_issues(bug_scan["analysis"])
-            if bug_scan.get("success") and not bug_scan.get("no_bugs_found")
-            else []
-        )
+        finance_issues = self._extract_finance_issues(bug_scan["analysis"]) if bug_scan.get("success") and not bug_scan.get("no_bugs_found") else []
         print(f"  Finance issues found: {len(finance_issues)}")
 
         # ── Score calculation ─────────────────────────────────────────────────
@@ -3037,12 +2931,16 @@ class FullStackAuditOrchestrator:
         current_score = max(0.0, 100.0 - data_penalty - logic_penalty)
         projected_score = min(95.0, current_score + (data_penalty + logic_penalty) * 0.75)
 
-        _log_optimizer_telemetry(self._root, "full_stack_audit_started", {
-            "ticker_count": len(fetch_audit["tickers"]),
-            "data_issues": len(fetch_audit["issues"]),
-            "finance_issues": len(finance_issues),
-            "current_score": round(current_score, 1),
-        })
+        _log_optimizer_telemetry(
+            self._root,
+            "full_stack_audit_started",
+            {
+                "ticker_count": len(fetch_audit["tickers"]),
+                "data_issues": len(fetch_audit["issues"]),
+                "finance_issues": len(finance_issues),
+                "current_score": round(current_score, 1),
+            },
+        )
 
         # ── Phase 3: Telegram Report ──────────────────────────────────────────
         print("\n[Phase 3] Sending Telegram Audit Report …")
@@ -3061,16 +2959,12 @@ class FullStackAuditOrchestrator:
             )
             if decision in (TelegramHITL._TICKER_YES, TelegramHITL._ACCEPT):
                 self._apply_ticker_expansion(rec)
-                _log_optimizer_telemetry(self._root, "ticker_expansion_accepted",
-                                         {"added": rec})
+                _log_optimizer_telemetry(self._root, "ticker_expansion_accepted", {"added": rec})
                 self._hitl.notify(
-                    f"✅ <b>Ticker expansion accepted.</b>\n"
-                    f"Added: <code>{', '.join(rec)}</code>\n"
-                    "These tickers will be fetched on the next pipeline run."
+                    f"✅ <b>Ticker expansion accepted.</b>\nAdded: <code>{', '.join(rec)}</code>\nThese tickers will be fetched on the next pipeline run."
                 )
             else:
-                _log_optimizer_telemetry(self._root, "ticker_expansion_rejected",
-                                         {"decision": decision})
+                _log_optimizer_telemetry(self._root, "ticker_expansion_rejected", {"decision": decision})
                 self._hitl.notify("ℹ️ Ticker expansion rejected — keeping current universe.")
 
         # ── Phase 5: Code Fix Approval ────────────────────────────────────────
@@ -3094,16 +2988,16 @@ class FullStackAuditOrchestrator:
     def _extract_finance_issues(self, analysis: str) -> List[Dict[str, Any]]:
         """Parse AI output and tag issues with 🔴/🟡 priority."""
         KEYWORDS: Dict[str, tuple] = {
-            "sharpe":          ("🔴", "Sharpe Ratio Calculation"),
-            "calmar":          ("🔴", "Calmar Ratio Calculation"),
-            "drawdown":        ("🔴", "Max Drawdown Logic"),
-            "compounding":     ("🔴", "Compounding / Equity Curve"),
-            "log_ret":         ("🔴", "Log-Returns Consistency"),
-            "overflow":        ("🔴", "Numerical Overflow"),
-            "division by zero":("🔴", "Division by Zero Risk"),
-            "documentation":   ("🟡", "Documentation"),
-            "type hint":       ("🟡", "Type Annotations"),
-            "naming":          ("🟡", "Variable Naming"),
+            "sharpe": ("🔴", "Sharpe Ratio Calculation"),
+            "calmar": ("🔴", "Calmar Ratio Calculation"),
+            "drawdown": ("🔴", "Max Drawdown Logic"),
+            "compounding": ("🔴", "Compounding / Equity Curve"),
+            "log_ret": ("🔴", "Log-Returns Consistency"),
+            "overflow": ("🔴", "Numerical Overflow"),
+            "division by zero": ("🔴", "Division by Zero Risk"),
+            "documentation": ("🟡", "Documentation"),
+            "type hint": ("🟡", "Type Annotations"),
+            "naming": ("🟡", "Variable Naming"),
         }
         seen: set = set()
         issues: List[Dict[str, Any]] = []
@@ -3112,16 +3006,14 @@ class FullStackAuditOrchestrator:
             if kw in low and title not in seen:
                 seen.add(title)
                 idx = low.find(kw)
-                snippet = analysis[max(0, idx - 20): idx + 150].replace("\n", " ").strip()
-                issues.append({"priority": pri, "title": title,
-                                "description": snippet[:200]})
+                snippet = analysis[max(0, idx - 20) : idx + 150].replace("\n", " ").strip()
+                issues.append({"priority": pri, "title": title, "description": snippet[:200]})
         return issues
 
-    def _handle_code_fix(
-        self, llama: "LlamaQuantAnalyzer", bug_scan: Dict[str, Any]
-    ) -> str:
+    def _handle_code_fix(self, llama: "LlamaQuantAnalyzer", bug_scan: Dict[str, Any]) -> str:
         """Send diff + approval keyboard and apply/revert based on decision."""
         import re as _re
+
         analysis = bug_scan.get("analysis", "")
         pat = _re.compile(r"<<<OLD>>>(.*?)<<<NEW>>>(.*?)<<<END>>>", _re.DOTALL)
         m = pat.search(analysis)
@@ -3137,19 +3029,17 @@ class FullStackAuditOrchestrator:
             desc = "AI-proposed improvements"
 
         decision = self._hitl.send_code_diff_with_approval(
-            old_code=old_code, new_code=new_code,
-            filename=fname, description=desc,
+            old_code=old_code,
+            new_code=new_code,
+            filename=fname,
+            description=desc,
         )
 
         if decision == TelegramHITL._ACCEPT:
             applied = llama.apply_code_changes(analysis)
             if any("[ROLLED_BACK]" in a for a in applied):
-                self._hitl.notify(
-                    "⚠️ <b>Smoke test failed — changes rolled back.</b>\n"
-                    + ", ".join(applied[:3])
-                )
-                _log_optimizer_telemetry(self._root, "code_fix_smoke_failed",
-                                         {"applied": applied})
+                self._hitl.notify("⚠️ <b>Smoke test failed — changes rolled back.</b>\n" + ", ".join(applied[:3]))
+                _log_optimizer_telemetry(self._root, "code_fix_smoke_failed", {"applied": applied})
                 return "smoke_failed"
 
             # Financial regression gate
@@ -3161,43 +3051,45 @@ class FullStackAuditOrchestrator:
                     "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
                     f"Details: {html.escape(rg_report[:400])}"
                 )
-                _log_optimizer_telemetry(self._root, "code_fix_regression_failed",
-                                         {"report": rg_report})
+                _log_optimizer_telemetry(self._root, "code_fix_regression_failed", {"report": rg_report})
                 return "regression_failed"
 
             ver = self._bump_version()
             git_status = self._git_push(f"full_stack_audit_{self._user_id}")
-            _log_optimizer_telemetry(self._root, "code_fix_accepted", {
-                "applied": applied, "version": ver, "git": git_status,
-            })
-            self._hitl.notify(
-                f"✅ <b>Code fix applied and pushed.</b>\n"
-                f"Changes: {', '.join(applied[:3])}\n"
-                f"Version: {ver}\n"
-                f"Git: {git_status}"
+            _log_optimizer_telemetry(
+                self._root,
+                "code_fix_accepted",
+                {
+                    "applied": applied,
+                    "version": ver,
+                    "git": git_status,
+                },
             )
+            self._hitl.notify(f"✅ <b>Code fix applied and pushed.</b>\nChanges: {', '.join(applied[:3])}\nVersion: {ver}\nGit: {git_status}")
         else:
             _log_optimizer_telemetry(self._root, "code_fix_rejected", {"decision": decision})
-            self._hitl.notify(
-                f"ℹ️ Code fix <b>rejected</b>. Decision: {decision}"
-            )
+            self._hitl.notify(f"ℹ️ Code fix <b>rejected</b>. Decision: {decision}")
 
         return decision
 
     def _financial_regression_gate(self) -> tuple:
         """Run backtest on live data; return (passed, report_str)."""
         import importlib
+
         master = self._root / "data" / "gold" / "master_table.parquet"
         if not master.exists():
             return True, "[GATE] No price data — skipped"
         try:
             import sys as _sys
+
             src_str = str(self._src)
             if src_str not in _sys.path:
                 _sys.path.insert(0, src_str)
             import Medallion.gold.AnalysisSuite.backtest as _bt
+
             importlib.reload(_bt)
             import pandas as _pd
+
             df = _pd.read_parquet(master)
             pcol = "adj_close" if "adj_close" in df.columns else "close"
             if pcol not in df.columns:
@@ -3234,6 +3126,7 @@ class FullStackAuditOrchestrator:
         env_path = self._root / ".env"
         try:
             import re as _re
+
             existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
             current = [t.strip().upper() for t in os.getenv("TARGET_TICKERS", "").split(",") if t.strip()]
             all_t = list(dict.fromkeys(current + [t.upper() for t in new_tickers]))
@@ -3245,6 +3138,7 @@ class FullStackAuditOrchestrator:
 
     def _bump_version(self) -> str:
         import re as _re
+
         toml = self._root / "pyproject.toml"
         if not toml.exists():
             return "version-not-found"
@@ -3290,17 +3184,12 @@ def run_full_stack_audit(
     to Telegram → waits for inline-keyboard approval → applies and pushes.
     """
     root = project_root or Path(__file__).resolve().parents[1]
-    return FullStackAuditOrchestrator(
-        project_root=root, user_id=user_id, hitl_timeout=hitl_timeout
-    ).run()
+    return FullStackAuditOrchestrator(project_root=root, user_id=user_id, hitl_timeout=hitl_timeout).run()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Pillar 2 — Parameter Optimisation: Grid Search over Backtest Hyperparameters
 # ──────────────────────────────────────────────────────────────────────────────
-
-import itertools
-import pandas as pd
 
 
 def grid_search_backtest(
@@ -3392,21 +3281,23 @@ def grid_search_backtest(
             records.append(row)
         except Exception as exc:
             # Log failed combinations but keep grid search running
-            records.append({
-                "rolling_window": window,
-                "z_threshold": threshold,
-                "sortino_ratio": None,
-                "sharpe_ratio": None,
-                "annualized_return": None,
-                "annualized_volatility": None,
-                "max_drawdown": None,
-                "profit_factor": None,
-                "calmar_ratio": None,
-                "total_trades": None,
-                "win_rate": None,
-                "total_days": None,
-                "error": str(exc),
-            })
+            records.append(
+                {
+                    "rolling_window": window,
+                    "z_threshold": threshold,
+                    "sortino_ratio": None,
+                    "sharpe_ratio": None,
+                    "annualized_return": None,
+                    "annualized_volatility": None,
+                    "max_drawdown": None,
+                    "profit_factor": None,
+                    "calmar_ratio": None,
+                    "total_trades": None,
+                    "win_rate": None,
+                    "total_days": None,
+                    "error": str(exc),
+                }
+            )
 
     # ── Rank by Sortino Ratio (descending); push None/-inf to the bottom ─────
     def _sort_key(row: dict) -> float:
@@ -3422,6 +3313,7 @@ def grid_search_backtest(
     if output_path:
         try:
             import pandas as _pd
+
             df = _pd.DataFrame(ranked)
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(output_path, index=False)
@@ -3429,5 +3321,3 @@ def grid_search_backtest(
             pass  # Non-fatal: metrics already returned in-memory
 
     return top
-
-

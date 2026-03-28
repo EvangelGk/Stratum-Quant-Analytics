@@ -42,7 +42,9 @@ ANALYSIS_HELP: dict[str, dict[str, str]] = {
     "correlation_matrix": {
         "title": "Correlation Matrix",
         "what": "Measures linear relationships between every pair of variables (assets + macro factors).",
-        "read": "Values range from −1 (perfect negative) to +1 (perfect positive). Look for values above ±0.7 — those signal strong dependencies worth watching.",
+        "read": (
+            "Values range from −1 (perfect negative) to +1 (perfect positive). Look for values above ±0.7 — those signal strong dependencies worth watching."
+        ),
         "use": "Identify which macro factors move together with a stock, or which assets offset each other in a portfolio.",
     },
     "governance_report": {
