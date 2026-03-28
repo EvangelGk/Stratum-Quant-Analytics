@@ -2,9 +2,10 @@
 scheduler_batch.py — Pillar 4: Always-On Scheduler entry point.
 
 Executed by .github/workflows/optimizer-scheduler.yml every 24 hours.
-Runs in two phases:
+Runs in three phases:
   1. Full Medallion pipeline  (src/main.py)
   2. Grid-search backtest optimisation (src/optimizer.py → grid_search_backtest)
+  3. Full-Stack Audit with Telegram HITL (src/optimizer.py → run_full_stack_audit)
 
 Artifacts written to output/ are then committed back to the repo by the
 workflow's "Commit and push" step.
@@ -135,8 +136,35 @@ def run_grid_search() -> None:
         print(f"[scheduler_batch] ✗ Grid search error (non-fatal): {exc}", file=sys.stderr)
 
 
+def run_full_stack_audit_phase() -> None:
+    """Phase 3 — Full-Stack Audit with Telegram HITL."""
+    try:
+        if str(SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(SRC_DIR))
+        if str(REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT))
+
+        from optimizer import run_full_stack_audit  # type: ignore[import]
+
+        user_id = os.getenv("DATA_USER_ID", "default")
+        timeout = int(os.getenv("FULL_STACK_AUDIT_TIMEOUT", "300"))
+
+        print(f"[scheduler_batch] Running Full-Stack Audit (timeout={timeout}s) ...")
+        result = run_full_stack_audit(
+            project_root=REPO_ROOT,
+            user_id=user_id,
+            hitl_timeout=timeout,
+        )
+        decision = result.get("hitl_decision", "n/a")
+        print(f"[scheduler_batch] ✓ Full-Stack Audit complete. HITL decision: {decision}")
+    except Exception as exc:
+        # Non-fatal: audit failure must not block artifact commits.
+        print(f"[scheduler_batch] ✗ Full-Stack Audit error (non-fatal): {exc}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     print(f"[scheduler_batch] Starting at {datetime.now(timezone.utc).isoformat()}")
     run_pipeline()
     run_grid_search()
+    run_full_stack_audit_phase()
     print(f"[scheduler_batch] All phases done at {datetime.now(timezone.utc).isoformat()}")

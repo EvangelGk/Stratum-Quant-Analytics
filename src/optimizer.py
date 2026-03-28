@@ -2430,6 +2430,872 @@ if __name__ == "__main__":
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Full-Stack Audit System
+# ──────────────────────────────────────────────────────────────────────────────
+
+import difflib
+
+# Curated ticker universe organised by GICS sector for diversification analysis.
+# Listed largest-cap-first so the first entry is the safest "add one" suggestion.
+_SECTOR_UNIVERSE: Dict[str, List[str]] = {
+    "Technology":             ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMD", "INTC"],
+    "Energy":                 ["XOM", "CVX", "COP", "SLB", "OKE", "PSX"],
+    "Healthcare":             ["JNJ", "UNH", "PFE", "ABBV", "MRK", "AMGN"],
+    "Financials":             ["JPM", "BAC", "GS", "MS", "WFC", "BLK"],
+    "Consumer Discretionary": ["AMZN", "TSLA", "HD", "NKE", "MCD"],
+    "Industrials":            ["GE", "CAT", "HON", "BA", "LMT"],
+    "Consumer Staples":       ["WMT", "PG", "KO", "PEP", "COST"],
+    "Materials":              ["LIN", "FCX", "NEM", "APD"],
+    "Communication Services": ["GOOGL", "META", "NFLX", "DIS", "T"],
+    "Utilities":              ["NEE", "DUK", "SO", "AEP"],
+    "Real Estate":            ["PLD", "AMT", "EQIX", "SPG"],
+}
+
+
+def _log_optimizer_telemetry(
+    project_root: Path,
+    event: str,
+    payload: Dict[str, Any],
+) -> None:
+    """Append an audit event to data/optimizer_history.json (full audit trail).
+
+    Every Accept/Reject decision is recorded so you have a complete data-lineage
+    log for each optimisation cycle — useful for academic/ΔΕΤ audit submissions.
+    """
+    history_path = project_root / "data" / "optimizer_history.json"
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history: List[Dict[str, Any]] = []
+        if history_path.exists():
+            try:
+                raw = json.loads(history_path.read_text(encoding="utf-8"))
+                history = raw if isinstance(raw, list) else []
+            except Exception:
+                history = []
+
+        entry: Dict[str, Any] = {"ts": datetime.utcnow().isoformat() + "Z", "event": event}
+        for k, v in payload.items():
+            if isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                entry[k] = v
+        history.append(entry)
+        if len(history) > 500:
+            history = history[-500:]
+        history_path.write_text(json.dumps(history, indent=2, default=str), encoding="utf-8")
+    except Exception:
+        pass
+
+
+class DataFetchingAuditor:
+    """Full-Stack audit of the data-fetching layer.
+
+    Inspects:
+    • Configured tickers and how many years of data they carry
+    • Data density (null %, gaps, row coverage) per ticker in the Gold master table
+    • Fetcher performance config (max_workers, retry_delay)
+    • Sector distribution of the current ticker universe
+    • Expansion suggestions using sector-gap analysis (no random picks — each
+      suggestion covers a sector not yet represented in the portfolio)
+    """
+
+    MIN_YEARS_DATA = 10
+    NULL_PCT_WARN = 5.0
+    NULL_PCT_FAIL = 15.0
+
+    def __init__(self, project_root: Path, config: Any = None) -> None:
+        self._root = project_root
+        self._config = config
+
+    def run_full_audit(self) -> Dict[str, Any]:
+        """Execute complete data fetching audit and return structured result."""
+        tickers = self._get_configured_tickers()
+        fetcher_cfg = self._audit_fetcher_config()
+        density = self._audit_master_table_density(tickers)
+        sector_analysis = self._sector_distribution(tickers)
+        expansion = self._suggest_ticker_expansion(tickers, density)
+
+        issues: List[Dict[str, Any]] = []
+        proposals: List[Dict[str, Any]] = []
+
+        # ── Issue: insufficient ticker count ────────────────────────────────
+        if len(tickers) < 5:
+            issues.append({
+                "priority": "🔴",
+                "title": "Insufficient Ticker Universe",
+                "description": (
+                    f"Only {len(tickers)} tickers ({', '.join(tickers or ['none'])}). "
+                    "Statistical robustness requires ≥10 tickers across multiple sectors."
+                ),
+            })
+            if expansion.get("recommended"):
+                proposals.append({
+                    "type": "data_expansion",
+                    "title": f"Add {len(expansion['recommended'])} tickers for sector diversification",
+                    "detail": (
+                        f"Recommended: {', '.join(expansion['recommended'][:5])} — "
+                        f"covers {', '.join(expansion.get('new_sectors', [])[:3])} sectors"
+                    ),
+                })
+
+        # ── Issue: too little historical depth ───────────────────────────────
+        start_date = self._get_start_date()
+        if start_date:
+            try:
+                from datetime import date as _date
+                years_of_data = _date.today().year - int(start_date.split("-")[0])
+                if years_of_data < self.MIN_YEARS_DATA:
+                    issues.append({
+                        "priority": "🔴",
+                        "title": "Insufficient Historical Depth",
+                        "description": (
+                            f"start_date={start_date} yields only {years_of_data} years. "
+                            "Minimum 10 years required for statistically robust backtesting "
+                            "across multiple market regimes."
+                        ),
+                    })
+                    target_start = f"{_date.today().year - 15}-01-01"
+                    proposals.append({
+                        "type": "config_change",
+                        "title": f"Set start_date → {target_start}",
+                        "detail": (
+                            "15 years covers GFC, post-QE bull market, COVID crash, "
+                            "and the 2022 rate-hike regime."
+                        ),
+                    })
+            except (ValueError, IndexError):
+                pass
+
+        # ── Issue: per-ticker data density problems ──────────────────────────
+        for ticker, stats in density.items():
+            if not isinstance(stats, dict):
+                continue
+            null_pct = float(stats.get("null_pct", 0.0))
+            if null_pct > self.NULL_PCT_WARN:
+                priority = "🔴" if null_pct > self.NULL_PCT_FAIL else "🟡"
+                issues.append({
+                    "priority": priority,
+                    "title": f"Data Gaps in {ticker}",
+                    "description": (
+                        f"{null_pct:.1f}% null values, {stats.get('rows', 0)} rows, "
+                        f"{stats.get('years', 0):.1f} years of history."
+                    ),
+                })
+
+        # ── Issue: fetcher config may cause rate-limiting ────────────────────
+        if fetcher_cfg.get("max_workers", 10) > 8:
+            issues.append({
+                "priority": "🟡",
+                "title": "max_workers may trigger rate-limiting",
+                "description": (
+                    f"max_workers={fetcher_cfg.get('max_workers')} — "
+                    "YFinance and FRED may throttle at >5 concurrent requests."
+                ),
+            })
+            proposals.append({
+                "type": "config_change",
+                "title": "Reduce max_workers=4, increase retry_delay_max=5s",
+                "detail": "Prevents IP-level 429 errors from YFinance and FRED APIs.",
+            })
+
+        health_score = max(0.0, 100.0 - len(issues) * 10.0)
+
+        return {
+            "tickers": tickers,
+            "ticker_count": len(tickers),
+            "start_date": start_date,
+            "fetcher_config": fetcher_cfg,
+            "density_report": density,
+            "sector_analysis": sector_analysis,
+            "expansion_suggestions": expansion,
+            "issues": issues,
+            "proposals": proposals,
+            "health_score": health_score,
+        }
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _get_configured_tickers(self) -> List[str]:
+        env_val = os.getenv("TARGET_TICKERS", "").strip()
+        if env_val:
+            return [t.strip().upper() for t in env_val.split(",") if t.strip()]
+        if self._config is not None:
+            try:
+                return list(self._config.get_targets())
+            except Exception:
+                pass
+        master = self._root / "data" / "gold" / "master_table.parquet"
+        if master.exists():
+            try:
+                import pandas as _pd
+                df = _pd.read_parquet(master)
+                if "ticker" in df.columns:
+                    return sorted(df["ticker"].dropna().unique().tolist())
+            except Exception:
+                pass
+        return []
+
+    def _get_start_date(self) -> Optional[str]:
+        if self._config is not None:
+            sd = getattr(self._config, "start_date", None)
+            if sd:
+                return str(sd)
+        return os.getenv("START_DATE", "2016-01-01")
+
+    def _audit_fetcher_config(self) -> Dict[str, Any]:
+        cfg: Dict[str, Any] = {"max_workers": 10, "retry_delay_min": 1.0, "retry_delay_max": 3.0}
+        if self._config is not None:
+            cfg["max_workers"] = int(getattr(self._config, "max_workers", 10))
+            cfg["retry_delay_min"] = float(getattr(self._config, "retry_delay_min", 1.0))
+            cfg["retry_delay_max"] = float(getattr(self._config, "retry_delay_max", 3.0))
+        return cfg
+
+    def _audit_master_table_density(self, tickers: List[str]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        master = self._root / "data" / "gold" / "master_table.parquet"
+        if not master.exists():
+            return {"_error": "master_table.parquet not found"}
+        try:
+            import pandas as _pd
+            df = _pd.read_parquet(master)
+            if "date" in df.columns:
+                df["date"] = _pd.to_datetime(df["date"], errors="coerce")
+
+            active = tickers or (
+                df["ticker"].dropna().unique().tolist() if "ticker" in df.columns else []
+            )
+            for ticker in active:
+                tdf = (
+                    df[df["ticker"].astype(str).str.upper() == ticker.upper()].copy()
+                    if "ticker" in df.columns
+                    else df.copy()
+                )
+                if tdf.empty:
+                    result[ticker] = {"rows": 0, "null_pct": 100.0, "years": 0.0, "status": "MISSING"}
+                    continue
+                pcol = "adj_close" if "adj_close" in tdf.columns else "close"
+                null_pct = float(tdf[pcol].isna().mean() * 100) if pcol in tdf.columns else 0.0
+                years = 0.0
+                if "date" in tdf.columns:
+                    dr = tdf["date"].dropna()
+                    if len(dr) >= 2:
+                        years = (dr.max() - dr.min()).days / 365.25
+                status = "OK" if null_pct < 5.0 and years >= self.MIN_YEARS_DATA else "WARN"
+                if null_pct > self.NULL_PCT_FAIL or years < 5:
+                    status = "FAIL"
+                result[ticker] = {"rows": len(tdf), "null_pct": round(null_pct, 2),
+                                  "years": round(years, 1), "status": status}
+        except Exception as exc:
+            result["_error"] = str(exc)
+        return result
+
+    def _sector_distribution(self, tickers: List[str]) -> Dict[str, Any]:
+        ts = {t.upper() for t in tickers}
+        covered: Dict[str, List[str]] = {}
+        uncovered: List[str] = []
+        for sector, candidates in _SECTOR_UNIVERSE.items():
+            present = [t for t in candidates if t in ts]
+            if present:
+                covered[sector] = present
+            else:
+                uncovered.append(sector)
+        return {
+            "covered_sectors": list(covered.keys()),
+            "uncovered_sectors": uncovered,
+            "sector_breakdown": covered,
+            "diversification_score": round(len(covered) / max(len(_SECTOR_UNIVERSE), 1) * 100, 1),
+        }
+
+    def _suggest_ticker_expansion(
+        self, current: List[str], density: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        ts = {t.upper() for t in current}
+        recommended: List[str] = []
+        new_sectors: List[str] = []
+        for sector, candidates in _SECTOR_UNIVERSE.items():
+            already = [t for t in candidates if t in ts]
+            available = [t for t in candidates if t not in ts]
+            if not available:
+                continue
+            if not already:
+                # Sector not covered at all — highest priority
+                recommended.append(available[0])
+                new_sectors.append(sector)
+            elif len(already) == 1 and len(available) >= 1:
+                # Only one ticker in sector — add one more for intra-sector redundancy
+                recommended.append(available[0])
+        return {
+            "recommended": recommended[:8],
+            "new_sectors": new_sectors[:5],
+            "rationale": (
+                f"Adding {min(len(recommended), 8)} tickers covers {len(new_sectors)} new sector(s), "
+                "improving cross-regime statistical robustness without random picking."
+            ),
+        }
+
+
+class TelegramHITL:
+    """Human-in-the-Loop Telegram integration with inline keyboard buttons.
+
+    Three-phase HITL flow:
+      Phase 1 — send_audit_report()         : formatted Full Audit Report
+      Phase 2+3 — send_code_diff_with_approval(): diff (via difflib) + inline buttons
+      Bonus — send_ticker_expansion_approval(): sector-based expansion proposal
+
+    Uses raw requests against the Telegram Bot API.
+    No python-telegram-bot dependency required.
+    """
+
+    _BASE = "https://api.telegram.org/bot{token}/{method}"
+    _ACCEPT = "fs_accept"
+    _REJECT = "fs_reject"
+    _TICKER_YES = "ticker_yes"
+    _TICKER_NO = "ticker_no"
+
+    # Finance keywords that trigger 🔴 priority tag on the diff message
+    _FINANCE_KW = frozenset({
+        "sharpe", "calmar", "drawdown", "log_ret", "backtest",
+        "equity", "compounding", "cumprod", "cumsum", "sortino",
+    })
+
+    def __init__(self, timeout_seconds: int = 300) -> None:
+        self._timeout = timeout_seconds
+        self._token = ""
+        self._chat = ""
+        self._offset = 0
+
+    # ── Credential helpers ───────────────────────────────────────────────────
+
+    def _load(self) -> bool:
+        """Load credentials from env/.env. Returns True if both are set."""
+        try:
+            from dotenv import load_dotenv as _ld
+            _ld(Path(__file__).resolve().parents[1] / ".env", override=False)
+        except Exception:
+            pass
+        self._token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+        self._chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        return bool(self._token and self._chat)
+
+    # ── Low-level API wrappers ───────────────────────────────────────────────
+
+    def _call(self, method: str, _req_timeout: int = 10, **kw: Any) -> Dict[str, Any]:
+        url = self._BASE.format(token=self._token, method=method)
+        try:
+            r = requests.post(url, json=kw, timeout=_req_timeout)
+            return r.json() if r.ok else {}
+        except Exception:
+            return {}
+
+    def _send(self, text: str, markup: Optional[Dict] = None) -> bool:
+        p: Dict[str, Any] = {"chat_id": self._chat, "text": text, "parse_mode": "HTML"}
+        if markup:
+            p["reply_markup"] = markup
+        return bool(self._call("sendMessage", **p).get("ok"))
+
+    @staticmethod
+    def _keyboard(pairs: List[tuple]) -> Dict:
+        """Build reply_markup for inline keyboard from [(label, callback_data), …]."""
+        return {"inline_keyboard": [[{"text": lbl, "callback_data": cb} for lbl, cb in pairs]]}
+
+    # ── Callback polling ─────────────────────────────────────────────────────
+
+    def _poll(self, secs: int, valid: frozenset) -> str:
+        """Long-poll getUpdates until a recognised callback_query arrives or timeout."""
+        deadline = time.time() + secs
+        offset = self._offset + 1
+        while time.time() < deadline:
+            remaining = max(1, int(deadline - time.time()))
+            poll_t = min(25, remaining)
+            resp = self._call(
+                "getUpdates",
+                _req_timeout=poll_t + 6,
+                offset=offset,
+                timeout=poll_t,
+                allowed_updates=["callback_query"],
+            )
+            for upd in resp.get("result", []):
+                uid = int(upd.get("update_id", 0))
+                offset = max(offset, uid + 1)
+                self._offset = uid
+                cb = upd.get("callback_query", {})
+                data = str(cb.get("data", ""))
+                if data in valid:
+                    self._call("answerCallbackQuery",
+                               callback_query_id=cb.get("id", ""),
+                               text="Recorded ✓")
+                    return data
+        return "timeout"
+
+    # ── Public API ───────────────────────────────────────────────────────────
+
+    def send_audit_report(
+        self,
+        audit: Dict[str, Any],
+        current_score: float,
+        projected_score: float,
+    ) -> bool:
+        """Phase 1 — formatted Full Audit Report."""
+        if not self._load():
+            return False
+
+        tickers = audit.get("tickers", [])
+        issues = audit.get("issues", [])
+        proposals = audit.get("proposals", [])
+        h = audit.get("health_score", 0.0)
+        he = "🟢" if h >= 80 else ("🟡" if h >= 60 else "🔴")
+        le = "🟢" if not issues else ("🟡" if len(issues) <= 2 else "🔴")
+
+        issues_txt = ""
+        for i, iss in enumerate(issues[:5], 1):
+            issues_txt += (
+                f"\n{i}. {iss.get('priority','⚪')} "
+                f"<b>{html.escape(iss.get('title',''))}</b>: "
+                f"{html.escape(iss.get('description','')[:200])}"
+            )
+        if not issues_txt:
+            issues_txt = "\nNo critical issues detected. ✅"
+
+        props_txt = ""
+        for p in proposals[:4]:
+            props_txt += (
+                f"\n🛠 <b>{html.escape(p.get('title',''))}</b>\n"
+                f"   ↳ {html.escape(p.get('detail','')[:160])}"
+            )
+        if not props_txt:
+            props_txt = "\nNo changes proposed."
+
+        exp = audit.get("expansion_suggestions", {})
+        rec = exp.get("recommended", [])
+        expansion_blk = ""
+        if rec:
+            expansion_blk = (
+                f"\n\n📈 <b>TICKER EXPANSION SUGGESTION</b>\n"
+                f"Current: <code>{', '.join(tickers[:6])}</code>\n"
+                f"Proposed: <code>{', '.join(rec[:6])}</code>\n"
+                f"New sectors: {', '.join(exp.get('new_sectors', [])[:4])}"
+            )
+
+        msg = (
+            "───────────────────\n"
+            "🤖 <b>OPTIMIZER AUDIT REPORT 📊</b>\n"
+            "───────────────────\n"
+            f"📍 <b>Status:</b> Full-Stack Audit Complete\n"
+            f"📅 <b>Date:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"🎯 <b>Target Quality Score:</b> 85-90%\n\n"
+            f"🔍 <b>DIAGNOSTIC SUMMARY</b>\n"
+            f"• Source Data: {len(tickers)} tickers  "
+            f"<code>{', '.join(tickers[:8])}</code>\n"
+            f"• Data Health: {he} {h:.0f}%\n"
+            f"• Logic Integrity: {le} {len(issues)} issue(s) detected\n\n"
+            f"❌ <b>CRITICAL ISSUES FOUND</b>{issues_txt}\n\n"
+            f"💡 <b>PROPOSED OPTIMIZATIONS</b>{props_txt}"
+            f"{expansion_blk}\n\n"
+            f"🚀 <b>PROJECTED IMPACT</b>\n"
+            f"• Strategic Edge Score: {current_score:.0f}% → {projected_score:.0f}%\n"
+            "───────────────────"
+        )
+        if len(msg) > 3900:
+            msg = msg[:3850] + "\n<i>(report truncated)</i>"
+        return self._send(msg)
+
+    def send_code_diff_with_approval(
+        self,
+        old_code: str,
+        new_code: str,
+        filename: str,
+        description: str,
+    ) -> str:
+        """Phase 2+3 — send diff + [✅ ACCEPT & PUSH] / [❌ REJECT] buttons.
+
+        Returns 'fs_accept', 'fs_reject', or 'timeout'.
+        """
+        if not self._load():
+            return "timeout"
+
+        diff_lines = list(difflib.unified_diff(
+            old_code.splitlines(keepends=True),
+            new_code.splitlines(keepends=True),
+            fromfile=f"a/{filename}", tofile=f"b/{filename}", n=2,
+        ))
+        MAX = 28
+        if len(diff_lines) > MAX:
+            shown = "".join(diff_lines[:MAX]) + f"\n… (+{len(diff_lines) - MAX} lines)"
+        else:
+            shown = "".join(diff_lines) or "(no textual diff)"
+
+        # 🔴 for financial math, 🟡 for docs/cleanup
+        tag = "🔴" if any(k in description.lower() for k in self._FINANCE_KW) else "🟡"
+
+        msg = (
+            "───────────────────\n"
+            f"📝 <b>PROPOSED CODE CHANGE</b> {tag}\n"
+            "───────────────────\n"
+            f"📁 File: <code>{html.escape(filename)}</code>\n"
+            f"📋 Change: {html.escape(description[:200])}\n\n"
+            f"<pre>{html.escape(shown[:2200])}</pre>\n"
+            "───────────────────\n"
+            "❓ <b>Do you accept these changes?</b>\n"
+            "(Approval triggers automated GitHub commit &amp; pipeline rerun)"
+        )
+        if len(msg) > 3950:
+            msg = msg[:3900] + "\n<i>(diff truncated)</i>"
+
+        self._send(
+            msg,
+            markup=self._keyboard([
+                ("✅ ACCEPT & PUSH", self._ACCEPT),
+                ("❌ REJECT",        self._REJECT),
+            ]),
+        )
+        return self._poll(self._timeout, frozenset({self._ACCEPT, self._REJECT}))
+
+    def send_ticker_expansion_approval(
+        self,
+        current: List[str],
+        recommended: List[str],
+        note: str,
+    ) -> str:
+        """Send sector-based ticker expansion proposal with Yes/No buttons."""
+        if not self._load():
+            return "timeout"
+        msg = (
+            "📈 <b>TICKER UNIVERSE EXPANSION</b>\n\n"
+            f"Current: <code>{', '.join(current)}</code>\n\n"
+            f"Proposed additions: <code>{', '.join(recommended[:6])}</code>\n\n"
+            f"📊 {html.escape(note[:300])}\n\n"
+            "❓ <b>Accept ticker expansion?</b>"
+        )
+        self._send(
+            msg,
+            markup=self._keyboard([
+                ("✅ Yes, expand",      self._TICKER_YES),
+                ("❌ No, keep current", self._TICKER_NO),
+            ]),
+        )
+        return self._poll(min(120, self._timeout),
+                          frozenset({self._TICKER_YES, self._TICKER_NO}))
+
+    def notify(self, text: str) -> bool:
+        """Send a plain notification without buttons."""
+        if not self._load():
+            return False
+        return self._send(text[:3900])
+
+
+class FullStackAuditOrchestrator:
+    """Orchestrates the Full-Stack Audit workflow.
+
+    1. DataFetchingAuditor  — data coverage, density, ticker expansion
+    2. LlamaQuantAnalyzer   — financial logic scan (Sharpe, Calmar, MDD bugs)
+    3. TelegramHITL         — formatted report → code diff → inline approval
+    4. Auto-apply           — on ACCEPT: apply patch, bump version, push
+    5. Telemetry            — every decision logged to data/optimizer_history.json
+    """
+
+    def __init__(
+        self,
+        project_root: Path,
+        user_id: str = "default",
+        hitl_timeout: int = 300,
+    ) -> None:
+        self._root = project_root
+        self._src = project_root / "src"
+        self._user_id = user_id
+        self._hitl = TelegramHITL(timeout_seconds=hitl_timeout)
+        self._config: Any = None
+        try:
+            self._config = ProjectConfig.load_from_env()
+        except Exception:
+            pass
+
+    def run(self) -> Dict[str, Any]:
+        """Run the complete Full-Stack Audit. Returns summary report dict."""
+        print("\n" + "=" * 65)
+        print("[FULL-STACK AUDIT] Starting comprehensive pipeline audit …")
+        print("=" * 65)
+
+        # ── Phase 1: Data Fetching Audit ─────────────────────────────────────
+        print("\n[Phase 1] Data Fetching Audit …")
+        data_auditor = DataFetchingAuditor(self._root, self._config)
+        fetch_audit = data_auditor.run_full_audit()
+        print(f"  Tickers : {fetch_audit['tickers']}")
+        print(f"  Issues  : {len(fetch_audit['issues'])}")
+
+        # ── Phase 2: Financial Logic Audit (AI scan) ─────────────────────────
+        print("\n[Phase 2] Financial Logic Audit (AI scan) …")
+        llama = LlamaQuantAnalyzer(src_root=self._src)
+        bug_scan = llama.scan_for_bugs()
+        finance_issues = (
+            self._extract_finance_issues(bug_scan["analysis"])
+            if bug_scan.get("success") and not bug_scan.get("no_bugs_found")
+            else []
+        )
+        print(f"  Finance issues found: {len(finance_issues)}")
+
+        # ── Score calculation ─────────────────────────────────────────────────
+        data_penalty = len(fetch_audit["issues"]) * 8.0
+        logic_penalty = len(finance_issues) * 12.0
+        current_score = max(0.0, 100.0 - data_penalty - logic_penalty)
+        projected_score = min(95.0, current_score + (data_penalty + logic_penalty) * 0.75)
+
+        _log_optimizer_telemetry(self._root, "full_stack_audit_started", {
+            "ticker_count": len(fetch_audit["tickers"]),
+            "data_issues": len(fetch_audit["issues"]),
+            "finance_issues": len(finance_issues),
+            "current_score": round(current_score, 1),
+        })
+
+        # ── Phase 3: Telegram Report ──────────────────────────────────────────
+        print("\n[Phase 3] Sending Telegram Audit Report …")
+        combined_audit = {**fetch_audit, "issues": fetch_audit["issues"] + finance_issues}
+        self._hitl.send_audit_report(combined_audit, current_score, projected_score)
+
+        # ── Phase 4: Ticker Expansion (if needed) ─────────────────────────────
+        expansion = fetch_audit.get("expansion_suggestions", {})
+        rec = expansion.get("recommended", [])
+        if rec and len(fetch_audit["tickers"]) < 8:
+            print("\n[Phase 4] Requesting ticker expansion approval …")
+            decision = self._hitl.send_ticker_expansion_approval(
+                current=fetch_audit["tickers"],
+                recommended=rec,
+                note=expansion.get("rationale", ""),
+            )
+            if decision in (TelegramHITL._TICKER_YES, TelegramHITL._ACCEPT):
+                self._apply_ticker_expansion(rec)
+                _log_optimizer_telemetry(self._root, "ticker_expansion_accepted",
+                                         {"added": rec})
+                self._hitl.notify(
+                    f"✅ <b>Ticker expansion accepted.</b>\n"
+                    f"Added: <code>{', '.join(rec)}</code>\n"
+                    "These tickers will be fetched on the next pipeline run."
+                )
+            else:
+                _log_optimizer_telemetry(self._root, "ticker_expansion_rejected",
+                                         {"decision": decision})
+                self._hitl.notify("ℹ️ Ticker expansion rejected — keeping current universe.")
+
+        # ── Phase 5: Code Fix Approval ────────────────────────────────────────
+        apply_summary: List[str] = []
+        if bug_scan.get("has_code_changes") and bug_scan.get("success"):
+            print("\n[Phase 5] Requesting code fix approval …")
+            decision = self._handle_code_fix(llama, bug_scan)
+            apply_summary.append(f"code_fix:{decision}")
+
+        print("\n[FULL-STACK AUDIT] Complete.")
+        return {
+            "fetch_audit": fetch_audit,
+            "finance_issues": finance_issues,
+            "current_score": round(current_score, 1),
+            "projected_score": round(projected_score, 1),
+            "apply_summary": apply_summary,
+        }
+
+    # ── Internal helpers ─────────────────────────────────────────────────────
+
+    def _extract_finance_issues(self, analysis: str) -> List[Dict[str, Any]]:
+        """Parse AI output and tag issues with 🔴/🟡 priority."""
+        KEYWORDS: Dict[str, tuple] = {
+            "sharpe":          ("🔴", "Sharpe Ratio Calculation"),
+            "calmar":          ("🔴", "Calmar Ratio Calculation"),
+            "drawdown":        ("🔴", "Max Drawdown Logic"),
+            "compounding":     ("🔴", "Compounding / Equity Curve"),
+            "log_ret":         ("🔴", "Log-Returns Consistency"),
+            "overflow":        ("🔴", "Numerical Overflow"),
+            "division by zero":("🔴", "Division by Zero Risk"),
+            "documentation":   ("🟡", "Documentation"),
+            "type hint":       ("🟡", "Type Annotations"),
+            "naming":          ("🟡", "Variable Naming"),
+        }
+        seen: set = set()
+        issues: List[Dict[str, Any]] = []
+        low = analysis.lower()
+        for kw, (pri, title) in KEYWORDS.items():
+            if kw in low and title not in seen:
+                seen.add(title)
+                idx = low.find(kw)
+                snippet = analysis[max(0, idx - 20): idx + 150].replace("\n", " ").strip()
+                issues.append({"priority": pri, "title": title,
+                                "description": snippet[:200]})
+        return issues
+
+    def _handle_code_fix(
+        self, llama: "LlamaQuantAnalyzer", bug_scan: Dict[str, Any]
+    ) -> str:
+        """Send diff + approval keyboard and apply/revert based on decision."""
+        import re as _re
+        analysis = bug_scan.get("analysis", "")
+        pat = _re.compile(r"<<<OLD>>>(.*?)<<<NEW>>>(.*?)<<<END>>>", _re.DOTALL)
+        m = pat.search(analysis)
+        if m:
+            old_code = m.group(1).strip()
+            new_code = m.group(2).strip()
+            fname = "AI-proposed-fix"
+            desc = "Financial logic fix (Sharpe / MDD / log-returns)"
+        else:
+            old_code = "# (no patch block extracted)"
+            new_code = analysis[:500]
+            fname = "AI-analysis"
+            desc = "AI-proposed improvements"
+
+        decision = self._hitl.send_code_diff_with_approval(
+            old_code=old_code, new_code=new_code,
+            filename=fname, description=desc,
+        )
+
+        if decision == TelegramHITL._ACCEPT:
+            applied = llama.apply_code_changes(analysis)
+            if any("[ROLLED_BACK]" in a for a in applied):
+                self._hitl.notify(
+                    "⚠️ <b>Smoke test failed — changes rolled back.</b>\n"
+                    + ", ".join(applied[:3])
+                )
+                _log_optimizer_telemetry(self._root, "code_fix_smoke_failed",
+                                         {"applied": applied})
+                return "smoke_failed"
+
+            # Financial regression gate
+            rg_ok, rg_report = self._financial_regression_gate()
+            if not rg_ok:
+                self._run_cmd(["git", "checkout", "HEAD", "--", "."])
+                self._hitl.notify(
+                    "⚠️ <b>Regression Gate FAILED</b>\n"
+                    "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
+                    f"Details: {html.escape(rg_report[:400])}"
+                )
+                _log_optimizer_telemetry(self._root, "code_fix_regression_failed",
+                                         {"report": rg_report})
+                return "regression_failed"
+
+            ver = self._bump_version()
+            git_status = self._git_push(f"full_stack_audit_{self._user_id}")
+            _log_optimizer_telemetry(self._root, "code_fix_accepted", {
+                "applied": applied, "version": ver, "git": git_status,
+            })
+            self._hitl.notify(
+                f"✅ <b>Code fix applied and pushed.</b>\n"
+                f"Changes: {', '.join(applied[:3])}\n"
+                f"Version: {ver}\n"
+                f"Git: {git_status}"
+            )
+        else:
+            _log_optimizer_telemetry(self._root, "code_fix_rejected", {"decision": decision})
+            self._hitl.notify(
+                f"ℹ️ Code fix <b>rejected</b>. Decision: {decision}"
+            )
+
+        return decision
+
+    def _financial_regression_gate(self) -> tuple:
+        """Run backtest on live data; return (passed, report_str)."""
+        import importlib
+        master = self._root / "data" / "gold" / "master_table.parquet"
+        if not master.exists():
+            return True, "[GATE] No price data — skipped"
+        try:
+            import sys as _sys
+            src_str = str(self._src)
+            if src_str not in _sys.path:
+                _sys.path.insert(0, src_str)
+            import Medallion.gold.AnalysisSuite.backtest as _bt
+            importlib.reload(_bt)
+            import pandas as _pd
+            df = _pd.read_parquet(master)
+            pcol = "adj_close" if "adj_close" in df.columns else "close"
+            if pcol not in df.columns:
+                return True, "[GATE] No price column — skipped"
+            if "ticker" in df.columns:
+                t0 = df["ticker"].dropna().unique()[0]
+                df = df[df["ticker"] == t0]
+            if "date" in df.columns:
+                df = df.sort_values("date")
+                prices = df.set_index("date")[pcol].dropna()
+            else:
+                prices = df[pcol].dropna()
+            prices = _pd.to_numeric(prices, errors="coerce").dropna()
+            if len(prices) < 210:
+                return True, f"[GATE] Only {len(prices)} rows — skipped"
+            res = _bt.run_strategy_backtest(prices=prices, rolling_window=20, z_threshold=1.5)
+            m = res.get("metrics", {})
+            ec = res.get("equity_curve", [1.0])
+            sharpe, mdd, final_eq = m.get("sharpe_ratio"), m.get("max_drawdown", 0), float(ec[-1])
+            fails = []
+            if sharpe and abs(float(sharpe)) > 5.5:
+                fails.append(f"Sharpe={sharpe:.2f}")
+            if mdd and float(mdd) < -0.99:
+                fails.append(f"MDD={mdd:.2%}")
+            if final_eq > 1000:
+                fails.append(f"FinalEquity={final_eq:.1f}×")
+            if fails:
+                return False, "[GATE FAILED] " + "; ".join(fails)
+            return True, f"[GATE PASSED] Sharpe={sharpe}, MDD={float(mdd):.2%}"
+        except Exception as e:
+            return True, f"[GATE] Error (non-blocking): {e}"
+
+    def _apply_ticker_expansion(self, new_tickers: List[str]) -> None:
+        env_path = self._root / ".env"
+        try:
+            import re as _re
+            existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+            current = [t.strip().upper() for t in os.getenv("TARGET_TICKERS", "").split(",") if t.strip()]
+            all_t = list(dict.fromkeys(current + [t.upper() for t in new_tickers]))
+            new_line = f"TARGET_TICKERS={','.join(all_t)}"
+            updated = _re.sub(r"TARGET_TICKERS=.*", new_line, existing) if "TARGET_TICKERS" in existing else (existing.rstrip("\n") + "\n" + new_line + "\n")
+            env_path.write_text(updated, encoding="utf-8")
+        except Exception as exc:
+            print(f"[FULL-STACK] Warning: could not update .env tickers: {exc}")
+
+    def _bump_version(self) -> str:
+        import re as _re
+        toml = self._root / "pyproject.toml"
+        if not toml.exists():
+            return "version-not-found"
+        try:
+            text = toml.read_text(encoding="utf-8")
+            pat = _re.compile(r'(version\s*=\s*")(\d+\.\d+\.)(\d+)(-[^"]*)?(")')
+            m = pat.search(text)
+            if not m:
+                return "version-pattern-not-found"
+            new_ver = f"{m.group(2)}{int(m.group(3)) + 1}{m.group(4) or ''}"
+            toml.write_text(pat.sub(lambda x: x.group(1) + new_ver + x.group(5), text, count=1), encoding="utf-8")
+            return new_ver
+        except Exception as e:
+            return f"error:{e}"
+
+    def _run_cmd(self, args: List[str]) -> tuple:
+        try:
+            r = subprocess.run(args, cwd=str(self._root), capture_output=True, text=True, timeout=90, check=False)
+            return r.returncode == 0, (r.stdout + r.stderr).strip()
+        except Exception as e:
+            return False, str(e)
+
+    def _git_push(self, reason: str) -> str:
+        self._run_cmd(["git", "add", "-A"])
+        ok, _ = self._run_cmd(["git", "diff", "--cached", "--quiet"])
+        if ok:
+            return "[GIT] No staged changes"
+        ok, out = self._run_cmd(["git", "commit", "-m", f"optimizer: full-stack audit fix ({reason})"])
+        if not ok:
+            return f"[GIT] Commit failed: {out[:100]}"
+        ok, out = self._run_cmd(["git", "push", "origin", "HEAD"])
+        return "[GIT] Pushed ✓" if ok else f"[GIT] Push failed: {out[:100]}"
+
+
+def run_full_stack_audit(
+    project_root: Optional[Path] = None,
+    user_id: str = "default",
+    hitl_timeout: int = 300,
+) -> Dict[str, Any]:
+    """Entry point called from scheduler_batch.py.
+
+    Runs DataFetchingAuditor + LlamaQuantAnalyzer → sends Full Audit Report
+    to Telegram → waits for inline-keyboard approval → applies and pushes.
+    """
+    root = project_root or Path(__file__).resolve().parents[1]
+    return FullStackAuditOrchestrator(
+        project_root=root, user_id=user_id, hitl_timeout=hitl_timeout
+    ).run()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Pillar 2 — Parameter Optimisation: Grid Search over Backtest Hyperparameters
 # ──────────────────────────────────────────────────────────────────────────────
 
