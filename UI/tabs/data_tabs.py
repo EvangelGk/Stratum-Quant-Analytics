@@ -501,49 +501,86 @@ def _render_backtest_payload(value: dict) -> None:
     expectancy = value.get("expectancy_per_trade")
     info_ratio = value.get("information_ratio")
 
+    # ── Row 1: Data volume ────────────────────────────────────────────────────
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Train rows", _fmt_scalar(train_rows))
-    k2.metric("Test rows", _fmt_scalar(test_rows))
-    k3.metric("Tracking Error", _fmt_scalar(te))
-    k4.metric("Max Drawdown", _fmt_scalar(mdd))
+    if train_rows is not None:
+        k1.metric("Train rows", str(int(train_rows)))
+    if test_rows is not None:
+        k2.metric("Test rows", str(int(test_rows)))
+    if te is not None:
+        k3.metric("Tracking Error", f"{float(te):.4f}",
+                  help="Std dev of (predicted − actual) returns. Lower = tighter fit.")
+    if mdd is not None:
+        _mdd = float(mdd)
+        k4.metric(
+            "Max Drawdown",
+            f"{_mdd * 100.0:+.1f}%",
+            delta="Peak-to-trough loss",
+            delta_color="off",
+            help="Largest cumulative loss from peak. <−20% warrants caution.",
+        )
 
-    p1, p2, p3, p4, p5 = st.columns(5)
-    p1.metric("Sharpe", _fmt_scalar(sharpe))
-    p2.metric("Calmar", _fmt_scalar(calmar))
-    p3.metric("Profit Factor", _fmt_scalar(profit_factor))
-    p4.metric("Expectancy/Trade", _fmt_scalar(expectancy))
-    p5.metric("Information Ratio", _fmt_scalar(info_ratio))
+    # ── Row 2: Risk-adjusted ratios — capped, percentage-formatted ────────────
+    _ratio_cols = [c for c in [sharpe, calmar, profit_factor, expectancy, info_ratio] if c is not None]
+    if _ratio_cols:
+        p1, p2, p3, p4, p5 = st.columns(5)
+        if sharpe is not None:
+            _sh = float(sharpe)
+            p1.metric("Sharpe Ratio",
+                      f"{_sh:.2f}" if abs(_sh) <= 5.0 else ("≥ 5.0" if _sh > 0 else "≤ −5.0"),
+                      help=">0.5 acceptable · >1.0 strong · >2.0 exceptional")
+        if calmar is not None:
+            _cal = float(calmar)
+            p2.metric("Calmar Ratio",
+                      f"{_cal:.2f}×" if _cal <= 20.0 else "≥ 20×",
+                      help="Annualised return ÷ Max Drawdown. >1.0 = risk-adjusted profit. Values >20 are capped.")
+        if profit_factor is not None and profit_factor != float("inf"):
+            _pf = float(profit_factor)
+            p3.metric("Profit Factor",
+                      f"{_pf:.2f}×" if _pf <= 10.0 else "≥ 10×",
+                      help="Gross gains ÷ gross losses. >1.0 = profitable · >1.5 = strong")
+        if expectancy is not None:
+            _exp = float(expectancy)
+            p4.metric("Expectancy / Trade",
+                      f"{_exp:+.4f}",
+                      delta="Positive edge" if _exp > 0 else "Negative edge",
+                      delta_color="normal" if _exp > 0 else "inverse",
+                      help="Average daily log-return per trade. Positive = systematic edge.")
+        if info_ratio is not None:
+            _ir = float(info_ratio)
+            p5.metric("Info Ratio",
+                      f"{_ir:.2f}" if abs(_ir) <= 5.0 else ("≥ 5.0" if _ir > 0 else "≤ −5.0"),
+                      help="Active return vs benchmark per unit of tracking error. >0.5 = adds value.")
 
     strong_flags: list[str] = []
-    if isinstance(profit_factor, (int, float)) and float(profit_factor) >= 1.5:
-        strong_flags.append(f"Profit Factor {float(profit_factor):.2f} (excellent)")
-    if isinstance(calmar, (int, float)) and float(calmar) >= 2.0:
-        strong_flags.append(f"Calmar {float(calmar):.2f} (institutional-grade)")
+    if isinstance(profit_factor, (int, float)) and profit_factor != float("inf") and float(profit_factor) >= 1.5:
+        strong_flags.append(f"Profit Factor {min(float(profit_factor), 10.0):.2f}×")
+    if isinstance(calmar, (int, float)) and 0 < float(calmar) <= 20.0 and float(calmar) >= 2.0:
+        strong_flags.append(f"Calmar {float(calmar):.2f}×")
     if isinstance(expectancy, (int, float)) and float(expectancy) > 0.0:
-        strong_flags.append(f"Positive expectancy {float(expectancy):.4f} per trade")
-    if isinstance(sharpe, (int, float)) and float(sharpe) >= 1.0:
-        strong_flags.append(f"Sharpe {float(sharpe):.2f} (risk-adjusted edge)")
+        strong_flags.append(f"Positive expectancy {float(expectancy):+.4f}")
+    if isinstance(sharpe, (int, float)) and 0 < float(sharpe) <= 5.0 and float(sharpe) >= 1.0:
+        strong_flags.append(f"Sharpe {float(sharpe):.2f}")
     if isinstance(info_ratio, (int, float)) and float(info_ratio) >= 0.5:
-        strong_flags.append(f"Information Ratio {float(info_ratio):.2f} vs benchmark")
+        strong_flags.append(f"Information Ratio {float(info_ratio):.2f}")
 
     if strong_flags:
-        st.success(
-            "Validated positive findings: " + " | ".join(strong_flags)
-            + ". These are realized backtest edge metrics, not synthetic scores."
-        )
+        st.success("**Validated edge signals:** " + " · ".join(strong_flags))
     else:
-        st.info(
-            "No exceptional edge threshold was triggered in this window. "
-            "Review drawdown, expectancy, and factor robustness before deployment."
-        )
+        st.info("No exceptional threshold triggered. Review drawdown, expectancy, and factor robustness.")
 
     corr_test = value.get("correlation_test", {}) if isinstance(value.get("correlation_test"), dict) else {}
     p_val = corr_test.get("p_value")
     r_val = corr_test.get("pearson_r")
     if isinstance(p_val, (int, float)):
         c1, c2 = st.columns(2)
-        c1.metric("Correlation r", _fmt_scalar(r_val))
-        c2.metric("P-value", _fmt_scalar(p_val))
+        if r_val is not None:
+            c1.metric("Pearson r", f"{float(r_val):.3f}",
+                      help="|r| > 0.15 is considered meaningful in macro-equity forecasting.")
+        _pv = float(p_val)
+        c2.metric("P-value", f"{_pv:.4f}",
+                  delta="Significant" if _pv < 0.05 else "Exploratory",
+                  delta_color="normal" if _pv < 0.05 else "off")
         if float(p_val) < 0.05:
             st.success("Statistical significance passed: p-value < 0.05")
         else:

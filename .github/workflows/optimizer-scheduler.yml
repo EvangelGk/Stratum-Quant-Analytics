@@ -1,20 +1,25 @@
 name: Optimizer Scheduler
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Pillar 4 — Always-On Scheduler
-# Runs automatically every 24 h (00:00 UTC) or on-demand.
+# Always-On Scheduler
+# Runs automatically every 24 h (00:00 UTC) or on-demand via the Actions UI.
 # After a successful run, commits new output artifacts back to the repo so the
 # Streamlit web app always displays fresh results without a manual push.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   FRED_API_KEY    – St. Louis Fed FRED API key
+#   GEMINI_API_KEY  – Google AI Studio key (AI briefing, optional)
+#   GROQ_API_KEY    – Groq LLM key (AI briefing, optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # Every 24 hours at 00:00 UTC
-  workflow_dispatch:       # Manual trigger from Actions UI
+    - cron: '0 0 * * *'    # Every 24 hours at 00:00 UTC
+  workflow_dispatch:        # Manual trigger from the Actions UI at any time
 
 concurrency:
   group: optimizer-scheduler
-  cancel-in-progress: false  # Never cancel a running job — let it finish
+  cancel-in-progress: false # Never cancel a running job — let it finish
 
 jobs:
   run-optimizer:
@@ -22,38 +27,26 @@ jobs:
     timeout-minutes: 120
 
     permissions:
-      contents: write   # Required to push artifact commits back to the repo
-
-    env:
-      PYTHONUNBUFFERED: "1"
-      PYTHONPATH: "${{ github.workspace }}/src:${{ github.workspace }}"
-      # Pipeline runs in ACTUAL mode during scheduled execution
-      ENVIRONMENT: "actual"
-      # Secrets injected from repository Settings → Secrets and variables → Actions
-      FRED_API_KEY:     ${{ secrets.FRED_API_KEY }}
-      GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
-      GROQ_API_KEY:     ${{ secrets.GROQ_API_KEY }}
-      # DATA_USER_ID is intentionally omitted — src/main.py falls back to
-      # "default" when the variable is unset, which is correct for CI runs.
-      RANDOM_SEED:      "42"
-      ENFORCE_REPRODUCIBILITY: "true"
+      contents: write        # Required to push artifact commits back to the repo
 
     steps:
-      # ── 1. Checkout (full history so git push works cleanly) ───────────────
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      # fetch-depth: 1 is sufficient — we only need the latest commit to push.
+      # Full history (0) was wasteful and slowed the job unnecessarily.  [FIX #5]
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 2. Python environment ──────────────────────────────────────────────
+      # ── 2. Python environment ───────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      # ── 3. Install dependencies ────────────────────────────────────────────
+      # ── 3. Install dependencies ─────────────────────────────────────────────
       - name: Install dependencies
         shell: bash
         run: |
@@ -61,16 +54,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── 4. Execute pipeline + grid-search optimizer ────────────────────────
+      # ── 4. Execute pipeline + grid-search optimizer ─────────────────────────
+      # Secrets are scoped to this step only — least-privilege principle.  [FIX #1-3]
+      # Add FRED_API_KEY, GEMINI_API_KEY, GROQ_API_KEY in:
+      #   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
       - name: Run pipeline and optimizer
         shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "${{ github.workspace }}/src:${{ github.workspace }}"
+          ENVIRONMENT: "actual"
+          RANDOM_SEED: "42"
+          ENFORCE_REPRODUCIBILITY: "true"
+          # ↓ Register these three secrets in GitHub repo Settings to activate
+          FRED_API_KEY:    ${{ secrets.FRED_API_KEY }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
         run: |
           set -euo pipefail
           python scripts/scheduler_batch.py
 
-      # ── 5. Commit and push new artifacts ──────────────────────────────────
-      # Only runs if there are actual changes — idempotent on no-diff runs.
+      # ── 5. Commit and push new artifacts ────────────────────────────────────
+      # Guard: only runs when the pipeline step above succeeded.  [FIX #4]
+      # The || true idiom is removed; we test git diff explicitly.  [FIX #6]
       - name: Commit and push output artifacts
+        if: success()
         shell: bash
         run: |
           set -euo pipefail
@@ -78,27 +86,36 @@ jobs:
           git config --global user.name  "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage all new / updated artifacts
-          git add output/ data/gold/ || true
+          # Stage artifacts — a missing directory is not an error; we handle it below.
+          git add output/ 2>/dev/null
+          git add data/gold/ 2>/dev/null
 
-          # Exit cleanly if nothing changed (keeps history clean)
+          # Only commit when there are actual staged changes (keeps history clean).
           if git diff --cached --quiet; then
-            echo "No artifact changes to commit — skipping push."
+            echo "No artifact changes detected — skipping commit and push."
             exit 0
           fi
 
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           git commit -m "ci(scheduler): automated optimizer run ${TIMESTAMP} [skip ci]"
 
-          # Push with retry to survive transient network blips
+          # Retry push up to 3 times to survive transient network blips.
+          push_ok=false
           for attempt in 1 2 3; do
-            git push origin HEAD && break || {
-              echo "Push attempt ${attempt} failed — retrying in 10 s..."
-              sleep 10
-            }
+            if git push origin HEAD; then
+              push_ok=true
+              break
+            fi
+            echo "Push attempt ${attempt}/3 failed — retrying in 15 s..."
+            sleep 15
           done
 
-      # ── 6. Upload artifacts to GitHub Actions for debugging ────────────────
+          if [ "$push_ok" != "true" ]; then
+            echo "All push attempts failed." >&2
+            exit 1
+          fi
+
+      # ── 6. Upload artifacts to GitHub Actions for debugging ─────────────────
       - name: Upload output artifacts
         if: always()
         uses: actions/upload-artifact@v4

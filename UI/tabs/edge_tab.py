@@ -40,8 +40,34 @@ def _fmt(value: object, ndigits: int = 4) -> str:
     if isinstance(value, (int, bool)):
         return str(value)
     if value is None:
-        return "N/A"
+        return "—"
     return str(value)
+
+
+# ── Executive-grade metric formatters ─────────────────────────────────────────
+# Rules: percentages where appropriate, 2 decimal places for ratios,
+# hard caps on astronomically large values that would mislead stakeholders.
+
+def _fmt_pct(v: float) -> str:
+    """Format a decimal fraction as a percentage string, e.g. -0.082 → '-8.2%'."""
+    return f"{v * 100.0:+.1f}%"
+
+
+def _fmt_ratio(v: float, suffix: str = "×", cap: float | None = None, cap_label: str | None = None) -> str:
+    """Format a ratio with optional cap for extreme values."""
+    if cap is not None and abs(v) > cap:
+        label = cap_label or f"≥ {cap:.0f}{suffix}"
+        return label
+    return f"{v:.2f}{suffix}"
+
+
+def _fmt_sharpe(v: float) -> str:
+    return f"{v:.2f}" if abs(v) <= 5.0 else ("≥ 5.0" if v > 0 else "≤ -5.0")
+
+
+def _fmt_expectancy(v: float) -> str:
+    """Daily log-return units, 4 decimal places, always signed."""
+    return f"{v:+.4f}"
 
 
 def _render_hero_style() -> None:
@@ -385,107 +411,240 @@ def show_edge_arsenal_tab() -> None:
         )
         return
 
+    # ── Row 1: Risk-adjusted performance metrics ──────────────────────────────
+    # All values formatted for executive/stakeholder readability:
+    # percentages for return-scale metrics, capped ratios (no astronomical values),
+    # delta indicators showing direction vs institutional thresholds.
+    st.markdown("#### Performance Scorecard")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Expectancy/Trade", _fmt(expectancy, 6) if expectancy is not None else "N/A")
-    c2.metric("Profit Factor", _fmt(pf) if pf is not None else "N/A")
-    c3.metric("Calmar", _fmt(calmar) if calmar is not None else "N/A")
-    c4.metric("Sharpe", _fmt(sharpe) if sharpe is not None else "N/A")
-    c5.metric("Info Ratio", _fmt(ir) if ir is not None else "N/A")
-    c6.metric("Max Drawdown", _fmt(mdd) if mdd is not None else "N/A")
 
-    # Strategic performance quality score (display only, no data fabrication)
+    # Expectancy: signed log-return units, 4 decimal places
+    if expectancy is not None:
+        _exp_v = float(expectancy)
+        c1.metric(
+            "Expectancy / Trade",
+            _fmt_expectancy(_exp_v),
+            delta="Positive edge" if _exp_v > 0 else "Negative edge",
+            delta_color="normal" if _exp_v > 0 else "inverse",
+            help="Average log-return per trade. Positive = strategy earns more than it loses on average.",
+        )
+
+    # Profit Factor: gross_profit / gross_loss, capped at ≥ 10×
+    if pf is not None and pf != "inf":
+        _pf_v = float(pf)
+        _pf_delta = f"vs 1.0 breakeven"
+        c2.metric(
+            "Profit Factor",
+            _fmt_ratio(_pf_v, suffix="×", cap=10.0, cap_label="≥ 10×"),
+            delta=_pf_delta,
+            delta_color="normal" if _pf_v >= 1.0 else "inverse",
+            help="Gross gains ÷ gross losses. >1.0 = profitable, >1.5 = strong, >2.0 = excellent.",
+        )
+
+    # Calmar: annualised return / max drawdown, capped at ≥ 20× (>20 is unrealistic for real portfolios)
+    if calmar is not None:
+        _cal_v = float(calmar)
+        c3.metric(
+            "Calmar Ratio",
+            _fmt_ratio(_cal_v, suffix="×", cap=20.0, cap_label="≥ 20×"),
+            delta="Strong" if _cal_v >= 3.0 else ("Acceptable" if _cal_v >= 1.0 else "Weak"),
+            delta_color="normal" if _cal_v >= 1.0 else "inverse",
+            help="Annualised return ÷ Max Drawdown. >1.0 = risk-adjusted profitability. >3.0 = institutional grade.",
+        )
+
+    # Sharpe: capped at ≥ 5.0 (unrealistically high values mislead executives)
+    if sharpe is not None:
+        _sh_v = float(sharpe)
+        c4.metric(
+            "Sharpe Ratio",
+            _fmt_sharpe(_sh_v),
+            delta=f"vs 1.0 target",
+            delta_color="normal" if _sh_v >= 0.5 else "inverse",
+            help="Return per unit of volatility (risk-free rate = 0). >0.5 = acceptable, >1.0 = strong, >2.0 = exceptional.",
+        )
+
+    # Information Ratio: capped at ≥ 5.0
+    if ir is not None:
+        _ir_v = float(ir)
+        c5.metric(
+            "Info Ratio",
+            _fmt_sharpe(_ir_v),
+            delta="vs benchmark",
+            delta_color="normal" if _ir_v >= 0.0 else "inverse",
+            help="Active return vs benchmark per unit of tracking error. >0.5 = adds value over benchmark.",
+        )
+
+    # Max Drawdown: formatted as percentage (−8.2% not −0.082)
+    if mdd is not None:
+        _mdd_v = float(mdd)
+        c6.metric(
+            "Max Drawdown",
+            _fmt_pct(_mdd_v),
+            delta="Peak-to-trough loss",
+            delta_color="off",
+            help="Largest peak-to-trough loss on the equity curve. <−20% requires close attention.",
+        )
+
+    st.markdown("")
+
+    # ── Strategic Edge Quality Score ──────────────────────────────────────────
     score = 0.0
     if isinstance(expectancy, (int, float)) and expectancy > 0:
         score += 25.0
-    if isinstance(pf, (int, float)):
-        score += min(max((pf - 1.0) * 30.0, 0.0), 25.0)
+    if isinstance(pf, (int, float)) and pf != float("inf"):
+        score += min(max((float(pf) - 1.0) * 30.0, 0.0), 25.0)
     if isinstance(calmar, (int, float)):
-        score += min(max(calmar * 8.0, 0.0), 20.0)
+        score += min(max(min(float(calmar), 20.0) * 1.0, 0.0), 20.0)
     if isinstance(sharpe, (int, float)):
-        score += min(max(sharpe * 6.0, 0.0), 20.0)
+        score += min(max(min(float(sharpe), 5.0) * 4.0, 0.0), 20.0)
     if isinstance(ir, (int, float)):
-        score += min(max(ir * 10.0, 0.0), 10.0)
+        score += min(max(min(float(ir), 5.0) * 2.0, 0.0), 10.0)
     score = min(score, 100.0)
-    st.progress(score / 100.0, text=f"Strategic Edge Quality Score: {score:.1f}/100")
 
+    _score_color = "🟢" if score >= 65 else ("🟡" if score >= 35 else "🔴")
+    st.progress(
+        score / 100.0,
+        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100"
+             " — composite of Expectancy, Profit Factor, Calmar, Sharpe & IR",
+    )
+
+    # ── Validated findings banner ─────────────────────────────────────────────
     signals: list[str] = []
     if isinstance(expectancy, (int, float)) and float(expectancy) > 0.0:
-        signals.append(f"Positive Expectancy {float(expectancy):.5f}")
-    if isinstance(pf, (int, float)) and float(pf) >= 1.2:
-        signals.append(f"Profit Factor {float(pf):.2f}")
-    if isinstance(calmar, (int, float)) and float(calmar) >= 2.0:
-        signals.append(f"Calmar {float(calmar):.2f}")
+        signals.append(f"Positive Expectancy ({_fmt_expectancy(float(expectancy))} / trade)")
+    if isinstance(pf, (int, float)) and pf != float("inf") and float(pf) >= 1.2:
+        signals.append(f"Profit Factor {float(pf):.2f}×")
+    if isinstance(calmar, (int, float)) and 0 < float(calmar) <= 20.0 and float(calmar) >= 2.0:
+        signals.append(f"Calmar {float(calmar):.2f}×")
     if isinstance(ir, (int, float)) and float(ir) >= 0.5:
         signals.append(f"Information Ratio {float(ir):.2f}")
 
     if signals:
-        st.success(
-            "Validated exceptional findings: " + " | ".join(signals)
-            + ". These are real artifact-derived strengths and are prioritized over raw R²."
-        )
+        st.success("**Validated edge signals:** " + " · ".join(signals))
     else:
-        st.info(
-            "No exceptional threshold triggered in this run. Edge Arsenal still shows full diagnostics transparently."
-        )
-    st.latex(r"\text{Expectancy} = (P_{win}\times AvgWin) - (P_{loss}\times AvgLoss)")
+        st.info("No exceptional threshold triggered in this run. Full diagnostics shown transparently below.")
 
+    # ── Statistical significance ──────────────────────────────────────────────
     corr = backtest.get("correlation_test", {}) if isinstance(backtest.get("correlation_test"), dict) else {}
     p_value = corr.get("p_value")
     pearson_r = corr.get("pearson_r")
-    
-    p1, p2 = st.columns(2)
-    p1.metric("Pearson r", _fmt(pearson_r) if pearson_r is not None else "N/A")
-    p2.metric("P-value", _fmt(p_value, 6) if p_value is not None else "N/A")
-    
-    if isinstance(p_value, (int, float)) and float(p_value) < 0.05:
-        st.success("Statistical significance passed: p-value < 0.05")
-    elif isinstance(p_value, (int, float)):
-        st.caption("P-value >= 0.05 in this window. Keep result as exploratory, not confirmatory.")
 
+    if pearson_r is not None or p_value is not None:
+        st.markdown("#### Predictive Signal Test")
+        p1, p2 = st.columns(2)
+        if pearson_r is not None:
+            p1.metric(
+                "Pearson r",
+                f"{float(pearson_r):.3f}",
+                help="Correlation between model signal and realised returns. |r| > 0.15 is meaningful in macro forecasting.",
+            )
+        if p_value is not None:
+            _pv = float(p_value)
+            p2.metric(
+                "P-value",
+                f"{_pv:.4f}",
+                delta="Significant" if _pv < 0.05 else "Exploratory only",
+                delta_color="normal" if _pv < 0.05 else "off",
+                help="< 0.05 = statistically significant. In macro settings, treat as supportive context, not sole validation.",
+            )
+        if isinstance(p_value, (int, float)) and float(p_value) < 0.05:
+            st.success("Statistical significance passed: p-value < 0.05")
+        else:
+            st.caption("P-value ≥ 0.05 — treat as exploratory context. Macro-equity models rarely achieve high significance.")
+
+    # ── Charts ────────────────────────────────────────────────────────────────
     strategy_returns = backtest.get("strategy_returns", [])
     if isinstance(strategy_returns, list) and strategy_returns:
         sret = np.asarray([float(x) for x in strategy_returns], dtype=float)
+        sret_pct = sret * 100.0  # convert to basis points / percentage for readability
 
+        st.markdown("#### Return Distribution")
         hist_fig = px.histogram(
-            pd.DataFrame({"return": sret}),
-            x="return",
-            nbins=30,
-            title="Trade Distribution Histogram (Gains vs Losses)",
+            pd.DataFrame({"Daily Return (%)": sret_pct}),
+            x="Daily Return (%)",
+            nbins=40,
+            title="Daily Return Distribution — Gains vs Losses",
             color_discrete_sequence=["#0f766e"],
+            labels={"Daily Return (%)": "Daily Return (%)"},
         )
-        hist_fig.add_vline(x=0.0, line_dash="dot", line_color="#7f1d1d")
-        hist_fig.update_layout(height=340)
+        hist_fig.add_vline(x=0.0, line_dash="dot", line_color="#7f1d1d", annotation_text="Break-even")
+        hist_fig.update_layout(
+            height=340,
+            bargap=0.05,
+            xaxis_title="Daily Return (%)",
+            yaxis_title="Frequency",
+            legend_title_text="",
+        )
         st.plotly_chart(hist_fig, use_container_width=True)
 
         rolling = backtest.get("rolling_sharpe_30d", [])
         if isinstance(rolling, list) and rolling:
             rdf = pd.DataFrame(rolling)
             if {"step", "rolling_sharpe"}.issubset(rdf.columns):
+                # Clip extreme rolling Sharpe values for chart readability
+                rdf["rolling_sharpe"] = rdf["rolling_sharpe"].clip(-4.0, 4.0)
                 rs_fig = px.line(
                     rdf,
                     x="step",
                     y="rolling_sharpe",
-                    title="Rolling Sharpe Ratio (30-day)",
+                    title="Rolling 30-Day Sharpe Ratio  (clipped ±4 for readability)",
+                    labels={"rolling_sharpe": "Sharpe Ratio", "step": "Trading Day"},
+                    color_discrete_sequence=["#0f766e"],
                 )
-                rs_fig.add_hline(y=0.0, line_dash="dot", line_color="#777")
-                rs_fig.add_hline(y=1.0, line_dash="dash", line_color="#0f766e")
-                rs_fig.update_layout(height=340)
+                rs_fig.add_hline(y=0.0, line_dash="dot", line_color="#9ca3af", annotation_text="0")
+                rs_fig.add_hline(y=0.5, line_dash="dash", line_color="#f59e0b", annotation_text="0.5 — acceptable")
+                rs_fig.add_hline(y=1.0, line_dash="dash", line_color="#2e7d32", annotation_text="1.0 — strong")
+                rs_fig.update_layout(height=340, yaxis_title="Sharpe Ratio")
                 st.plotly_chart(rs_fig, use_container_width=True)
 
         benchmark_returns = backtest.get("benchmark_returns", [])
         if isinstance(benchmark_returns, list) and benchmark_returns and len(benchmark_returns) == len(sret):
             bret = np.asarray([float(x) for x in benchmark_returns], dtype=float)
-            curve_df = pd.DataFrame(
-                {
-                    "step": np.arange(1, len(sret) + 1),
-                    "strategy": np.cumprod(1.0 + sret),
-                    "benchmark": np.cumprod(1.0 + bret),
-                }
-            )
+            _dates = backtest.get("dates")
+            if isinstance(_dates, list) and len(_dates) == len(sret):
+                _x_axis = pd.to_datetime(_dates, errors="coerce")
+            else:
+                _x_axis = np.arange(1, len(sret) + 1)
+
+            curve_df = pd.DataFrame({
+                "x": _x_axis,
+                "Strategy": np.cumprod(1.0 + sret),
+                "Buy & Hold": np.cumprod(1.0 + bret),
+            })
+
+            st.markdown("#### Strategy vs Buy-and-Hold Equity Curve")
             eq_fig = go.Figure()
-            eq_fig.add_trace(go.Scatter(x=curve_df["step"], y=curve_df["strategy"], mode="lines", name="Strategy", line=dict(color="#0f766e", width=3)))
-            eq_fig.add_trace(go.Scatter(x=curve_df["step"], y=curve_df["benchmark"], mode="lines", name="Benchmark", line=dict(color="#b91c1c", width=2)))
-            eq_fig.update_layout(title="Strategy vs Benchmark Equity Curve", height=360)
+            eq_fig.add_trace(go.Scatter(
+                x=curve_df["x"], y=curve_df["Strategy"],
+                mode="lines", name="Strategy",
+                line=dict(color="#0f766e", width=2.5),
+            ))
+            eq_fig.add_trace(go.Scatter(
+                x=curve_df["x"], y=curve_df["Buy & Hold"],
+                mode="lines", name="Buy & Hold",
+                line=dict(color="#b91c1c", width=1.8, dash="dot"),
+            ))
+            eq_fig.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af", annotation_text="Starting value")
+            eq_fig.update_layout(
+                height=400,
+                yaxis_title="Portfolio Value  ($1 = initial investment)",
+                xaxis_title="Date" if isinstance(_x_axis, pd.DatetimeIndex) else "Trading Day",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                hovermode="x unified",
+            )
             st.plotly_chart(eq_fig, use_container_width=True)
+            _final_strat = float(curve_df["Strategy"].iloc[-1])
+            _final_bm = float(curve_df["Buy & Hold"].iloc[-1])
+            _alpha = _final_strat - _final_bm
+            _alpha_pct = _alpha / max(abs(_final_bm), 1e-6) * 100
+            _col_a, _col_b, _col_c = st.columns(3)
+            _col_a.metric("Strategy final value", f"${_final_strat:.2f}", help="Per $1 invested at start")
+            _col_b.metric("Buy & Hold final", f"${_final_bm:.2f}", help="Per $1 invested at start")
+            _col_c.metric(
+                "Alpha vs Benchmark",
+                f"{_alpha_pct:+.1f}%",
+                delta_color="normal" if _alpha >= 0 else "inverse",
+                help="Strategy outperformance over buy-and-hold over the full period.",
+            )
     else:
         st.caption("Strategy returns and chart data not yet available. Re-run Full Analysis to populate.")

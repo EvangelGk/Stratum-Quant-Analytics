@@ -10,6 +10,7 @@ jobs:
   quality:
     name: Lint, Type Check & Test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60      # FIX #7 — prevent CI from hanging indefinitely
     strategy:
       fail-fast: false
       matrix:
