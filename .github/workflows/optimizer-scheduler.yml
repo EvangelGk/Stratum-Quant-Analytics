@@ -1,31 +1,47 @@
+name: Optimizer Scheduler
+
 on:
   schedule:
-    - cron: '0 0 * * *'  # Every 24 hours
+    - cron: '0 0 * * *'  # Every 24 hours at 00:00 UTC
   workflow_dispatch:
 
-permissions:
-  contents: write
+concurrency:
+  group: optimizer-scheduler
+  cancel-in-progress: false
 
 jobs:
   run-optimizer:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+
+    permissions:
+      contents: write
+
     env:
       PYTHONUNBUFFERED: "1"
       OPTIMIZER_AUTO_GIT_PUSH: "0"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
       - name: Install dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Run optimizer and commit artifacts
+        shell: bash
         run: |
+          set -euo pipefail
           python scripts/scheduler_batch.py
