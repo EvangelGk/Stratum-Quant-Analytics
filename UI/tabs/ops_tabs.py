@@ -316,14 +316,23 @@ def show_auditor_tab() -> None:
         if isinstance(judgement, dict) and judgement:
             st.markdown("---")
             st.markdown("### \U0001f9e0 Auditor Judgement")
+            j_n_failed = judgement.get("n_failed", len(report.get("failed_checks", [])))
+
+            def _judgement_label(flag: bool, advisory_threshold: int = 2) -> str:
+                if flag:
+                    return "\u2705 Yes"
+                if j_n_failed <= advisory_threshold:
+                    return "\u26a0\ufe0f Limited"
+                return "\u274c No"
+
             j1, j2 = st.columns(2)
             j1.metric(
                 "Information Reasonable",
-                "\u2705 Yes" if judgement.get("is_information_reasonable") else "\u274c No",
+                _judgement_label(bool(judgement.get("is_information_reasonable"))),
             )
             j2.metric(
                 "Can Support Decisions",
-                "\u2705 Yes" if judgement.get("can_support_decisions") else "\u274c No",
+                _judgement_label(bool(judgement.get("can_support_decisions"))),
             )
             for line in judgement.get("summary", []):
                 st.markdown(f"- {line}")

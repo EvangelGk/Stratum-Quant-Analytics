@@ -548,7 +548,14 @@ def main() -> None:
         "🛡️ Governance",
         "📜 Logs",
     ]
-    selected_page = st.segmented_control("View", options=pages, default="💎 Edge Arsenal")
+    # Use session-state as default so st.rerun() (e.g. from Rerun Audit button)
+    # preserves the current tab instead of jumping to the hard-coded default.
+    _default_page = st.session_state.get("selected_page", "💎 Edge Arsenal")
+    if _default_page not in pages:
+        _default_page = "💎 Edge Arsenal"
+    selected_page = st.segmented_control(
+        "View", options=pages, default=_default_page, key="main_page_control"
+    )
     # Track active page in session state so sidebar AI and chips know context
     if selected_page:
         st.session_state["selected_page"] = selected_page
