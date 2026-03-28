@@ -25,12 +25,15 @@ class BronzeLayer:
     Handles parallel fetching, retry logic, validation, and catalog management.
     """
 
-    def __init__(self, config: ProjectConfig, factory: DataFactory):
+    def __init__(self, config: ProjectConfig, factory: DataFactory, base_path: str = None):
         self.config = config
         self.factory = factory
-        self.base_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../data/raw")
-        )
+        if base_path is not None:
+            self.base_path = os.path.abspath(base_path)
+        else:
+            self.base_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../data/raw")
+            )
         os.makedirs(self.base_path, exist_ok=True)
         self.catalog: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()

@@ -53,7 +53,7 @@ class MedallionPipeline:
         self.processed_path.mkdir(parents=True, exist_ok=True)
         self.gold_path.mkdir(parents=True, exist_ok=True)
 
-        self.bronze = BronzeLayer(config, factory)
+        self.bronze = BronzeLayer(config, factory, base_path=str(self.raw_path))
         self.silver = SilverLayer(config)
         self.gold: Optional[GoldLayer] = None
         self._stage_durations: Dict[str, float] = {}
@@ -156,10 +156,9 @@ class MedallionPipeline:
                 )
                 raise ComplianceViolationError(error_message)
             if failed > 0:
-                self.logger.warning(
-                    "Bronze partial failures: %s task(s) failed but pipeline "
-                    "continues with available data.",
-                    failed,
+                print(
+                    f"Bronze partial failures: {failed} task(s) failed but pipeline "
+                    "continues with available data."
                 )
             success = True
         except Exception as e:
@@ -226,7 +225,8 @@ class MedallionPipeline:
                 {"error": error_message or None},
                 "Silver stage completed" if success else "Silver stage failed",
             )
-        print(SILVER_SUCCESS)
+        if success:
+            print(SILVER_SUCCESS)
 
     def run_gold(self) -> None:
         print(GOLD_START)
@@ -300,6 +300,11 @@ class MedallionPipeline:
                 else:
                     self._run_stage_with_retry("silver", self.run_silver)
                 pbar.update(1)
+
+                if not self._stage_success.get("silver"):
+                    print("Silver stage failed. Halting pipeline.")
+                    return {}
+
                 if resume and self._is_stage_done("gold"):
                     print("[resume] Skipping Gold stage (checkpoint valid).")
                 else:
@@ -348,6 +353,11 @@ class MedallionPipeline:
             else:
                 self._run_stage_with_retry("silver", self.run_silver)
             pbar.update(1)
+
+            if not self._stage_success.get("silver"):
+                print("Silver stage failed. Halting pipeline.")
+                return {}
+
             if resume and self._is_stage_done("gold"):
                 print("[resume] Skipping Gold stage (checkpoint valid).")
             else:
