@@ -1,5 +1,3 @@
-
-
 on:
   schedule:
     - cron: '0 0 * * *'  # Every 24 hours

@@ -456,18 +456,22 @@ def main() -> None:
         catalog.log_error("main", "FetcherError", str(e), "pipeline_execution")
         logger.error(f"Fetcher Error: {e}")
         print(f"Fetcher Error: {_user_error_message(e)}")
+        sys.exit(1)
     except ValueError as e:
         catalog.log_error("main", "ConfigError", str(e), "config_loading")
         logger.error(f"Configuration Error: {e}")
         print(_user_error_message(e))
+        sys.exit(1)
     except DataPipelineError as e:
         catalog.log_error("main", "DataPipelineError", str(e), "pipeline_execution")
         logger.error(f"Data Pipeline Error: {e}")
         print(f"Data Pipeline Error: {_user_error_message(e)}")
+        sys.exit(1)
     except Exception as e:
         catalog.log_error("main", "UnexpectedError", str(e), "application_execution")
         logger.error(f"Unexpected Application Error: {e}")
         print(f"Unexpected Application Error: {e}. Contact support.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

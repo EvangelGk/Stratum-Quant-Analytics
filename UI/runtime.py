@@ -135,6 +135,7 @@ def run_pipeline(
 
 def show_pipeline_failure(raw_output: str) -> None:
     st.error("Pipeline did not complete. Here is what happened:")
+
     q_report = read_json(USER_DATA_DIR / "processed" / "quality" / "quality_report.json")
     files_info = q_report.get("files", {}) if isinstance(q_report, dict) else {}
     summary_info = q_report.get("summary", {}) if isinstance(q_report, dict) else {}
@@ -165,8 +166,10 @@ def show_pipeline_failure(raw_output: str) -> None:
             else:
                 plain = err[:120]
             st.markdown(f"- **{name}** ({src}): {plain}")
+    elif files_info:
+        st.success("Όλα τα datasets πέρασαν τα quality checks (Silver layer OK). Δεν υπάρχουν αποτυχίες.")
     else:
-        st.info("Quality report not found or no Silver failures recorded. Check logs for upstream fetch failures.")
+        st.info("Quality report not found ή δεν υπάρχουν Silver failures. Check logs for upstream fetch failures.")
 
     with st.expander("Raw pipeline output", expanded=False):
         st.text(raw_output[-4000:] if len(raw_output) > 4000 else raw_output)
