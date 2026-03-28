@@ -70,26 +70,17 @@ class SilverLayer:
         self.logger.info("--- Silver Layer: Processing Started ---")
         catalog = self._load_catalog()
         if not catalog:
-            raise DataValidationError(
-                "Silver hard stop: raw catalog is empty. No entities to process."
-            )
+            raise DataValidationError("Silver hard stop: raw catalog is empty. No entities to process.")
 
         # Prepare tasks for parallel execution
-        tasks: List[Tuple[str, Dict[str, Any]]] = [
-            (filename, info) for filename, info in catalog.items()
-        ]
+        tasks: List[Tuple[str, Dict[str, Any]]] = [(filename, info) for filename, info in catalog.items()]
         if not tasks:
-            raise DataValidationError(
-                "Silver hard stop: no tasks resolved from catalog."
-            )
+            raise DataValidationError("Silver hard stop: no tasks resolved from catalog.")
 
         # Execute tasks in parallel
         max_workers = min(self.config.max_workers, len(tasks))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self._process_entity, filename, info)
-                for filename, info in tasks
-            ]
+            futures = [executor.submit(self._process_entity, filename, info) for filename, info in tasks]
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()  # Raise any exceptions
@@ -110,18 +101,12 @@ class SilverLayer:
         self._generate_quality_report()
 
         # Build outcome summary from quality_reports
-        failed_entities: List[str] = [
-            k for k, v in self.quality_reports.items() if v.get("status") == "failed"
-        ]
+        failed_entities: List[str] = [k for k, v in self.quality_reports.items() if v.get("status") == "failed"]
         # Build source success tracking only for sources that actually appeared
         # in the catalog.  Sources that had zero tasks (e.g. FRED when the API
         # key is absent) are intentionally absent and must not be flagged as
         # missing — that would cause a false hard-fail.
-        catalog_sources = {
-            info.get("source")
-            for info in catalog.values()
-            if info.get("source")
-        }
+        catalog_sources = {info.get("source") for info in catalog.values() if info.get("source")}
         source_success: Dict[str, int] = {src: 0 for src in catalog_sources}
         for report in self.quality_reports.values():
             src = report.get("source")
@@ -152,22 +137,16 @@ class SilverLayer:
             self._preflight_contract_checks(df, info["source"], filename, info)
 
             # 2. Standardization (Units, Names, Dates)
-            df, unit_normalized, temporal_aligned = self._standardize(
-                df, info["source"], filename
-            )
+            df, unit_normalized, temporal_aligned = self._standardize(df, info["source"], filename)
 
             # 3. Strategic Imputation with Winsorization
-            df, imputed_count, outliers_clipped, max_col_null_pct, warnings = self._impute(
-                df, info["source"], filename
-            )
+            df, imputed_count, outliers_clipped, max_col_null_pct, warnings = self._impute(df, info["source"], filename)
 
             # 4. Pandera Validation (The Ultimate Quality Gate)
             try:
                 validated_df = self.schema_map[info["source"]].validate(df)
             except pandera.errors.SchemaError as e:
-                raise DataValidationError(
-                    f"Schema validation failed for {filename}: {e}"
-                ) from e
+                raise DataValidationError(f"Schema validation failed for {filename}: {e}") from e
 
             # 5. Add Audit Columns
             validated_df = self._add_audit_columns(
@@ -214,10 +193,7 @@ class SilverLayer:
         ) as e:
             error_type = type(e).__name__
             short_msg = str(e)[:200]
-            print(
-                f"[Silver] ENTITY FAILED: {filename} ({info['source']}) "
-                f"— {error_type}: {short_msg}"
-            )
+            print(f"[Silver] ENTITY FAILED: {filename} ({info['source']}) — {error_type}: {short_msg}")
             with self.lock:
                 self.quality_reports[filename] = {
                     "source": info["source"],
@@ -229,10 +205,7 @@ class SilverLayer:
         except Exception as e:
             error_type = type(e).__name__
             short_msg = str(e)[:200]
-            print(
-                f"[Silver] UNEXPECTED FAILURE: {filename} ({info['source']}) "
-                f"— {error_type}: {short_msg}"
-            )
+            print(f"[Silver] UNEXPECTED FAILURE: {filename} ({info['source']}) — {error_type}: {short_msg}")
             with self.lock:
                 self.quality_reports[filename] = {
                     "source": info["source"],
@@ -243,9 +216,7 @@ class SilverLayer:
             self._append_dead_letter(filename, info, e)
             raise
 
-    def _standardize(
-        self, df: pd.DataFrame, source: str, entity_name: str
-    ) -> Tuple[pd.DataFrame, bool, bool]:
+    def _standardize(self, df: pd.DataFrame, source: str, entity_name: str) -> Tuple[pd.DataFrame, bool, bool]:
         """Unifies structure and measurement units with business alignment."""
         try:
             canonical_entity = entity_name.split("__", 1)[0]
@@ -296,13 +267,9 @@ class SilverLayer:
 
             return df, unit_normalized, temporal_aligned
         except Exception as e:
-            raise StandardizationError(
-                f"Failed to standardize data for source {source}: {e}"
-            ) from e
+            raise StandardizationError(f"Failed to standardize data for source {source}: {e}") from e
 
-    def _impute(
-        self, df: pd.DataFrame, source: str, entity_name: str
-    ) -> Tuple[pd.DataFrame, int, int, float, List[str]]:
+    def _impute(self, df: pd.DataFrame, source: str, entity_name: str) -> Tuple[pd.DataFrame, int, int, float, List[str]]:
         """Handle missing values with Quantile Winsorization
         and Z-Score outlier detection."""
         try:
@@ -316,22 +283,13 @@ class SilverLayer:
 
             # Compliance Check: Reject if ANY numeric column exceeds 30% nulls.
             # Checking per-column prevents dense columns from masking sparse ones.
-            numeric_null_pct = (
-                df.select_dtypes(include=[float, int]).isnull().mean() * 100
-            )
-            worst_col = (
-                numeric_null_pct.idxmax() if not numeric_null_pct.empty else None
-            )
-            max_col_null_pct = (
-                float(numeric_null_pct.max()) if worst_col is not None else 0.0
-            )
-            dynamic_threshold = self._resolve_dynamic_null_threshold(
-                source, canonical_entity, base_override=series_contract.null_tolerance_pct
-            )
+            numeric_null_pct = df.select_dtypes(include=[float, int]).isnull().mean() * 100
+            worst_col = numeric_null_pct.idxmax() if not numeric_null_pct.empty else None
+            max_col_null_pct = float(numeric_null_pct.max()) if worst_col is not None else 0.0
+            dynamic_threshold = self._resolve_dynamic_null_threshold(source, canonical_entity, base_override=series_contract.null_tolerance_pct)
             severe_threshold = min(
                 100.0,
-                dynamic_threshold
-                + float(getattr(self.config, "silver_warn_to_fail_buffer", 15.0)),
+                dynamic_threshold + float(getattr(self.config, "silver_warn_to_fail_buffer", 15.0)),
             )
             # Small samples are common in unit tests and pilot runs; enforce
             # the strict null-threshold only when we have enough observations.
@@ -343,10 +301,7 @@ class SilverLayer:
                     f" for {entity_name} ({source})"
                 )
             if len(df) >= 10 and dynamic_threshold < max_col_null_pct <= severe_threshold:
-                warnings.append(
-                    "elevated_missingness:"
-                    f"{worst_col}:{max_col_null_pct:.2f}%>{dynamic_threshold:.2f}%"
-                )
+                warnings.append(f"elevated_missingness:{worst_col}:{max_col_null_pct:.2f}%>{dynamic_threshold:.2f}%")
 
             # Outlier Detection with Z-Score and Winsorization
             numeric_cols = df.select_dtypes(include=[float, int]).columns
@@ -379,19 +334,14 @@ class SilverLayer:
             outlier_ratio = outliers_clipped / max(len(df), 1)
             warn_ratio = float(getattr(self.config, "silver_outlier_warning_ratio", 0.1))
             if outlier_ratio > warn_ratio:
-                warnings.append(
-                    "high_outlier_intensity:"
-                    f"{outlier_ratio:.3f}>{warn_ratio:.3f}"
-                )
+                warnings.append(f"high_outlier_intensity:{outlier_ratio:.3f}>{warn_ratio:.3f}")
 
             # Update quality report with outlier info
             return df, imputed_count, outliers_clipped, max_col_null_pct, warnings
         except ComplianceViolationError:
             raise
         except Exception as e:
-            raise ImputationError(
-                f"Failed to impute data for source {source}: {e}"
-            ) from e
+            raise ImputationError(f"Failed to impute data for source {source}: {e}") from e
 
     def _add_audit_columns(
         self,
@@ -444,24 +394,16 @@ class SilverLayer:
                 df[col] = df[col].astype("category")
 
             file_path = output_dir / f"{filename}_silver.parquet"
-            df.to_parquet(
-                file_path, index=False, compression="zstd"
-            )  # ZSTD for better compression
-            self.logger.info(
-                f"Silver Asset Secured: {file_path} | Rows: {len(df)} |Memory Optimized"
-            )
+            df.to_parquet(file_path, index=False, compression="zstd")  # ZSTD for better compression
+            self.logger.info(f"Silver Asset Secured: {file_path} | Rows: {len(df)} |Memory Optimized")
         except Exception as e:
-            raise FileSaveError(
-                f"Failed to save Silver data for {filename}: {e}"
-            ) from e
+            raise FileSaveError(f"Failed to save Silver data for {filename}: {e}") from e
 
     def _load_catalog(self) -> Dict[str, Any]:
         try:
             catalog_file = self.raw_path / "catalog.json"
             if not catalog_file.exists():
-                raise CatalogNotFoundError(
-                    f"Catalog not found at {catalog_file}. Run Bronze Layer first."
-                )
+                raise CatalogNotFoundError(f"Catalog not found at {catalog_file}. Run Bronze Layer first.")
             with open(catalog_file, "r") as f:
                 return cast(Dict[str, Any], json.load(f))
         except CatalogNotFoundError:
@@ -474,21 +416,14 @@ class SilverLayer:
         payload = df.to_json(orient="split", date_format="iso")
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _preflight_contract_checks(
-        self, df: pd.DataFrame, source: str, filename: str, info: Dict[str, Any]
-    ) -> None:
+    def _preflight_contract_checks(self, df: pd.DataFrame, source: str, filename: str, info: Dict[str, Any]) -> None:
         """Shift-left data contract validation and hard-stop guardrails."""
         if df is None or df.empty:
-            raise ComplianceViolationError(
-                f"Silver hard stop: '{filename}' from {source} is empty."
-            )
+            raise ComplianceViolationError(f"Silver hard stop: '{filename}' from {source} is empty.")
 
         min_rows = int(getattr(self.config, "silver_min_rows", 10))
         if len(df) < min_rows:
-            raise ComplianceViolationError(
-                f"Silver hard stop: '{filename}' has only {len(df)} rows"
-                f" (< minimum {min_rows})."
-            )
+            raise ComplianceViolationError(f"Silver hard stop: '{filename}' has only {len(df)} rows (< minimum {min_rows}).")
 
         expected_rows = int(info.get("rows", 0) or 0)
         min_ratio = float(getattr(self.config, "silver_min_rows_ratio", 0.1))
@@ -496,9 +431,7 @@ class SilverLayer:
             required_rows = max(1, int(expected_rows * min_ratio))
             if len(df) < required_rows:
                 raise ComplianceViolationError(
-                    f"Silver hard stop: '{filename}' has {len(df)} rows;"
-                    f" expected at least {required_rows} from Bronze catalog baseline"
-                    f" ({expected_rows})."
+                    f"Silver hard stop: '{filename}' has {len(df)} rows; expected at least {required_rows} from Bronze catalog baseline ({expected_rows})."
                 )
 
         normalized = {str(c).lower().replace(" ", "_") for c in df.columns}
@@ -506,14 +439,9 @@ class SilverLayer:
         expected_columns = contract.required_columns if contract else set()
         if expected_columns and not expected_columns.issubset(normalized):
             missing = sorted(expected_columns - normalized)
-            raise SchemaMismatchError(
-                f"Schema drift detected for '{filename}' ({source})."
-                f" Missing columns after normalization: {missing}."
-            )
+            raise SchemaMismatchError(f"Schema drift detected for '{filename}' ({source}). Missing columns after normalization: {missing}.")
 
-    def _append_dead_letter(
-        self, filename: str, info: Dict[str, Any], exc: Exception
-    ) -> None:
+    def _append_dead_letter(self, filename: str, info: Dict[str, Any], exc: Exception) -> None:
         """Persist rejected entities for triage/replay workflows."""
         self.dead_letter_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -529,15 +457,9 @@ class SilverLayer:
         with self.dead_letter_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
-    def _resolve_dynamic_null_threshold(
-        self, source: str, entity_name: str, base_override: float | None = None
-    ) -> float:
+    def _resolve_dynamic_null_threshold(self, source: str, entity_name: str, base_override: float | None = None) -> float:
         """Compute adaptive null threshold from historical quality metrics."""
-        base = (
-            float(base_override)
-            if base_override is not None
-            else float(getattr(self.config, "silver_base_null_threshold", 30.0))
-        )
+        base = float(base_override) if base_override is not None else float(getattr(self.config, "silver_base_null_threshold", 30.0))
         history_file = self.processed_path / "quality_history.jsonl"
         if not history_file.exists():
             return base
@@ -633,20 +555,10 @@ class SilverLayer:
 
         # Log summary
         total_files = len(self.quality_reports)
-        successful = sum(
-            1 for r in self.quality_reports.values() if r.get("status") == "success"
-        )
+        successful = sum(1 for r in self.quality_reports.values() if r.get("status") == "success")
         failed = total_files - successful
-        total_imputed = sum(
-            r.get("imputed_count", 0)
-            for r in self.quality_reports.values()
-            if r.get("status") == "success"
-        )
-        total_outliers = sum(
-            r.get("outliers_clipped", 0)
-            for r in self.quality_reports.values()
-            if r.get("status") == "success"
-        )
+        total_imputed = sum(r.get("imputed_count", 0) for r in self.quality_reports.values() if r.get("status") == "success")
+        total_outliers = sum(r.get("outliers_clipped", 0) for r in self.quality_reports.values() if r.get("status") == "success")
         self.logger.info(
             f"Silver Processing Summary: {successful}/{total_files} files successful,"
             f" {failed} failed, {total_imputed} values imputed,"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
-
 import os
 import time
 from typing import Any
@@ -13,8 +12,8 @@ from src.ai_agent import PAGE_CONTEXT_QUESTIONS, QuantosAgent
 from src.exceptions.AIAgentExceptions import AIOutputError, BackendSelectionError
 from src.secret_store import get_secret
 
-
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _current_agent_signature() -> tuple[str, str, str, str, str]:
     """Return the current backend-relevant settings fingerprint for this session."""
@@ -25,6 +24,7 @@ def _current_agent_signature() -> tuple[str, str, str, str, str]:
         (get_secret("OLLAMA_MODEL") or "llama3.2:1b").strip(),
         (get_secret("GROQ_MODEL") or "llama-3.3-70b-versatile").strip(),
     )
+
 
 def _get_agent() -> QuantosAgent | None:
     """Return a session-cached agent. Rebuilds if missing. Returns None when no backend available."""
@@ -62,8 +62,8 @@ def _check_ready(force: bool = False) -> bool:
     - Offline (only-Ollama) mode: TTL-based auto-recheck every 30 s so the UI
       recovers automatically without requiring a manual Retry press.
     """
-    _ONLINE_TTL  = 120.0  # seconds before re-verifying that online keys are still present
-    _RECHECK_TTL =  30.0  # seconds before re-probing a Failed / Offline state
+    _ONLINE_TTL = 120.0  # seconds before re-verifying that online keys are still present
+    _RECHECK_TTL = 30.0  # seconds before re-probing a Failed / Offline state
     now = time.time()
     last_checked = st.session_state.get("ai_ready_checked_at", 0.0)
 
@@ -131,9 +131,7 @@ def _submit_question(
         st.session_state["ai_last_error"] = offline_msg
         return offline_msg
 
-    result = agent.answer_question(
-        question, user_id=user_id, current_page=current_page
-    )
+    result = agent.answer_question(question, user_id=user_id, current_page=current_page)
     answer: str = result.get("answer", "")
 
     # If the call failed (quota exhausted, outage, auth error), evict the cached
@@ -153,6 +151,7 @@ def _submit_question(
 
 
 # ── Sidebar mini-chat (always visible) ───────────────────────────────────────
+
 
 def render_sidebar_ai_widget() -> None:
     """Compact AI widget called from inside _render_sidebar().
@@ -197,9 +196,7 @@ def render_sidebar_ai_widget() -> None:
                 label_visibility="collapsed",
                 key="sidebar_ai_input",
             )
-            submitted = st.form_submit_button(
-                "Ask AI →", use_container_width=True, type="primary"
-            )
+            submitted = st.form_submit_button("Ask AI →", use_container_width=True, type="primary")
 
         if submitted and sidebar_q.strip():
             user_id = os.getenv("DATA_USER_ID", "default")
@@ -212,6 +209,7 @@ def render_sidebar_ai_widget() -> None:
 
 
 # ── Inline contextual AI section (embeddable in any tab) ─────────────────────
+
 
 def render_inline_ai_section(
     topic: str,
@@ -245,9 +243,7 @@ def render_inline_ai_section(
             label_visibility="collapsed",
         )
 
-        if col_b.button(
-            "Ask", key=f"inline_ask_{key_suffix}", use_container_width=True
-        ) and custom_q.strip():
+        if col_b.button("Ask", key=f"inline_ask_{key_suffix}", use_container_width=True) and custom_q.strip():
             with st.spinner("Thinking…"):
                 answer = _submit_question(custom_q.strip(), user_id, current_page)
             st.markdown(answer)
@@ -259,9 +255,7 @@ def render_inline_ai_section(
             use_container_width=True,
         ):
             with st.spinner("AI analyzing…"):
-                result = agent.quick_insight(
-                    topic=topic, snapshot=snapshot, user_id=user_id
-                )
+                result = agent.quick_insight(topic=topic, snapshot=snapshot, user_id=user_id)
             if result.get("success"):
                 insight: str = result["insight"]
                 st.session_state.pop("ai_last_error", None)
@@ -279,6 +273,7 @@ def render_inline_ai_section(
 
 # ── Full Quantos Assistant tab ───────────────────────────────────────────────
 
+
 def show_ai_assistant_tab() -> None:
     """Full Quantos chat tab — bubbles, quick chips, pipeline brief."""
     user_id = os.getenv("DATA_USER_ID", "default")
@@ -287,7 +282,7 @@ def show_ai_assistant_tab() -> None:
     ai_ready = _check_ready()
     if not ai_ready:
         reason = st.session_state.get("ai_offline_reason", "unknown")
-        st.error(f"🔴 **Quantos offline**")
+        st.error("🔴 **Quantos offline**")
         last_error = str(st.session_state.get("ai_last_error", "") or "")
         if last_error:
             st.warning(last_error)
@@ -315,10 +310,7 @@ def show_ai_assistant_tab() -> None:
     if last_error:
         st.warning(last_error)
 
-    if c_brief.button(
-        "📋 Pipeline Brief", use_container_width=True,
-        help="Generate a full AI briefing from the latest pipeline outputs"
-    ):
+    if c_brief.button("📋 Pipeline Brief", use_container_width=True, help="Generate a full AI briefing from the latest pipeline outputs"):
         with st.spinner("Generating Quantos pipeline briefing…"):
             try:
                 brief = agent.create_pipeline_brief(user_id=user_id)
@@ -350,9 +342,7 @@ def show_ai_assistant_tab() -> None:
 
     # ── Context-aware quick-action chips ─────────────────────────────
     current_page = st.session_state.get("selected_page", "🤖 Quantos Assistant")
-    page_questions = PAGE_CONTEXT_QUESTIONS.get(
-        current_page, PAGE_CONTEXT_QUESTIONS["🤖 Quantos Assistant"]
-    )
+    page_questions = PAGE_CONTEXT_QUESTIONS.get(current_page, PAGE_CONTEXT_QUESTIONS["🤖 Quantos Assistant"])
     st.caption(f"Quick questions for **{current_page}** — click to ask instantly:")
     chip_cols = st.columns(min(len(page_questions), 4))
     for col, q in zip(chip_cols, page_questions[:4]):
@@ -366,10 +356,7 @@ def show_ai_assistant_tab() -> None:
     messages = _ensure_messages()
 
     if not messages:
-        st.info(
-            "Δεν υπάρχουν μηνύματα ακόμα. Χρησιμοποίησε τα quick chips παραπάνω "
-            "ή γράψε στο πεδίο κάτω για να ξεκινήσεις συνομιλία."
-        )
+        st.info("Δεν υπάρχουν μηνύματα ακόμα. Χρησιμοποίησε τα quick chips παραπάνω ή γράψε στο πεδίο κάτω για να ξεκινήσεις συνομιλία.")
 
     for msg in messages:
         avatar = "🧑" if msg["role"] == "user" else "🤖"
@@ -387,9 +374,7 @@ def show_ai_assistant_tab() -> None:
             st.markdown(answer)
 
     # ── Chat input (pinned at bottom by Streamlit) ────────────────────
-    if prompt := st.chat_input(
-        "Ρώτα τον Quantos για pipeline, αναλύσεις, governance, optimizer…"
-    ):
+    if prompt := st.chat_input("Ρώτα τον Quantos για pipeline, αναλύσεις, governance, optimizer…"):
         with st.chat_message("user", avatar="🧑"):
             st.markdown(prompt)
         with st.chat_message("assistant", avatar="🤖"):

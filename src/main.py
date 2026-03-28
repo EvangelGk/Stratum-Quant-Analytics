@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
+from ai_agent import generate_ai_pipeline_brief
 from exceptions.FetchersExceptions import FetcherError
 from exceptions.MedallionExceptions import DataPipelineError
 from Fetchers.Factory import DataFactory
@@ -37,12 +38,9 @@ from logger.Messages.MainMess import (
     QUICK_START,
 )
 from Medallion import MedallionPipeline
-from ai_agent import generate_ai_pipeline_brief
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -157,18 +155,13 @@ def _to_serializable(value: Any) -> Any:
 
 def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str, str]:
     """Write analysis artifacts into output/ for easy user discovery."""
-    safe_user = (
-        "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id))
-        or "default"
-    )
+    safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)) or "default"
     output_dir = PROJECT_ROOT / "output" / safe_user
     output_dir.mkdir(parents=True, exist_ok=True)
     created: Dict[str, str] = {}
 
     def _safe_name(name: str) -> str:
-        cleaned = "".join(
-            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in name
-        )
+        cleaned = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in name)
         return cleaned.strip("_") or "result"
 
     def _write_json(file_path: Path, payload: Any) -> None:
@@ -243,9 +236,7 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
     created["analysis_results_versioned"] = str(versioned_gz)
 
     # Rotate: keep only the N most-recent versioned backups
-    backups = sorted(
-        output_dir.glob("analysis_results_*.json.gz"), key=lambda p: p.stat().st_mtime
-    )
+    backups = sorted(output_dir.glob("analysis_results_*.json.gz"), key=lambda p: p.stat().st_mtime)
     for old in backups[:-_MAX_RETAINED_SUMMARIES]:
         try:
             old.unlink()
@@ -258,10 +249,7 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
 
 def quick_diagnostics(user_id: str = "default") -> str:
     """Return a concise multi-line diagnosis for the latest run failures."""
-    safe_user = (
-        "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id))
-        or "default"
-    )
+    safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)) or "default"
     base = PROJECT_ROOT / "data" / "users" / safe_user / "processed" / "quality"
     report_file = base / "quality_report.json"
     dead_letter = base / "dead_letter.jsonl"
@@ -289,10 +277,7 @@ def quick_diagnostics(user_id: str = "default") -> str:
             lines.append(f"- Dead-letter entries: {len(entries)}")
             if entries:
                 last = json.loads(entries[-1])
-                lines.append(
-                    "- Last error: "
-                    f"{last.get('entity')} | {last.get('error_type')} | {last.get('error_message')}"
-                )
+                lines.append(f"- Last error: {last.get('entity')} | {last.get('error_type')} | {last.get('error_message')}")
         except Exception as exc:
             lines.append(f"- dead-letter parse error: {exc}")
     else:
@@ -322,9 +307,7 @@ def main() -> None:
         config_hash = _hash_payload(config_contract)
         code_version = os.getenv("GIT_COMMIT_SHA", "unversioned")
         pyproject_hash = _hash_file_if_exists(PROJECT_ROOT / "pyproject.toml")
-        logger.info(
-            MAIN_CONFIG_LOADED.format(config_details=f"mode={config.mode.value}")
-        )
+        logger.info(MAIN_CONFIG_LOADED.format(config_details=f"mode={config.mode.value}"))
         catalog.log_operation(
             "config_load",
             "main",
@@ -344,9 +327,7 @@ def main() -> None:
                 "config_hash": config_hash,
                 "pyproject_hash": pyproject_hash,
                 "code_version": code_version,
-                "seed_policy": (
-                    "deterministic" if config.enforce_reproducibility else "stochastic"
-                ),
+                "seed_policy": ("deterministic" if config.enforce_reproducibility else "stochastic"),
             },
             {"phase": "pre_pipeline"},
             "Run contract initialized",
@@ -370,22 +351,13 @@ def main() -> None:
         else:
             results = pipeline.run_full_pipeline_sequential()
 
-        output_artifacts = _write_output_artifacts(
-            results, user_id=getattr(config, "data_user_id", "default")
-        )
-        ai_brief = generate_ai_pipeline_brief(
-            user_id=getattr(config, "data_user_id", "default")
-        )
+        output_artifacts = _write_output_artifacts(results, user_id=getattr(config, "data_user_id", "default"))
+        ai_brief = generate_ai_pipeline_brief(user_id=getattr(config, "data_user_id", "default"))
         if ai_brief.get("success"):
-            output_artifacts["ai_pipeline_briefing_json"] = str(
-                ai_brief.get("json_path", "")
-            )
-            output_artifacts["ai_pipeline_briefing_md"] = str(
-                ai_brief.get("md_path", "")
-            )
+            output_artifacts["ai_pipeline_briefing_json"] = str(ai_brief.get("json_path", ""))
+            output_artifacts["ai_pipeline_briefing_md"] = str(ai_brief.get("md_path", ""))
         else:
-            output_artifacts["ai_pipeline_briefing_status"] = (
-                f"skipped: {ai_brief.get('error', 'unknown')}")
+            output_artifacts["ai_pipeline_briefing_status"] = f"skipped: {ai_brief.get('error', 'unknown')}"
 
         pipeline_duration = time.time() - pipeline_start
         data_catalog_hash = _hash_file_if_exists(pipeline.raw_path / "catalog.json")
@@ -399,9 +371,7 @@ def main() -> None:
                 "output_files_written": len(output_artifacts),
             },
             {
-                "results_keys": (
-                    list(results.keys()) if isinstance(results, dict) else []
-                ),
+                "results_keys": (list(results.keys()) if isinstance(results, dict) else []),
                 "data_catalog_hash": data_catalog_hash,
                 "output_artifacts": output_artifacts,
             },

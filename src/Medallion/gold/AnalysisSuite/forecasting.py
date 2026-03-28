@@ -1,11 +1,11 @@
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
-
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import filter_to_ticker
 
 
@@ -52,9 +52,7 @@ def forecasting(
 
         # Assume df has a date column for time series
         if "date" not in df.columns:
-            raise DataValidationError(
-                "DataFrame must have a 'date' column for time series."
-            )
+            raise DataValidationError("DataFrame must have a 'date' column for time series.")
 
         work_df = filter_to_ticker(df, ticker=ticker).copy()
         work_df["date"] = pd.to_datetime(work_df["date"], errors="coerce")
@@ -81,9 +79,7 @@ def forecasting(
         valid_idx = transformed.dropna().index
         ts_data = transformed.loc[valid_idx].copy()
         if ts_data.empty:
-            raise DataValidationError(
-                f"No data available for column '{column}' after stationarity transformation."
-            )
+            raise DataValidationError(f"No data available for column '{column}' after stationarity transformation.")
 
         # Align a DateTimeIndex so ARIMA can produce interpretable forecast dates
         ts_data.index = pd.to_datetime(work_df.loc[valid_idx, "date"].values)

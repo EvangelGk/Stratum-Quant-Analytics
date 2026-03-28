@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,7 @@ def _fmt(value: object, ndigits: int = 4) -> str:
 # ── Executive-grade metric formatters ─────────────────────────────────────────
 # Rules: percentages where appropriate, 2 decimal places for ratios,
 # hard caps on astronomically large values that would mislead stakeholders.
+
 
 def _fmt_pct(v: float) -> str:
     """Format a decimal fraction as a percentage string, e.g. -0.082 → '-8.2%'."""
@@ -227,11 +228,7 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
             gross_profit = float(np.sum(wins)) if len(wins) else 0.0
             gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
-            out["profit_factor"] = (
-                float(gross_profit / gross_loss_abs)
-                if gross_loss_abs > 1e-12
-                else (None if gross_profit == 0.0 else float("inf"))
-            )
+            out["profit_factor"] = float(gross_profit / gross_loss_abs) if gross_loss_abs > 1e-12 else (None if gross_profit == 0.0 else float("inf"))
 
             stdev = float(np.std(sret, ddof=1)) if len(sret) > 1 else None
             if stdev is not None and stdev > 1e-12:
@@ -384,10 +381,7 @@ def show_edge_arsenal_tab() -> None:
             for child in output_root.iterdir():
                 if child.is_dir():
                     available_profiles.append(child.name)
-        st.warning(
-            "No backtest payload found in any output profile. "
-            "Run Full Analysis and verify the active DATA_USER_ID profile."
-        )
+        st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
         if available_profiles:
             st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
         return
@@ -432,7 +426,7 @@ def show_edge_arsenal_tab() -> None:
     # Profit Factor: gross_profit / gross_loss, capped at ≥ 10×
     if pf is not None and pf != "inf":
         _pf_v = float(pf)
-        _pf_delta = f"vs 1.0 breakeven"
+        _pf_delta = "vs 1.0 breakeven"
         c2.metric(
             "Profit Factor",
             _fmt_ratio(_pf_v, suffix="×", cap=10.0, cap_label="≥ 10×"),
@@ -458,7 +452,7 @@ def show_edge_arsenal_tab() -> None:
         c4.metric(
             "Sharpe Ratio",
             _fmt_sharpe(_sh_v),
-            delta=f"vs 1.0 target",
+            delta="vs 1.0 target",
             delta_color="normal" if _sh_v >= 0.5 else "inverse",
             help="Return per unit of volatility (risk-free rate = 0). >0.5 = acceptable, >1.0 = strong, >2.0 = exceptional.",
         )
@@ -504,8 +498,7 @@ def show_edge_arsenal_tab() -> None:
     _score_color = "🟢" if score >= 65 else ("🟡" if score >= 35 else "🔴")
     st.progress(
         score / 100.0,
-        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100"
-             " — composite of Expectancy, Profit Factor, Calmar, Sharpe & IR",
+        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100 — composite of Expectancy, Profit Factor, Calmar, Sharpe & IR",
     )
 
     # ── Validated findings banner ─────────────────────────────────────────────
@@ -606,24 +599,34 @@ def show_edge_arsenal_tab() -> None:
             else:
                 _x_axis = np.arange(1, len(sret) + 1)
 
-            curve_df = pd.DataFrame({
-                "x": _x_axis,
-                "Strategy": np.cumprod(1.0 + sret),
-                "Buy & Hold": np.cumprod(1.0 + bret),
-            })
+            curve_df = pd.DataFrame(
+                {
+                    "x": _x_axis,
+                    "Strategy": np.cumprod(1.0 + sret),
+                    "Buy & Hold": np.cumprod(1.0 + bret),
+                }
+            )
 
             st.markdown("#### Strategy vs Buy-and-Hold Equity Curve")
             eq_fig = go.Figure()
-            eq_fig.add_trace(go.Scatter(
-                x=curve_df["x"], y=curve_df["Strategy"],
-                mode="lines", name="Strategy",
-                line=dict(color="#0f766e", width=2.5),
-            ))
-            eq_fig.add_trace(go.Scatter(
-                x=curve_df["x"], y=curve_df["Buy & Hold"],
-                mode="lines", name="Buy & Hold",
-                line=dict(color="#b91c1c", width=1.8, dash="dot"),
-            ))
+            eq_fig.add_trace(
+                go.Scatter(
+                    x=curve_df["x"],
+                    y=curve_df["Strategy"],
+                    mode="lines",
+                    name="Strategy",
+                    line=dict(color="#0f766e", width=2.5),
+                )
+            )
+            eq_fig.add_trace(
+                go.Scatter(
+                    x=curve_df["x"],
+                    y=curve_df["Buy & Hold"],
+                    mode="lines",
+                    name="Buy & Hold",
+                    line=dict(color="#b91c1c", width=1.8, dash="dot"),
+                )
+            )
             eq_fig.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af", annotation_text="Starting value")
             eq_fig.update_layout(
                 height=400,

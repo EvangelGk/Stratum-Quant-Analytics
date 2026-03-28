@@ -117,8 +117,7 @@ def main() -> None:
     macro_cols = [
         c
         for c in df.columns
-        if c not in {"date", "ticker", "open", "high", "low", "close", "adj_close", "volume", "log_return"}
-        and not str(c).startswith("__")
+        if c not in {"date", "ticker", "open", "high", "low", "close", "adj_close", "volume", "log_return"} and not str(c).startswith("__")
     ]
 
     with st.sidebar:

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
+
 from .mixed_frequency import prepare_supervised_frame
 
 
@@ -46,9 +47,7 @@ def elasticity(
     """
     try:
         if asset_return not in df.columns or macro_factor not in df.columns:
-            raise DataValidationError(
-                f"Columns {asset_return} or {macro_factor} not found in DataFrame."
-            )
+            raise DataValidationError(f"Columns {asset_return} or {macro_factor} not found in DataFrame.")
 
         panel, metadata = prepare_supervised_frame(
             df=df,
@@ -67,9 +66,7 @@ def elasticity(
         cov = panel[[asset_return, macro_factor]].cov().iloc[0, 1]
         var_macro = panel[macro_factor].var()
         if var_macro == 0:
-            raise AnalysisError(
-                "Variance of macro factor is zero, cannot compute beta."
-            )
+            raise AnalysisError("Variance of macro factor is zero, cannot compute beta.")
 
         beta = cov / var_macro
 
@@ -91,12 +88,8 @@ def elasticity(
         rolling_beta = (rolling_cov / rolling_var).replace([np.inf, -np.inf], np.nan)
         rolling_mean_asset = panel[asset_return].rolling(effective_window).mean()
         rolling_mean_macro = panel[macro_factor].rolling(effective_window).mean()
-        rolling_scale = (rolling_mean_macro / rolling_mean_asset).where(
-            rolling_mean_asset.abs() > 1e-10
-        )
-        rolling_elasticity = (rolling_beta * rolling_scale).replace(
-            [np.inf, -np.inf], np.nan
-        )
+        rolling_scale = (rolling_mean_macro / rolling_mean_asset).where(rolling_mean_asset.abs() > 1e-10)
+        rolling_elasticity = (rolling_beta * rolling_scale).replace([np.inf, -np.inf], np.nan)
         rolling_history = (
             pd.DataFrame(
                 {

@@ -12,6 +12,7 @@ class AIAgentError(Exception):
 
 # ── Connectivity & Communication ─────────────────────────────────────────────
 
+
 class LLMConnectionError(AIAgentError):
     """Raised when the agent cannot reach the Ollama / LLM endpoint."""
 
@@ -31,6 +32,7 @@ class LLMUnavailableError(LLMConnectionError):
 
 
 # ── Authentication & Configuration ───────────────────────────────────────────
+
 
 class AIAgentConfigError(AIAgentError):
     """Raised for missing or invalid AI agent configuration (model name, base URL, etc.)."""
@@ -58,6 +60,7 @@ class BackendSelectionError(AIAgentConfigError):
 
 # ── Response & Parsing ────────────────────────────────────────────────────────
 
+
 class LLMResponseError(AIAgentError):
     """Raised when the LLM returns a malformed or unexpected response."""
 
@@ -78,6 +81,7 @@ class ContextWindowError(LLMResponseError):
 
 # ── Context & Data ────────────────────────────────────────────────────────────
 
+
 class AIContextError(AIAgentError):
     """Raised for errors when building or reading the context bundle."""
 
@@ -97,6 +101,7 @@ class ContextSerializationError(AIContextError):
 
 
 # ── Output & Persistence ──────────────────────────────────────────────────────
+
 
 class AIOutputError(AIAgentError):
     """Raised when the agent fails to persist a briefing or insight to disk."""

@@ -1,37 +1,23 @@
-﻿# Main Application Messages
+# Main Application Messages
 # Messages for main script execution and user interaction
 
 APPLICATION_TITLE = "=== STRATUM QUANT ANALYTICS ==="
 
-QUICK_START = (
-    "Quick start: configure API keys, run the pipeline, then review output/ and logs/."
-)
+QUICK_START = "Quick start: configure API keys, run the pipeline, then review output/ and logs/."
 
 MAIN_START = "Starting STRATUM QUANT ANALYTICS application in {mode} mode."
 
 MAIN_CONFIG_LOADED = "Configuration loaded successfully. Using {config_details}."
 
-MAIN_PIPELINE_START = (
-    "Initializing full Medallion pipeline. This will process data from raw "
-    "to analytics."
-)
+MAIN_PIPELINE_START = "Initializing full Medallion pipeline. This will process data from raw to analytics."
 
-MAIN_PIPELINE_SUCCESS = (
-    "Pipeline execution completed successfully. Analysis results available."
-)
+MAIN_PIPELINE_SUCCESS = "Pipeline execution completed successfully. Analysis results available."
 
-MAIN_RESULTS_SUMMARY = (
-    "Analysis Results Summary: {result_keys}. Check output/ directory for "
-    "detailed reports."
-)
+MAIN_RESULTS_SUMMARY = "Analysis Results Summary: {result_keys}. Check output/ directory for detailed reports."
 
-MAIN_ERROR_HANDLING = (
-    "Encountered {error_type}: {error_message}. Application handled gracefully."
-)
+MAIN_ERROR_HANDLING = "Encountered {error_type}: {error_message}. Application handled gracefully."
 
-MAIN_COMPLETION = (
-    "Application finished. Total execution time: {execution_time} seconds."
-)
+MAIN_COMPLETION = "Application finished. Total execution time: {execution_time} seconds."
 
 # User guidance messages
 MAIN_USER_GUIDE = """
@@ -125,5 +111,3 @@ Auto ML Regression Results:
 - Automated model comparison completed
 - Use for predictive modeling and factor analysis
 """
-
-

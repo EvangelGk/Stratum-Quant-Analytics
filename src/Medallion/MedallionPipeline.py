@@ -37,12 +37,7 @@ class MedallionPipeline:
         self.factory = factory
         self.project_root = Path(__file__).parents[1]
         user_id = getattr(self.config, "data_user_id", "default")
-        safe_user = (
-            "".join(
-                ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)
-            )
-            or "default"
-        )
+        safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)) or "default"
         self.data_path = self.project_root / ".." / "data" / "users" / safe_user
         self.raw_path = self.data_path / "raw"
         self.processed_path = self.data_path / "processed"
@@ -64,9 +59,7 @@ class MedallionPipeline:
         self.silver.processed_path = self.processed_path
         # dead_letter_path is computed in SilverLayer.__init__ before the above
         # override runs, so it would point to the non-user-scoped path. Fix it here.
-        self.silver.dead_letter_path = (
-            self.processed_path / "quality" / "dead_letter.jsonl"
-        )
+        self.silver.dead_letter_path = self.processed_path / "quality" / "dead_letter.jsonl"
 
     def _get_gold_layer(self) -> GoldLayer:
         if self.gold is None:
@@ -140,26 +133,16 @@ class MedallionPipeline:
             with tqdm(total=1, desc="Bronze Layer") as pbar:
                 summary = self.bronze.run()
                 pbar.update(1)
-            failed = (
-                int(summary.get("fail_count", 0)) if isinstance(summary, dict) else 0
-            )
-            missing_sources = (
-                summary.get("missing_sources", []) if isinstance(summary, dict) else []
-            )
+            failed = int(summary.get("fail_count", 0)) if isinstance(summary, dict) else 0
+            missing_sources = summary.get("missing_sources", []) if isinstance(summary, dict) else []
             # Only hard-fail when an entire source category produced zero data.
             # Individual task failures (one bad ticker, one stale series) are
             # logged as warnings so the pipeline continues with available data.
             if missing_sources:
-                error_message = (
-                    f"bronze_integrity_violation: entire source(s) failed to "
-                    f"produce any data: {missing_sources}"
-                )
+                error_message = f"bronze_integrity_violation: entire source(s) failed to produce any data: {missing_sources}"
                 raise ComplianceViolationError(error_message)
             if failed > 0:
-                print(
-                    f"Bronze partial failures: {failed} task(s) failed but pipeline "
-                    "continues with available data."
-                )
+                print(f"Bronze partial failures: {failed} task(s) failed but pipeline continues with available data.")
             success = True
         except Exception as e:
             error_message = str(e)
@@ -190,23 +173,13 @@ class MedallionPipeline:
                 summary = self.silver.run()
                 pbar.update(1)
             failed = summary.get("failed_count", 0) if isinstance(summary, dict) else 0
-            missing_sources = (
-                summary.get("missing_sources", []) if isinstance(summary, dict) else []
-            )
+            missing_sources = summary.get("missing_sources", []) if isinstance(summary, dict) else []
             success = failed == 0
             if not success or missing_sources:
-                error_message = (
-                    f"{failed} entit{'y' if failed == 1 else 'ies'} failed: "
-                    f"{summary.get('failed_entities', [])}, "
-                    f"missing_sources={missing_sources}"
-                )
+                error_message = f"{failed} entit{'y' if failed == 1 else 'ies'} failed: {summary.get('failed_entities', [])}, missing_sources={missing_sources}"
                 success = False
                 if bool(getattr(self.config, "silver_hard_fail", True)):
-                    raise ParallelExecutionError(
-                        "Silver hard-fail enabled and data quality guardrails were "
-                        "violated: "
-                        f"{error_message}"
-                    )
+                    raise ParallelExecutionError(f"Silver hard-fail enabled and data quality guardrails were violated: {error_message}")
                 print(f"Silver soft-fail mode active: {error_message}")
         except Exception as e:
             error_message = str(e)
@@ -326,16 +299,10 @@ class MedallionPipeline:
     def health_check(self) -> Dict[str, bool]:
         """Perform health checks on data and system."""
         checks = {}
-        checks["raw_data_exists"] = self.raw_path.exists() and any(
-            self.raw_path.iterdir()
-        )
-        checks["processed_data_exists"] = self.processed_path.exists() and any(
-            self.processed_path.iterdir()
-        )
+        checks["raw_data_exists"] = self.raw_path.exists() and any(self.raw_path.iterdir())
+        checks["processed_data_exists"] = self.processed_path.exists() and any(self.processed_path.iterdir())
         checks["gold_data_exists"] = (self.gold_path / "master_table.parquet").exists()
-        checks["config_valid"] = bool(
-            hasattr(self.config, "macro_series_map") and hasattr(self.config, "worldbank_indicator_map")
-        )
+        checks["config_valid"] = bool(hasattr(self.config, "macro_series_map") and hasattr(self.config, "worldbank_indicator_map"))
         return checks
 
     def run_full_pipeline_sequential(self) -> Dict[str, Any]:

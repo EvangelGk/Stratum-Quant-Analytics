@@ -46,7 +46,10 @@ def test_ai_agent_config_error_inherits_from_ai_agent_error():
 
 
 def test_llm_authentication_error_inherits_from_ai_agent_config_error():
-    from src.exceptions.AIAgentExceptions import AIAgentConfigError, LLMAuthenticationError
+    from src.exceptions.AIAgentExceptions import (
+        AIAgentConfigError,
+        LLMAuthenticationError,
+    )
 
     assert issubclass(LLMAuthenticationError, AIAgentConfigError)
 
@@ -88,7 +91,10 @@ def test_missing_context_error_inherits_from_ai_context_error():
 
 
 def test_context_serialization_error_inherits_from_ai_context_error():
-    from src.exceptions.AIAgentExceptions import AIContextError, ContextSerializationError
+    from src.exceptions.AIAgentExceptions import (
+        AIContextError,
+        ContextSerializationError,
+    )
 
     assert issubclass(ContextSerializationError, AIContextError)
 
@@ -102,18 +108,36 @@ def test_ai_output_error_inherits_from_ai_agent_error():
 def test_ai_agent_exceptions_all_carry_messages():
     """All exception classes must correctly propagate their message."""
     from src.exceptions.AIAgentExceptions import (
-        AIAgentError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError,
-        AIAgentConfigError, LLMAuthenticationError, ModelNotFoundError,
-        LLMResponseError, AIResponseParseError, ContextWindowError,
-        AIContextError, MissingContextError, ContextSerializationError,
+        AIAgentConfigError,
+        AIAgentError,
+        AIContextError,
         AIOutputError,
+        AIResponseParseError,
+        ContextSerializationError,
+        ContextWindowError,
+        LLMAuthenticationError,
+        LLMConnectionError,
+        LLMResponseError,
+        LLMTimeoutError,
+        LLMUnavailableError,
+        MissingContextError,
+        ModelNotFoundError,
     )
 
     classes = [
-        AIAgentError, LLMConnectionError, LLMTimeoutError, LLMUnavailableError,
-        AIAgentConfigError, LLMAuthenticationError, ModelNotFoundError,
-        LLMResponseError, AIResponseParseError, ContextWindowError,
-        AIContextError, MissingContextError, ContextSerializationError,
+        AIAgentError,
+        LLMConnectionError,
+        LLMTimeoutError,
+        LLMUnavailableError,
+        AIAgentConfigError,
+        LLMAuthenticationError,
+        ModelNotFoundError,
+        LLMResponseError,
+        AIResponseParseError,
+        ContextWindowError,
+        AIContextError,
+        MissingContextError,
+        ContextSerializationError,
         AIOutputError,
     ]
     for cls in classes:
@@ -482,25 +506,17 @@ def test_pipeline_execution_error_inherits_from_streamlit_error():
         ("src.exceptions.StreamlitExceptions", "StreamlitError"),
     ],
 )
-def test_all_custom_exceptions_in_module_inherit_from_declared_base(
-    module_name, base_name
-):
+def test_all_custom_exceptions_in_module_inherit_from_declared_base(module_name, base_name):
     """Fail fast if new exception classes are added with wrong inheritance."""
     module = __import__(module_name, fromlist=[base_name])
     base_cls = getattr(module, base_name)
-    exception_classes = [
-        cls
-        for _, cls in inspect.getmembers(module, inspect.isclass)
-        if cls.__module__ == module.__name__ and issubclass(cls, Exception)
-    ]
+    exception_classes = [cls for _, cls in inspect.getmembers(module, inspect.isclass) if cls.__module__ == module.__name__ and issubclass(cls, Exception)]
 
     assert exception_classes, f"No exception classes found in {module_name}"
     for cls in exception_classes:
         if cls is base_cls:
             continue
-        assert issubclass(cls, base_cls), (
-            f"{module_name}.{cls.__name__} must inherit from {base_name}"
-        )
+        assert issubclass(cls, base_cls), f"{module_name}.{cls.__name__} must inherit from {base_name}"
 
 
 def test_custom_exception_message_roundtrip():

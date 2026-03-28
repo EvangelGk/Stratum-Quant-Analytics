@@ -43,9 +43,7 @@ class ProjectConfig:
     governance_regime: str = "normal"
     governance_model_risk_warn_threshold: float = 0.4
     governance_model_risk_fail_threshold: float = 0.6
-    governance_ticker_overrides: Dict[str, Dict[str, float]] = field(
-        default_factory=dict
-    )
+    governance_ticker_overrides: Dict[str, Dict[str, float]] = field(default_factory=dict)
     data_user_id: str = "default"
     silver_hard_fail: bool = True
     silver_min_rows: int = 10
@@ -100,9 +98,7 @@ class ProjectConfig:
         return value if value > 0 else default
 
     @staticmethod
-    def _parse_non_negative_float(
-        raw_value: str, field_name: str, default: float
-    ) -> float:
+    def _parse_non_negative_float(raw_value: str, field_name: str, default: float) -> float:
         try:
             value = float(raw_value)
         except (TypeError, ValueError):
@@ -127,9 +123,7 @@ class ProjectConfig:
             return default
 
     @staticmethod
-    def _parse_optional_int(
-        raw_value: Optional[str], default: Optional[int]
-    ) -> Optional[int]:
+    def _parse_optional_int(raw_value: Optional[str], default: Optional[int]) -> Optional[int]:
         if raw_value is None or raw_value == "":
             return default
         try:
@@ -202,28 +196,14 @@ class ProjectConfig:
         mode = RunMode.ACTUAL if env_mode == "actual" else RunMode.SAMPLE
 
         # get dates and other configs
-        start_date = cls._validate_iso_date(
-            os.getenv("START_DATE", "2016-01-01"), "START_DATE", "2016-01-01"
-        )
-        end_date = cls._validate_iso_date(
-            os.getenv("END_DATE", "2026-12-31"), "END_DATE", "2026-12-31"
-        )
-        max_workers = cls._parse_positive_int(
-            os.getenv("MAX_WORKERS", "10"), "MAX_WORKERS", 10
-        )
-        max_retries = cls._parse_positive_int(
-            os.getenv("MAX_RETRIES", "4"), "MAX_RETRIES", 4
-        )
-        retry_delay_min = cls._parse_non_negative_float(
-            os.getenv("RETRY_DELAY_MIN", "1.0"), "RETRY_DELAY_MIN", 1.0
-        )
-        retry_delay_max = cls._parse_non_negative_float(
-            os.getenv("RETRY_DELAY_MAX", "3.0"), "RETRY_DELAY_MAX", 3.0
-        )
+        start_date = cls._validate_iso_date(os.getenv("START_DATE", "2016-01-01"), "START_DATE", "2016-01-01")
+        end_date = cls._validate_iso_date(os.getenv("END_DATE", "2026-12-31"), "END_DATE", "2026-12-31")
+        max_workers = cls._parse_positive_int(os.getenv("MAX_WORKERS", "10"), "MAX_WORKERS", 10)
+        max_retries = cls._parse_positive_int(os.getenv("MAX_RETRIES", "4"), "MAX_RETRIES", 4)
+        retry_delay_min = cls._parse_non_negative_float(os.getenv("RETRY_DELAY_MIN", "1.0"), "RETRY_DELAY_MIN", 1.0)
+        retry_delay_max = cls._parse_non_negative_float(os.getenv("RETRY_DELAY_MAX", "3.0"), "RETRY_DELAY_MAX", 3.0)
         random_seed = cls._parse_optional_int(os.getenv("RANDOM_SEED"), 42)
-        enforce_reproducibility = cls._parse_bool(
-            os.getenv("ENFORCE_REPRODUCIBILITY"), True
-        )
+        enforce_reproducibility = cls._parse_bool(os.getenv("ENFORCE_REPRODUCIBILITY"), True)
         governance_hard_fail = cls._parse_bool(os.getenv("GOVERNANCE_HARD_FAIL"), False)
         governance_min_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_R2"), -0.25)
         governance_max_normalized_shift = cls._parse_non_negative_float(
@@ -246,9 +226,7 @@ class ProjectConfig:
             "GOVERNANCE_WALK_FORWARD_WINDOWS",
             4,
         )
-        governance_min_walk_forward_r2 = cls._parse_float(
-            os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), -0.25
-        )
+        governance_min_walk_forward_r2 = cls._parse_float(os.getenv("GOVERNANCE_MIN_WALK_FORWARD_R2"), -0.25)
         governance_max_model_risk_score = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_MAX_MODEL_RISK_SCORE", "0.6"),
             "GOVERNANCE_MAX_MODEL_RISK_SCORE",
@@ -269,9 +247,7 @@ class ProjectConfig:
         )
         data_user_id = os.getenv("DATA_USER_ID", "default").strip() or "default"
         silver_hard_fail = cls._parse_bool(os.getenv("SILVER_HARD_FAIL"), True)
-        silver_min_rows = cls._parse_positive_int(
-            os.getenv("SILVER_MIN_ROWS", "10"), "SILVER_MIN_ROWS", 10
-        )
+        silver_min_rows = cls._parse_positive_int(os.getenv("SILVER_MIN_ROWS", "10"), "SILVER_MIN_ROWS", 10)
         silver_min_rows_ratio = cls._parse_non_negative_float(
             os.getenv("SILVER_MIN_ROWS_RATIO", "0.1"),
             "SILVER_MIN_ROWS_RATIO",
@@ -300,20 +276,14 @@ class ProjectConfig:
             0.1,
         )
         silver_outlier_warning_ratio = min(max(silver_outlier_warning_ratio, 0.0), 1.0)
-        governance_unstable_walk_forward_floor = cls._parse_float(
-            os.getenv("GOVERNANCE_UNSTABLE_WALK_FORWARD_FLOOR"), -5.0
-        )
-        governance_clipped_walk_forward_floor = cls._parse_float(
-            os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0
-        )
+        governance_unstable_walk_forward_floor = cls._parse_float(os.getenv("GOVERNANCE_UNSTABLE_WALK_FORWARD_FLOOR"), -5.0)
+        governance_clipped_walk_forward_floor = cls._parse_float(os.getenv("GOVERNANCE_CLIPPED_WALK_FORWARD_FLOOR"), -2.0)
         governance_factor_concentration_warn_threshold = cls._parse_non_negative_float(
             os.getenv("GOVERNANCE_FACTOR_CONCENTRATION_WARN_THRESHOLD", "0.65"),
             "GOVERNANCE_FACTOR_CONCENTRATION_WARN_THRESHOLD",
             0.65,
         )
-        governance_factor_concentration_warn_threshold = min(
-            max(governance_factor_concentration_warn_threshold, 0.0), 1.0
-        )
+        governance_factor_concentration_warn_threshold = min(max(governance_factor_concentration_warn_threshold, 0.0), 1.0)
         governance_freshness_warn_days = cls._parse_positive_int(
             os.getenv("GOVERNANCE_FRESHNESS_WARN_DAYS", "60"),
             "GOVERNANCE_FRESHNESS_WARN_DAYS",
@@ -358,12 +328,8 @@ class ProjectConfig:
             False,
         )
         auto_ml_enabled = cls._parse_bool(os.getenv("AUTO_ML_ENABLED"), False)
-        worldbank_economies = cls._parse_code_list(
-            os.getenv("WORLDBANK_ECONOMIES"), ["WLD"]
-        )
-        worldbank_aggregation_strategy = (
-            os.getenv("WORLDBANK_AGGREGATION_STRATEGY", "mean").strip().lower()
-        )
+        worldbank_economies = cls._parse_code_list(os.getenv("WORLDBANK_ECONOMIES"), ["WLD"])
+        worldbank_aggregation_strategy = os.getenv("WORLDBANK_AGGREGATION_STRATEGY", "mean").strip().lower()
         if worldbank_aggregation_strategy not in {"mean", "median", "sum", "last"}:
             worldbank_aggregation_strategy = "mean"
         if governance_model_risk_fail_threshold < governance_model_risk_warn_threshold:
@@ -374,9 +340,7 @@ class ProjectConfig:
                 governance_model_risk_fail_threshold,
                 governance_model_risk_warn_threshold,
             )
-        governance_min_stationary_ratio = min(
-            max(governance_min_stationary_ratio, 0.0), 1.0
-        )
+        governance_min_stationary_ratio = min(max(governance_min_stationary_ratio, 0.0), 1.0)
         if retry_delay_max < retry_delay_min:
             retry_delay_min, retry_delay_max = retry_delay_max, retry_delay_min
 
@@ -386,11 +350,7 @@ class ProjectConfig:
             try:
                 parsed = json.loads(raw_ticker_overrides)
                 if isinstance(parsed, dict):
-                    governance_ticker_overrides = {
-                        k: {ik: float(iv) for ik, iv in v.items()}
-                        for k, v in parsed.items()
-                        if isinstance(v, dict)
-                    }
+                    governance_ticker_overrides = {k: {ik: float(iv) for ik, iv in v.items()} for k, v in parsed.items() if isinstance(v, dict)}
             except (ValueError, TypeError, KeyError):
                 pass
 
@@ -427,9 +387,7 @@ class ProjectConfig:
             try:
                 parsed = json.loads(raw_wb_map)
                 if isinstance(parsed, dict):
-                    worldbank_indicator_map = {
-                        str(k): str(v) for k, v in parsed.items()
-                    }
+                    worldbank_indicator_map = {str(k): str(v) for k, v in parsed.items()}
             except (ValueError, TypeError):
                 pass
 
@@ -493,65 +451,39 @@ class ProjectConfig:
         if self.max_retries < 1:
             raise ValueError("Invalid configuration: MAX_RETRIES must be >= 1")
         if self.retry_delay_min > self.retry_delay_max:
-            raise ValueError(
-                "Invalid configuration: RETRY_DELAY_MIN cannot exceed RETRY_DELAY_MAX"
-            )
+            raise ValueError("Invalid configuration: RETRY_DELAY_MIN cannot exceed RETRY_DELAY_MAX")
         if self.silver_min_rows < 1:
             raise ValueError("Invalid configuration: SILVER_MIN_ROWS must be >= 1")
         if not (0.0 <= self.silver_min_rows_ratio <= 1.0):
-            raise ValueError(
-                "Invalid configuration: SILVER_MIN_ROWS_RATIO must be in [0, 1]"
-            )
+            raise ValueError("Invalid configuration: SILVER_MIN_ROWS_RATIO must be in [0, 1]")
         if not (0.0 <= self.silver_base_null_threshold <= 100.0):
-            raise ValueError(
-                "Invalid configuration: SILVER_BASE_NULL_THRESHOLD must be in [0, 100]"
-            )
+            raise ValueError("Invalid configuration: SILVER_BASE_NULL_THRESHOLD must be in [0, 100]")
         if self.silver_dynamic_threshold_window < 1:
-            raise ValueError(
-                "Invalid configuration: SILVER_DYNAMIC_THRESHOLD_WINDOW must be >= 1"
-            )
+            raise ValueError("Invalid configuration: SILVER_DYNAMIC_THRESHOLD_WINDOW must be >= 1")
         if self.silver_warn_to_fail_buffer < 0.0:
-            raise ValueError(
-                "Invalid configuration: SILVER_WARN_TO_FAIL_BUFFER must be >= 0"
-            )
+            raise ValueError("Invalid configuration: SILVER_WARN_TO_FAIL_BUFFER must be >= 0")
         if not (0.0 <= self.silver_outlier_warning_ratio <= 1.0):
-            raise ValueError(
-                "Invalid configuration: SILVER_OUTLIER_WARNING_RATIO must be in [0, 1]"
-            )
+            raise ValueError("Invalid configuration: SILVER_OUTLIER_WARNING_RATIO must be in [0, 1]")
         if not self.macro_series_map:
             raise ValueError("Invalid configuration: MACRO_SERIES_MAP cannot be empty")
         if not self.worldbank_indicator_map:
-            raise ValueError(
-                "Invalid configuration: WORLDBANK_INDICATOR_MAP cannot be empty"
-            )
+            raise ValueError("Invalid configuration: WORLDBANK_INDICATOR_MAP cannot be empty")
         if not self.worldbank_economies:
-            raise ValueError(
-                "Invalid configuration: WORLDBANK_ECONOMIES cannot be empty"
-            )
+            raise ValueError("Invalid configuration: WORLDBANK_ECONOMIES cannot be empty")
         if self.worldbank_aggregation_strategy not in {"mean", "median", "sum", "last"}:
-            raise ValueError(
-                "Invalid configuration: WORLDBANK_AGGREGATION_STRATEGY must be one of mean|median|sum|last"
-            )
+            raise ValueError("Invalid configuration: WORLDBANK_AGGREGATION_STRATEGY must be one of mean|median|sum|last")
         if self.target_tickers is not None and len(self.target_tickers) == 0:
             # Empty list is valid only when omitted; if explicitly provided as empty,
             # we would silently disable yfinance ingestion.
             raw_targets = os.getenv("TARGET_TICKERS", "").strip()
             if raw_targets:
-                raise ValueError(
-                    "Invalid configuration: TARGET_TICKERS provided but no valid symbols parsed"
-                )
+                raise ValueError("Invalid configuration: TARGET_TICKERS provided but no valid symbols parsed")
         if self.gold_fred_max_staleness_days < 1:
-            raise ValueError(
-                "Invalid configuration: GOLD_FRED_MAX_STALENESS_DAYS must be >= 1"
-            )
+            raise ValueError("Invalid configuration: GOLD_FRED_MAX_STALENESS_DAYS must be >= 1")
         if self.gold_worldbank_max_staleness_days < 1:
-            raise ValueError(
-                "Invalid configuration: GOLD_WORLDBANK_MAX_STALENESS_DAYS must be >= 1"
-            )
+            raise ValueError("Invalid configuration: GOLD_WORLDBANK_MAX_STALENESS_DAYS must be >= 1")
         if self.pipeline_stage_retry_attempts < 1:
-            raise ValueError(
-                "Invalid configuration: PIPELINE_STAGE_RETRY_ATTEMPTS must be >= 1"
-            )
+            raise ValueError("Invalid configuration: PIPELINE_STAGE_RETRY_ATTEMPTS must be >= 1")
 
     def get_targets(self) -> List[str]:
         """Επιστρέφει τα tickers βάσει του mode."""
@@ -586,12 +518,8 @@ class ProjectConfig:
             "governance_min_walk_forward_r2": self.governance_min_walk_forward_r2,
             "governance_max_model_risk_score": self.governance_max_model_risk_score,
             "governance_regime": self.governance_regime,
-            "governance_model_risk_warn_threshold": (
-                self.governance_model_risk_warn_threshold
-            ),
-            "governance_model_risk_fail_threshold": (
-                self.governance_model_risk_fail_threshold
-            ),
+            "governance_model_risk_warn_threshold": (self.governance_model_risk_warn_threshold),
+            "governance_model_risk_fail_threshold": (self.governance_model_risk_fail_threshold),
             "governance_ticker_overrides": self.governance_ticker_overrides,
             "data_user_id": self.data_user_id,
             "silver_hard_fail": self.silver_hard_fail,

@@ -92,17 +92,11 @@ class GoldLayer:
                 "end_date": str(getattr(self.config, "end_date", "")),
                 "target_tickers": list(getattr(self.config, "target_tickers", [])),
                 "macro_series_map": dict(getattr(self.config, "macro_series_map", {})),
-                "worldbank_indicator_map": dict(
-                    getattr(self.config, "worldbank_indicator_map", {})
-                ),
-                "worldbank_economies": list(
-                    getattr(self.config, "worldbank_economies", ["WLD"])
-                ),
+                "worldbank_indicator_map": dict(getattr(self.config, "worldbank_indicator_map", {})),
+                "worldbank_economies": list(getattr(self.config, "worldbank_economies", ["WLD"])),
                 "fred_enabled": bool(getattr(self.config, "fred_api_key", None)),
             }
-        return hashlib.sha256(
-            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
     def _latest_processed_mtime(self) -> float:
         latest = 0.0
@@ -187,29 +181,15 @@ class GoldLayer:
         # With YFinanceFetcher.AUTO_ADJUST=True, close IS the adjusted price so
         # both columns are equivalent — adj_close is simply the explicit alias.
         _price_col = "adj_close" if "adj_close" in master_df.columns else "close"
-        master_df["log_return"] = master_df.groupby("ticker")[_price_col].transform(
-            lambda x: np.log(x / x.shift(1))
-        )
+        master_df["log_return"] = master_df.groupby("ticker")[_price_col].transform(lambda x: np.log(x / x.shift(1)))
 
         fred_enabled = bool(getattr(self.config, "fred_api_key", None))
         worldbank_enabled = bool(getattr(self.config, "worldbank_indicator_map", {}))
 
-        expected_fred_columns = (
-            list(dict(getattr(self.config, "macro_series_map", {})).values())
-            if fred_enabled
-            else []
-        )
-        expected_worldbank_columns = (
-            list(dict(getattr(self.config, "worldbank_indicator_map", {})).values())
-            if worldbank_enabled
-            else []
-        )
-        fred_staleness_days = max(
-            1, int(getattr(self.config, "gold_fred_max_staleness_days", 120))
-        )
-        worldbank_staleness_days = max(
-            30, int(getattr(self.config, "gold_worldbank_max_staleness_days", 730))
-        )
+        expected_fred_columns = list(dict(getattr(self.config, "macro_series_map", {})).values()) if fred_enabled else []
+        expected_worldbank_columns = list(dict(getattr(self.config, "worldbank_indicator_map", {})).values()) if worldbank_enabled else []
+        fred_staleness_days = max(1, int(getattr(self.config, "gold_fred_max_staleness_days", 120)))
+        worldbank_staleness_days = max(30, int(getattr(self.config, "gold_worldbank_max_staleness_days", 730)))
 
         # 3. Join Macro Data (FRED)
         fred_files = list((self.processed_path / "fred").glob("*.parquet"))
@@ -221,11 +201,7 @@ class GoldLayer:
             macro_df["date"] = pd.to_datetime(macro_df["date"], errors="coerce")
             source_date_col = f"__source_date_{col_name}"
             macro_df[source_date_col] = macro_df["date"]
-            macro_df = (
-                macro_df.dropna(subset=["date"])
-                .sort_values("date")
-                .drop_duplicates(subset=["date"], keep="last")
-            )
+            macro_df = macro_df.dropna(subset=["date"]).sort_values("date").drop_duplicates(subset=["date"], keep="last")
             master_df = pd.merge_asof(
                 master_df,
                 macro_df[["date", col_name, source_date_col]],
@@ -235,21 +211,14 @@ class GoldLayer:
             )
             if source_date_col in master_df.columns:
                 age_col = f"__age_days_{col_name}"
-                master_df[age_col] = (
-                    master_df["date"] - master_df[source_date_col]
-                ).dt.days
+                master_df[age_col] = (master_df["date"] - master_df[source_date_col]).dt.days
                 fred_age_columns.append(age_col)
                 master_df = master_df.drop(columns=[source_date_col], errors="ignore")
             macro_columns.append(col_name)
 
-        missing_fred_columns = [
-            c for c in expected_fred_columns if c not in set(macro_columns)
-        ]
+        missing_fred_columns = [c for c in expected_fred_columns if c not in set(macro_columns)]
         if fred_enabled and missing_fred_columns:
-            raise AnalysisError(
-                "Gold mapping mismatch: expected FRED columns missing from Silver artifacts: "
-                + ", ".join(sorted(missing_fred_columns))
-            )
+            raise AnalysisError("Gold mapping mismatch: expected FRED columns missing from Silver artifacts: " + ", ".join(sorted(missing_fred_columns)))
 
         # 4. Join World Bank Data
         wb_files = list((self.processed_path / "worldbank").glob("*.parquet"))
@@ -265,13 +234,9 @@ class GoldLayer:
             wb_df = wb_df.dropna(subset=["date"]).copy()
             source_date_col = f"__source_date_{series_name}"
             wb_df[source_date_col] = wb_df["date"]
-            wb_frames_by_series.setdefault(series_name, []).append(
-                wb_df[["date", "value", source_date_col]].copy()
-            )
+            wb_frames_by_series.setdefault(series_name, []).append(wb_df[["date", "value", source_date_col]].copy())
 
-        wb_strategy = str(
-            getattr(self.config, "worldbank_aggregation_strategy", "mean")
-        ).lower()
+        wb_strategy = str(getattr(self.config, "worldbank_aggregation_strategy", "mean")).lower()
         if wb_strategy not in {"mean", "median", "sum", "last"}:
             wb_strategy = "mean"
 
@@ -307,20 +272,15 @@ class GoldLayer:
             )
             if source_date_col in master_df.columns:
                 age_col = f"__age_days_{series_name}"
-                master_df[age_col] = (
-                    master_df["date"] - master_df[source_date_col]
-                ).dt.days
+                master_df[age_col] = (master_df["date"] - master_df[source_date_col]).dt.days
                 wb_age_columns.append(age_col)
                 master_df = master_df.drop(columns=[source_date_col], errors="ignore")
             macro_columns.append(series_name)
 
-        missing_worldbank_columns = [
-            c for c in expected_worldbank_columns if c not in set(wb_frames_by_series.keys())
-        ]
+        missing_worldbank_columns = [c for c in expected_worldbank_columns if c not in set(wb_frames_by_series.keys())]
         if worldbank_enabled and missing_worldbank_columns:
             raise AnalysisError(
-                "Gold mapping mismatch: expected WorldBank columns missing from Silver artifacts: "
-                + ", ".join(sorted(missing_worldbank_columns))
+                "Gold mapping mismatch: expected WorldBank columns missing from Silver artifacts: " + ", ".join(sorted(missing_worldbank_columns))
             )
 
         # Final analytical ordering: per ticker on daily dates.
@@ -356,14 +316,9 @@ class GoldLayer:
             expected_sources.append("fred")
         if worldbank_enabled:
             expected_sources.append("worldbank")
-        broken_sources = [
-            source for source in expected_sources if source_usage.get(source, 0.0) == 0.0
-        ]
+        broken_sources = [source for source in expected_sources if source_usage.get(source, 0.0) == 0.0]
         if broken_sources:
-            raise AnalysisError(
-                "Gold source integration failure: joined master table has zero usable coverage for "
-                + ", ".join(broken_sources)
-            )
+            raise AnalysisError("Gold source integration failure: joined master table has zero usable coverage for " + ", ".join(broken_sources))
 
         # Persist explicit schema contract so Auditor validates against what Gold emitted.
         contract_payload = {
@@ -393,9 +348,7 @@ class GoldLayer:
 
         # Save the "Analytical Base Table" with optional encryption
         table = pa.Table.from_pandas(master_df)
-        pq.write_table(
-            table, self.gold_path / "master_table.parquet", compression="zstd"
-        )
+        pq.write_table(table, self.gold_path / "master_table.parquet", compression="zstd")
         return master_df
 
     def _resolve_ticker(self, ticker: Optional[str]) -> Optional[str]:
@@ -423,27 +376,19 @@ class GoldLayer:
         explicit_factors: Optional[List[str]] = None,
     ) -> List[str]:
         if explicit_factors:
-            ordered = list(
-                dict.fromkeys([f for f in explicit_factors if isinstance(f, str)])
-            )
+            ordered = list(dict.fromkeys([f for f in explicit_factors if isinstance(f, str)]))
             return [f for f in ordered if f in analysis_df.columns and f != target]
 
-        preferred_from_maps = list(
-            dict(getattr(self.config, "macro_series_map", {})).values()
-        ) + list(dict(getattr(self.config, "worldbank_indicator_map", {})).values())
+        preferred_from_maps = list(dict(getattr(self.config, "macro_series_map", {})).values()) + list(
+            dict(getattr(self.config, "worldbank_indicator_map", {})).values()
+        )
         market_candidates = ["open", "high", "low", "close", "adj_close", "volume"]
         ordered_seed = list(dict.fromkeys(preferred_from_maps + market_candidates))
 
         numeric_cols = [
-            col
-            for col in analysis_df.columns
-            if col != target
-            and pd.api.types.is_numeric_dtype(analysis_df[col])
-            and not str(col).startswith("__age_days_")
+            col for col in analysis_df.columns if col != target and pd.api.types.is_numeric_dtype(analysis_df[col]) and not str(col).startswith("__age_days_")
         ]
-        ordered_candidates = [c for c in ordered_seed if c in numeric_cols] + [
-            c for c in numeric_cols if c not in ordered_seed
-        ]
+        ordered_candidates = [c for c in ordered_seed if c in numeric_cols] + [c for c in numeric_cols if c not in ordered_seed]
 
         filtered: List[str] = []
         for col in ordered_candidates:
@@ -502,14 +447,8 @@ class GoldLayer:
             isinstance(trend_directional_accuracy, (float, int))
             and float(trend_directional_accuracy) >= 0.55
             and (
-                (
-                    isinstance(volatility_r2, (float, int))
-                    and float(volatility_r2) >= 0.0
-                )
-                or (
-                    isinstance(volatility_ratio, (float, int))
-                    and 0.5 <= float(volatility_ratio) <= 1.8
-                )
+                (isinstance(volatility_r2, (float, int)) and float(volatility_r2) >= 0.0)
+                or (isinstance(volatility_ratio, (float, int)) and 0.5 <= float(volatility_ratio) <= 1.8)
             )
         )
 
@@ -517,70 +456,40 @@ class GoldLayer:
             oos_r2_ci = report.get("out_of_sample", {}).get("r2_ci", {}) or {}
             ci_upper = oos_r2_ci.get("ci_upper")
             ci_status = str(oos_r2_ci.get("status", ""))
-            ci_clears = (
-                ci_status == "ok"
-                and isinstance(ci_upper, (float, int))
-                and float(ci_upper) >= min_r2
-            )
+            ci_clears = ci_status == "ok" and isinstance(ci_upper, (float, int)) and float(ci_upper) >= min_r2
             # Mildly negative OOS R2 is common for daily-return targets; treat
             # it as a diagnostic signal unless corroborated by other failures.
             mild_negative_band = float(oos_r2) >= -0.10
             if ci_clears:
-                advisory_reasons.append(
-                    f"r2_metric_alert_oos_below_threshold_but_ci_upper_clears:"
-                    f"{oos_r2:.4f}<{min_r2:.4f};ci_upper={float(ci_upper):.4f}"
-                )
+                advisory_reasons.append(f"r2_metric_alert_oos_below_threshold_but_ci_upper_clears:{oos_r2:.4f}<{min_r2:.4f};ci_upper={float(ci_upper):.4f}")
             elif trend_volatility_acceptable:
-                advisory_reasons.append(
-                    "r2_metric_alert_oos_below_threshold_but_trend_volatility_acceptable"
-                )
+                advisory_reasons.append("r2_metric_alert_oos_below_threshold_but_trend_volatility_acceptable")
             elif mild_negative_band:
-                advisory_reasons.append(
-                    f"r2_metric_alert_oos_mild_negative_macro_noise_band:{oos_r2:.4f}"
-                )
+                advisory_reasons.append(f"r2_metric_alert_oos_mild_negative_macro_noise_band:{oos_r2:.4f}")
             else:
-                advisory_reasons.append(
-                    f"r2_metric_alert_oos_below_threshold:{oos_r2:.4f}<{min_r2:.4f}"
-                )
+                advisory_reasons.append(f"r2_metric_alert_oos_below_threshold:{oos_r2:.4f}<{min_r2:.4f}")
 
         normalized_shift = report.get("stability", {}).get("normalized_mean_shift")
         max_shift = float(profile["max_normalized_shift"])
-        if (
-            isinstance(normalized_shift, (float, int))
-            and float(normalized_shift) > max_shift
-        ):
-            reasons.append(
-                "normalized_mean_shift_above_threshold:"
-                f"{float(normalized_shift):.4f}>{max_shift:.4f}"
-            )
+        if isinstance(normalized_shift, (float, int)) and float(normalized_shift) > max_shift:
+            reasons.append(f"normalized_mean_shift_above_threshold:{float(normalized_shift):.4f}>{max_shift:.4f}")
 
         leakage_flags = report.get("leakage_flags", []) or []
         max_leakage = int(profile["max_leakage_flags"])
         if len(leakage_flags) > max_leakage:
-            reasons.append(
-                f"leakage_flags_above_threshold:{len(leakage_flags)}>{max_leakage}"
-            )
+            reasons.append(f"leakage_flags_above_threshold:{len(leakage_flags)}>{max_leakage}")
 
         stationarity = report.get("stationarity", {}) or {}
         status_entries = [v for v in stationarity.values() if isinstance(v, dict)]
-        stationary_count = sum(
-            1 for v in status_entries if v.get("is_stationary") is True
-        )
-        considered = sum(
-            1 for v in status_entries if v.get("is_stationary") is not None
-        )
+        stationary_count = sum(1 for v in status_entries if v.get("is_stationary") is True)
+        considered = sum(1 for v in status_entries if v.get("is_stationary") is not None)
         if considered > 0:
             ratio = stationary_count / considered
             min_ratio = float(profile["min_stationary_ratio"])
             # Dynamic tolerance: when few series are testable, keep a softer floor.
-            adaptive_min_ratio = (
-                max(0.25, min_ratio - 0.10) if considered < 4 else min_ratio
-            )
+            adaptive_min_ratio = max(0.25, min_ratio - 0.10) if considered < 4 else min_ratio
             if ratio < adaptive_min_ratio:
-                reasons.append(
-                    "stationarity_ratio_below_threshold:"
-                    f"{ratio:.4f}<{adaptive_min_ratio:.4f}"
-                )
+                reasons.append(f"stationarity_ratio_below_threshold:{ratio:.4f}<{adaptive_min_ratio:.4f}")
             gate["stationarity_context"] = {
                 "considered_series": considered,
                 "stationary_series": stationary_count,
@@ -604,15 +513,9 @@ class GoldLayer:
             # Extremely negative R2 often indicates unstable denominator/noisy slices.
             walk_forward_unstable = float(walk_forward_avg_r2) < -5.0
 
-        if (
-            isinstance(walk_forward_avg_r2, (float, int))
-            and float(walk_forward_avg_r2) < adaptive_min_walk_forward_r2
-        ):
+        if isinstance(walk_forward_avg_r2, (float, int)) and float(walk_forward_avg_r2) < adaptive_min_walk_forward_r2:
             wf_ci_upper = walk_forward.get("r2_ci_upper")
-            wf_ci_clears = (
-                isinstance(wf_ci_upper, (float, int))
-                and float(wf_ci_upper) >= adaptive_min_walk_forward_r2
-            )
+            wf_ci_clears = isinstance(wf_ci_upper, (float, int)) and float(wf_ci_upper) >= adaptive_min_walk_forward_r2
             if wf_ci_clears:
                 advisory_reasons.append(
                     "r2_metric_alert_walk_forward_below_threshold_but_ci_upper_clears:"
@@ -620,20 +523,10 @@ class GoldLayer:
                     f"<{adaptive_min_walk_forward_r2:.4f};"
                     f"ci_upper={float(wf_ci_upper):.4f}"
                 )
-            elif (
-                walk_forward_unstable
-                and isinstance(oos_r2, (float, int))
-                and float(oos_r2) >= min_r2
-            ):
-                advisory_reasons.append(
-                    "r2_metric_alert_walk_forward_unstable_but_oos_acceptable"
-                )
+            elif walk_forward_unstable and isinstance(oos_r2, (float, int)) and float(oos_r2) >= min_r2:
+                advisory_reasons.append("r2_metric_alert_walk_forward_unstable_but_oos_acceptable")
             else:
-                advisory_reasons.append(
-                    "r2_metric_alert_walk_forward_below_threshold:"
-                    f"{float(walk_forward_avg_r2):.4f}"
-                    f"<{adaptive_min_walk_forward_r2:.4f}"
-                )
+                advisory_reasons.append(f"r2_metric_alert_walk_forward_below_threshold:{float(walk_forward_avg_r2):.4f}<{adaptive_min_walk_forward_r2:.4f}")
         gate["walk_forward_context"] = {
             "status": walk_forward_status,
             "windows_requested": windows_requested,
@@ -651,10 +544,7 @@ class GoldLayer:
         top_share = concentration.get("top_share") if isinstance(concentration, dict) else None
         concentration_warn_threshold = float(profile.get("factor_concentration_warn_threshold", 0.65))
         if isinstance(top_share, (float, int)) and float(top_share) > concentration_warn_threshold:
-            advisory_reasons.append(
-                "factor_concentration_alert_top_share_above_threshold:"
-                f"{float(top_share):.4f}>{concentration_warn_threshold:.4f}"
-            )
+            advisory_reasons.append(f"factor_concentration_alert_top_share_above_threshold:{float(top_share):.4f}>{concentration_warn_threshold:.4f}")
         gate["factor_concentration_context"] = {
             "top_factor": concentration.get("top_factor") if isinstance(concentration, dict) else None,
             "top_share": float(top_share) if isinstance(top_share, (float, int)) else None,
@@ -666,26 +556,16 @@ class GoldLayer:
         if lag_alignment_ok is False:
             advisory_reasons.append("freshness_alignment_warning_macro_lag_exceeds_policy")
         gate["freshness_context"] = {
-            "target_horizon_days": (
-                freshness.get("target_horizon_days") if isinstance(freshness, dict) else None
-            ),
-            "max_publication_lag_days": (
-                freshness.get("max_publication_lag_days") if isinstance(freshness, dict) else None
-            ),
+            "target_horizon_days": (freshness.get("target_horizon_days") if isinstance(freshness, dict) else None),
+            "max_publication_lag_days": (freshness.get("max_publication_lag_days") if isinstance(freshness, dict) else None),
             "lag_alignment_ok": lag_alignment_ok,
             "freshness_warn_days": int(profile.get("freshness_warn_days", 60)),
         }
 
         model_risk_score = report.get("model_risk_score")
         max_model_risk = float(profile["max_model_risk_score"])
-        if (
-            isinstance(model_risk_score, (float, int))
-            and float(model_risk_score) > max_model_risk
-        ):
-            advisory_reasons.append(
-                "model_risk_metric_alert_above_threshold:"
-                f"{float(model_risk_score):.4f}>{max_model_risk:.4f}"
-            )
+        if isinstance(model_risk_score, (float, int)) and float(model_risk_score) > max_model_risk:
+            advisory_reasons.append(f"model_risk_metric_alert_above_threshold:{float(model_risk_score):.4f}>{max_model_risk:.4f}")
 
         if isinstance(model_risk_score, (float, int)):
             score = float(model_risk_score)
@@ -708,9 +588,7 @@ class GoldLayer:
             gate["severity"] = "warn" if not hard_fail else "fail"
         return gate
 
-    def _resolve_governance_profile(
-        self, ticker: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _resolve_governance_profile(self, ticker: Optional[str] = None) -> Dict[str, Any]:
         regime = str(getattr(self.config, "governance_regime", "normal")).lower()
         if regime not in {"normal", "stress", "crisis"}:
             regime = "normal"
@@ -719,39 +597,19 @@ class GoldLayer:
             "regime": regime,
             "hard_fail": bool(getattr(self.config, "governance_hard_fail", True)),
             "min_r2": float(getattr(self.config, "governance_min_r2", -0.25)),
-            "max_normalized_shift": float(
-                getattr(self.config, "governance_max_normalized_shift", 2.5)
-            ),
-            "max_leakage_flags": int(
-                getattr(self.config, "governance_max_leakage_flags", 1)
-            ),
-            "min_stationary_ratio": float(
-                getattr(self.config, "governance_min_stationary_ratio", 0.4)
-            ),
-            "min_walk_forward_r2": float(
-                getattr(self.config, "governance_min_walk_forward_r2", -0.25)
-            ),
-            "max_model_risk_score": float(
-                getattr(self.config, "governance_max_model_risk_score", 0.6)
-            ),
-            "model_risk_warn_threshold": float(
-                getattr(self.config, "governance_model_risk_warn_threshold", 0.4)
-            ),
-            "model_risk_fail_threshold": float(
-                getattr(self.config, "governance_model_risk_fail_threshold", 0.6)
-            ),
-            "factor_concentration_warn_threshold": float(
-                getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
-            ),
-            "freshness_warn_days": int(
-                getattr(self.config, "governance_freshness_warn_days", 60)
-            ),
+            "max_normalized_shift": float(getattr(self.config, "governance_max_normalized_shift", 2.5)),
+            "max_leakage_flags": int(getattr(self.config, "governance_max_leakage_flags", 1)),
+            "min_stationary_ratio": float(getattr(self.config, "governance_min_stationary_ratio", 0.4)),
+            "min_walk_forward_r2": float(getattr(self.config, "governance_min_walk_forward_r2", -0.25)),
+            "max_model_risk_score": float(getattr(self.config, "governance_max_model_risk_score", 0.6)),
+            "model_risk_warn_threshold": float(getattr(self.config, "governance_model_risk_warn_threshold", 0.4)),
+            "model_risk_fail_threshold": float(getattr(self.config, "governance_model_risk_fail_threshold", 0.6)),
+            "factor_concentration_warn_threshold": float(getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)),
+            "freshness_warn_days": int(getattr(self.config, "governance_freshness_warn_days", 60)),
         }
 
         if ticker:
-            overrides_map: Dict[str, Any] = (
-                getattr(self.config, "governance_ticker_overrides", {}) or {}
-            )
+            overrides_map: Dict[str, Any] = getattr(self.config, "governance_ticker_overrides", {}) or {}
             ticker_overrides: Dict[str, Any] = overrides_map.get(ticker, {})
             _float_keys = {
                 "min_r2",
@@ -822,9 +680,7 @@ class GoldLayer:
             "gate": gate,
             "report": report,
         }
-        decision_file = (
-            self.governance_path / f"governance_decision_{int(time.time() * 1000)}.json"
-        )
+        decision_file = self.governance_path / f"governance_decision_{int(time.time() * 1000)}.json"
         with decision_file.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
 
@@ -878,13 +734,9 @@ class GoldLayer:
         except Exception as exc:
             self.logger.warning(f"_finalize_governance failed (non-fatal): {exc}")
 
-    def read_governance_history(
-        self, limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    def read_governance_history(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Load all governance decision artifacts, sorted oldest-first."""
-        files: List[Path] = sorted(
-            self.governance_path.glob("governance_decision_*.json")
-        )
+        files: List[Path] = sorted(self.governance_path.glob("governance_decision_*.json"))
         if limit is not None:
             files = files[-limit:]
         history: List[Dict[str, Any]] = []
@@ -902,9 +754,7 @@ class GoldLayer:
         if not history:
             return {"status": "no_history", "count": 0}
 
-        passed_count = sum(
-            1 for h in history if h.get("gate", {}).get("passed") is True
-        )
+        passed_count = sum(1 for h in history if h.get("gate", {}).get("passed") is True)
         severity_counts: Dict[str, int] = {}
         risk_scores: List[float] = []
         walk_r2s: List[float] = []
@@ -937,9 +787,7 @@ class GoldLayer:
             "count": total,
             "pass_rate": round(pass_rate, 4),
             "severity_distribution": severity_counts,
-            "avg_model_risk_score": (
-                round(sum(risk_scores) / len(risk_scores), 4) if risk_scores else None
-            ),
+            "avg_model_risk_score": (round(sum(risk_scores) / len(risk_scores), 4) if risk_scores else None),
             "worst_walk_forward_r2": (round(min(walk_r2s), 4) if walk_r2s else None),
             "direction": direction,
         }
@@ -980,11 +828,7 @@ class GoldLayer:
             target=target,
             explicit_factors=factors,
         )
-        selected_macro_factor = (
-            macro_factor
-            if macro_factor in analysis_df.columns
-            else (resolved_factors[0] if resolved_factors else macro_factor)
-        )
+        selected_macro_factor = macro_factor if macro_factor in analysis_df.columns else (resolved_factors[0] if resolved_factors else macro_factor)
         effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
             scenario_name=effective_scenario,
@@ -997,9 +841,7 @@ class GoldLayer:
             results["correlation_matrix"] = correl_mtrx(
                 analysis_df,
                 stress_mode=stress_active,
-                stress_strength=float(
-                    scenario_payload.get("correlation_breakdown_strength", 0.30)
-                ),
+                stress_strength=float(scenario_payload.get("correlation_breakdown_strength", 0.30)),
                 scenario_name=str(scenario_payload.get("name", "custom")),
             )
             duration = time.time() - start_time
@@ -1019,15 +861,11 @@ class GoldLayer:
                 )
                 print(ANALYSIS_CORRELATION_MATRIX.format(rows=rows, columns=cols))
         except AnalysisError as e:
-            catalog.log_error(
-                "gold_layer", "AnalysisError", str(e), "correlation_matrix"
-            )
+            catalog.log_error("gold_layer", "AnalysisError", str(e), "correlation_matrix")
             self.logger.error(f"Analysis error in correlation matrix: {e}")
             results["correlation_matrix"] = None
         except Exception as e:
-            catalog.log_error(
-                "gold_layer", "UnexpectedError", str(e), "correlation_matrix"
-            )
+            catalog.log_error("gold_layer", "UnexpectedError", str(e), "correlation_matrix")
             self.logger.error(f"Unexpected error in correlation matrix: {e}")
             results["correlation_matrix"] = None
 
@@ -1037,36 +875,18 @@ class GoldLayer:
                 target=target,
                 factors=resolved_factors,
                 random_seed=random_seed,
-                reproducibility_enforced=bool(
-                    getattr(self.config, "enforce_reproducibility", True)
-                ),
-                walk_forward_windows=int(
-                    getattr(self.config, "governance_walk_forward_windows", 4)
-                ),
+                reproducibility_enforced=bool(getattr(self.config, "enforce_reproducibility", True)),
+                walk_forward_windows=int(getattr(self.config, "governance_walk_forward_windows", 4)),
                 model_type=regression_model,
-                min_target_horizon_days=int(
-                    getattr(self.config, "governance_min_target_horizon_days", 1)
-                ),
-                max_target_horizon_days=int(
-                    getattr(self.config, "governance_max_target_horizon_days", 252)
-                ),
-                walk_forward_tune_per_window=bool(
-                    getattr(self.config, "governance_walk_forward_tune_per_window", True)
-                ),
-                factor_concentration_warn_threshold=float(
-                    getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
-                ),
-                freshness_warn_days=int(
-                    getattr(self.config, "governance_freshness_warn_days", 60)
-                ),
+                min_target_horizon_days=int(getattr(self.config, "governance_min_target_horizon_days", 1)),
+                max_target_horizon_days=int(getattr(self.config, "governance_max_target_horizon_days", 252)),
+                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", True)),
+                factor_concentration_warn_threshold=float(getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)),
+                freshness_warn_days=int(getattr(self.config, "governance_freshness_warn_days", 60)),
             )
-            gate = self._evaluate_governance_gate(
-                results["governance_report"], ticker=selected_ticker
-            )
+            gate = self._evaluate_governance_gate(results["governance_report"], ticker=selected_ticker)
             results["governance_gate"] = gate
-            self._export_governance_decision(
-                gate, results.get("governance_report"), "sequential", ticker=selected_ticker
-            )
+            self._export_governance_decision(gate, results.get("governance_report"), "sequential", ticker=selected_ticker)
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
@@ -1106,9 +926,7 @@ class GoldLayer:
                     print(
                         ANALYSIS_ELASTICITY.format(
                             elasticity_value=(
-                                f"{results['elasticity'].get('static_elasticity', 0.0):.4f}"
-                                if isinstance(results["elasticity"], dict)
-                                else "N/A"
+                                f"{results['elasticity'].get('static_elasticity', 0.0):.4f}" if isinstance(results["elasticity"], dict) else "N/A"
                             )
                         )
                     )
@@ -1130,20 +948,14 @@ class GoldLayer:
                 ticker=selected_ticker,
                 reference_lag_days=30,
             )
-            if results["lag_analysis"] is not None and isinstance(
-                results["lag_analysis"], dict
-            ):
+            if results["lag_analysis"] is not None and isinstance(results["lag_analysis"], dict):
                 best_lag = results["lag_analysis"].get("best_lag_days", "N/A")
                 best_corr = results["lag_analysis"].get("best_lag_correlation", 0.0)
                 print(
                     ANALYSIS_LAG_ANALYSIS.format(
                         factor=selected_macro_factor,
                         best_lag=best_lag,
-                        correlation=(
-                            f"{float(best_corr):.4f}"
-                            if isinstance(best_corr, (float, int))
-                            else "N/A"
-                        ),
+                        correlation=(f"{float(best_corr):.4f}" if isinstance(best_corr, (float, int)) else "N/A"),
                     )
                 )
         except AnalysisError as e:
@@ -1173,11 +985,7 @@ class GoldLayer:
                     analysis_df,
                     selected_ticker,
                     random_state=random_seed,
-                    macro_scenario=(
-                        "high_inflation"
-                        if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0
-                        else None
-                    ),
+                    macro_scenario=("high_inflation" if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0 else None),
                     macro_factor=selected_macro_factor,
                     scenario_bias=dict(scenario_payload.get("mc_bias", {})),
                 )
@@ -1185,19 +993,11 @@ class GoldLayer:
                     mc_paths = results["monte_carlo"].get("price_paths") if isinstance(results["monte_carlo"], dict) else None
                     print(
                         ANALYSIS_MONTE_CARLO.format(
-                            iterations=mc_paths.shape[1]
-                            if hasattr(mc_paths, "shape")
-                            else "N/A",
+                            iterations=mc_paths.shape[1] if hasattr(mc_paths, "shape") else "N/A",
                             ticker=selected_ticker,
-                            days=mc_paths.shape[0]
-                            if hasattr(mc_paths, "shape")
-                            else "N/A",
-                            min_price=f"{float(mc_paths.min()):.2f}"
-                            if hasattr(mc_paths, "min")
-                            else "N/A",
-                            max_price=f"{float(mc_paths.max()):.2f}"
-                            if hasattr(mc_paths, "max")
-                            else "N/A",
+                            days=mc_paths.shape[0] if hasattr(mc_paths, "shape") else "N/A",
+                            min_price=f"{float(mc_paths.min()):.2f}" if hasattr(mc_paths, "min") else "N/A",
+                            max_price=f"{float(mc_paths.max()):.2f}" if hasattr(mc_paths, "max") else "N/A",
                         )
                     )
             else:
@@ -1222,9 +1022,7 @@ class GoldLayer:
                 print(
                     ANALYSIS_STRESS_TEST.format(
                         shock_details=str(
-                            (results["stress_test"].get("scenario", {}) or {}).get(
-                                "factor_shocks", shock_map or {}
-                            )
+                            (results["stress_test"].get("scenario", {}) or {}).get("factor_shocks", shock_map or {})
                             if isinstance(results["stress_test"], dict)
                             else (shock_map or {})
                         ),
@@ -1251,26 +1049,10 @@ class GoldLayer:
                 if isinstance(results["sensitivity_regression"], dict):
                     print(
                         ANALYSIS_SENSITIVITY_REGRESSION.format(
-                            model_type=str(
-                                results["sensitivity_regression"].get("model", "OLS")
-                            ),
-                            top_factors=str(
-                                list(
-                                    results["sensitivity_regression"]
-                                    .get("coefficients", {})
-                                    .keys()
-                                )
-                            ),
-                            coefficients=str(
-                                list(
-                                    results["sensitivity_regression"]
-                                    .get("coefficients", {})
-                                    .values()
-                                )
-                            ),
-                            r_squared=str(
-                                results["sensitivity_regression"].get("r2", "N/A")
-                            ),
+                            model_type=str(results["sensitivity_regression"].get("model", "OLS")),
+                            top_factors=str(list(results["sensitivity_regression"].get("coefficients", {}).keys())),
+                            coefficients=str(list(results["sensitivity_regression"].get("coefficients", {}).values())),
+                            r_squared=str(results["sensitivity_regression"].get("r2", "N/A")),
                         )
                     )
         except AnalysisError as e:
@@ -1332,6 +1114,7 @@ class GoldLayer:
         # stable artifact to read regardless of how many tickers were analysed.
         try:
             from logger.Catalog import catalog as _cat
+
             _run_id = _cat.get_run_context().get("run_id")
         except Exception:
             _run_id = None
@@ -1369,11 +1152,7 @@ class GoldLayer:
             target=target,
             explicit_factors=factors,
         )
-        selected_macro_factor = (
-            macro_factor
-            if macro_factor in analysis_df.columns
-            else (safe_factors[0] if safe_factors else macro_factor)
-        )
+        selected_macro_factor = macro_factor if macro_factor in analysis_df.columns else (safe_factors[0] if safe_factors else macro_factor)
         effective_scenario = scenario_name or "geopolitical_conflict"
         scenario_payload = resolve_stress_scenario(
             scenario_name=effective_scenario,
@@ -1381,11 +1160,7 @@ class GoldLayer:
         )
         # Stress testing is always enabled as part of the default pipeline run.
         stress_active = True
-        auto_ml_enabled = (
-            bool(getattr(self.config, "auto_ml_enabled", False))
-            if include_auto_ml is None
-            else bool(include_auto_ml)
-        )
+        auto_ml_enabled = bool(getattr(self.config, "auto_ml_enabled", False)) if include_auto_ml is None else bool(include_auto_ml)
 
         # Run governance gate before advanced analyses.
         try:
@@ -1400,58 +1175,36 @@ class GoldLayer:
                 bool(getattr(self.config, "enforce_reproducibility", True)),
                 int(getattr(self.config, "governance_walk_forward_windows", 4)),
                 model_type=regression_model,
-                min_target_horizon_days=int(
-                    getattr(self.config, "governance_min_target_horizon_days", 1)
-                ),
-                max_target_horizon_days=int(
-                    getattr(self.config, "governance_max_target_horizon_days", 252)
-                ),
-                walk_forward_tune_per_window=bool(
-                    getattr(self.config, "governance_walk_forward_tune_per_window", True)
-                ),
-                factor_concentration_warn_threshold=float(
-                    getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)
-                ),
-                freshness_warn_days=int(
-                    getattr(self.config, "governance_freshness_warn_days", 60)
-                ),
+                min_target_horizon_days=int(getattr(self.config, "governance_min_target_horizon_days", 1)),
+                max_target_horizon_days=int(getattr(self.config, "governance_max_target_horizon_days", 252)),
+                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", True)),
+                factor_concentration_warn_threshold=float(getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)),
+                freshness_warn_days=int(getattr(self.config, "governance_freshness_warn_days", 60)),
             )
-            gate = self._evaluate_governance_gate(
-                results["governance_report"], ticker=selected_ticker
-            )
+            gate = self._evaluate_governance_gate(results["governance_report"], ticker=selected_ticker)
             results["governance_gate"] = gate
-            self._export_governance_decision(
-                gate, results.get("governance_report"), "parallel", ticker=selected_ticker
-            )
+            self._export_governance_decision(gate, results.get("governance_report"), "parallel", ticker=selected_ticker)
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 results["correlation_matrix"] = correl_mtrx(
                     analysis_df,
                     stress_mode=stress_active,
-                    stress_strength=float(
-                        scenario_payload.get("correlation_breakdown_strength", 0.30)
-                    ),
+                    stress_strength=float(scenario_payload.get("correlation_breakdown_strength", 0.30)),
                     scenario_name=str(scenario_payload.get("name", "custom")),
                 )
                 return results
         except Exception:
-            gate = self._evaluate_governance_gate(
-                results.get("governance_report"), ticker=selected_ticker
-            )
+            gate = self._evaluate_governance_gate(results.get("governance_report"), ticker=selected_ticker)
             results["governance_gate"] = gate
-            self._export_governance_decision(
-                gate, results.get("governance_report"), "parallel", ticker=selected_ticker
-            )
+            self._export_governance_decision(gate, results.get("governance_report"), "parallel", ticker=selected_ticker)
             if not gate.get("passed", True):
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 results["correlation_matrix"] = correl_mtrx(
                     analysis_df,
                     stress_mode=stress_active,
-                    stress_strength=float(
-                        scenario_payload.get("correlation_breakdown_strength", 0.30)
-                    ),
+                    stress_strength=float(scenario_payload.get("correlation_breakdown_strength", 0.30)),
                     scenario_name=str(scenario_payload.get("name", "custom")),
                 )
                 return results
@@ -1542,9 +1295,7 @@ class GoldLayer:
                 252,
                 10000,
                 random_seed,
-                "high_inflation"
-                if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0
-                else None,
+                "high_inflation" if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0 else None,
                 selected_macro_factor,
                 dict(scenario_payload.get("mc_bias", {})),
             )
@@ -1563,12 +1314,8 @@ class GoldLayer:
             effective_scenario,
         )
         # Run parallel tasks
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=worker_count
-        ) as executor:
-            future_to_key: Dict[concurrent.futures.Future[Any], str] = {
-                executor.submit(task): key for key, task in tasks.items()
-            }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_key: Dict[concurrent.futures.Future[Any], str] = {executor.submit(task): key for key, task in tasks.items()}
             submitted_futures = list(future_to_key.keys())
             try:
                 iterator = concurrent.futures.as_completed(submitted_futures)
@@ -1598,6 +1345,7 @@ class GoldLayer:
         # Write worst-case aggregated governance file.
         try:
             from logger.Catalog import catalog as _cat
+
             _run_id = _cat.get_run_context().get("run_id")
         except Exception:
             _run_id = None

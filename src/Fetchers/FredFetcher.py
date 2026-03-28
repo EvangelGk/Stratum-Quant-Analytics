@@ -6,6 +6,7 @@ import pandas as pd
 from fredapi import Fred
 
 from exceptions.FetchersExceptions import MissingAPIKeyError
+
 from .BaseFetcher import BaseFetcher
 
 
@@ -30,17 +31,13 @@ class FredFetcher(BaseFetcher):
             "end": str(end_date),
             "normalizer": "fred-v1",
         }
-        cache_hash = hashlib.sha256(
-            json.dumps(cache_profile, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
+        cache_hash = hashlib.sha256(json.dumps(cache_profile, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         key = f"fred_{self.CACHE_SCHEMA_VERSION}_{series_id}_{cache_hash}"
         cached = self._get_cached(key)
         if cached is not None:
             return cached
 
-        data = self.fred.get_series(
-            series_id, observation_start=start_date, observation_end=end_date
-        )
+        data = self.fred.get_series(series_id, observation_start=start_date, observation_end=end_date)
         df = data.to_frame(name="value").reset_index()
         df.columns = ["Date", "Value"]
         self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)

@@ -1,13 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
-
 import json
-import os
 import time as _time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import requests
 
@@ -26,10 +24,10 @@ except ModuleNotFoundError:
 
 try:
     from src.exceptions.AIAgentExceptions import (
-        AIAgentConfigError,
+        AIAgentConfigError,  # noqa: F401
         AIOutputError,
         BackendSelectionError,
-        ContextSerializationError,
+        ContextSerializationError,  # noqa: F401
         LLMAuthenticationError,
         LLMConnectionError,
         LLMResponseError,
@@ -39,10 +37,8 @@ try:
     )
 except ModuleNotFoundError:
     from exceptions.AIAgentExceptions import (
-        AIAgentConfigError,
         AIOutputError,
         BackendSelectionError,
-        ContextSerializationError,
         LLMAuthenticationError,
         LLMConnectionError,
         LLMResponseError,
@@ -123,7 +119,7 @@ PAGE_CONTEXT_QUESTIONS: dict[str, list[str]] = {
 
 class QuantosAgent:
     """Context-aware Quantos assistant for UI Q&A and pipeline briefings.
-    
+
     Supports both local (Ollama/Llama) and online (Google Gemini) backends.
     Detects availability and uses appropriate backend automatically.
     """
@@ -146,22 +142,13 @@ class QuantosAgent:
         self._root = root or Path(__file__).resolve().parent.parent
         # Re-read dynamic config fresh on each construction so secret changes are
         # picked up whenever the agent is rebuilt (e.g. after a backend failure).
-        self.OLLAMA_API_URL = (
-            get_secret("OLLAMA_API_URL", self.__class__.OLLAMA_API_URL)
-            or self.__class__.OLLAMA_API_URL
-        )
-        self.MODEL_NAME = (
-            get_secret("OLLAMA_MODEL", self.__class__.MODEL_NAME)
-            or self.__class__.MODEL_NAME
-        )
-        self.GROQ_MODEL_NAME = (
-            get_secret("GROQ_MODEL", self.__class__.GROQ_MODEL_NAME)
-            or self.__class__.GROQ_MODEL_NAME
-        )
+        self.OLLAMA_API_URL = get_secret("OLLAMA_API_URL", self.__class__.OLLAMA_API_URL) or self.__class__.OLLAMA_API_URL
+        self.MODEL_NAME = get_secret("OLLAMA_MODEL", self.__class__.MODEL_NAME) or self.__class__.MODEL_NAME
+        self.GROQ_MODEL_NAME = get_secret("GROQ_MODEL", self.__class__.GROQ_MODEL_NAME) or self.__class__.GROQ_MODEL_NAME
         # Default 200s; override with OLLAMA_TIMEOUT env var
         default_timeout = int(get_secret("OLLAMA_TIMEOUT", "200") or "200")
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else default_timeout
-        
+
         # Detect backend if not specified
         if backend is None:
             self.backend = self._detect_backend()
@@ -170,11 +157,9 @@ class QuantosAgent:
 
         self.last_used_backend = self.backend
         self.last_used_model = ""
-        
+
         if self.backend not in ("local", "online"):
-            raise BackendSelectionError(
-                f"Invalid backend '{backend}'. Must be 'local' or 'online'."
-            )
+            raise BackendSelectionError(f"Invalid backend '{backend}'. Must be 'local' or 'online'.")
 
     def _detect_backend(self) -> str:
         """Detect which backend is available: 'local' (Ollama) or 'online' (Gemini/Groq).
@@ -241,37 +226,24 @@ class QuantosAgent:
         """
         api_key = self._get_gemini_api_key()
         if not api_key:
-            raise LLMAuthenticationError(
-                "GEMINI_API_KEY not found in Streamlit secrets or environment. "
-                "Set it via: st.secrets['GEMINI_API_KEY'] = 'xxx'"
-            )
+            raise LLMAuthenticationError("GEMINI_API_KEY not found in Streamlit secrets or environment. Set it via: st.secrets['GEMINI_API_KEY'] = 'xxx'")
 
         try:
             response = requests.post(
                 f"{self.GEMINI_API_URL}?key={api_key}",
                 json={
-                    "contents": [
-                        {
-                            "parts": [
-                                {"text": prompt}
-                            ]
-                        }
-                    ],
+                    "contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {
                         "temperature": temperature,
                         "maxOutputTokens": 4096,
-                    }
+                    },
                 },
                 timeout=self.timeout_seconds,
             )
         except requests.exceptions.Timeout as exc:
-            raise LLMTimeoutError(
-                f"Gemini request timed out after {self.timeout_seconds}s: {exc}"
-            ) from exc
+            raise LLMTimeoutError(f"Gemini request timed out after {self.timeout_seconds}s: {exc}") from exc
         except requests.exceptions.ConnectionError as exc:
-            raise LLMConnectionError(
-                f"Cannot connect to Gemini API: {exc}"
-            ) from exc
+            raise LLMConnectionError(f"Cannot connect to Gemini API: {exc}") from exc
         except requests.exceptions.RequestException as exc:
             raise LLMConnectionError(f"Gemini request failed: {exc}") from exc
 
@@ -281,9 +253,7 @@ class QuantosAgent:
             body = response.text[:200].lower()
             if "quota" in body or "resource_exhausted" in body:
                 raise LLMUnavailableError(self.RESTING_MESSAGE)
-            raise LLMUnavailableError(
-                f"Gemini returned HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise LLMUnavailableError(f"Gemini returned HTTP {response.status_code}: {response.text[:200]}")
 
         try:
             payload = response.json()
@@ -317,10 +287,7 @@ class QuantosAgent:
         """
         api_key = self._get_groq_api_key()
         if not api_key:
-            raise LLMAuthenticationError(
-                "GROQ_API_KEY not found in Streamlit secrets or environment. "
-                "Set it via: st.secrets['GROQ_API_KEY'] = 'gsk_...'"
-            )
+            raise LLMAuthenticationError("GROQ_API_KEY not found in Streamlit secrets or environment. Set it via: st.secrets['GROQ_API_KEY'] = 'gsk_...'")
 
         try:
             response = requests.post(
@@ -338,13 +305,9 @@ class QuantosAgent:
                 timeout=self.timeout_seconds,
             )
         except requests.exceptions.Timeout as exc:
-            raise LLMTimeoutError(
-                f"Groq request timed out after {self.timeout_seconds}s: {exc}"
-            ) from exc
+            raise LLMTimeoutError(f"Groq request timed out after {self.timeout_seconds}s: {exc}") from exc
         except requests.exceptions.ConnectionError as exc:
-            raise LLMConnectionError(
-                f"Cannot connect to Groq API: {exc}"
-            ) from exc
+            raise LLMConnectionError(f"Cannot connect to Groq API: {exc}") from exc
         except requests.exceptions.RequestException as exc:
             raise LLMConnectionError(f"Groq request failed: {exc}") from exc
 
@@ -354,9 +317,7 @@ class QuantosAgent:
             body = response.text[:200].lower()
             if "rate_limit" in body or "quota" in body:
                 raise LLMUnavailableError(self.RESTING_MESSAGE)
-            raise LLMUnavailableError(
-                f"Groq returned HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise LLMUnavailableError(f"Groq returned HTTP {response.status_code}: {response.text[:200]}")
 
         try:
             payload = response.json()
@@ -374,7 +335,6 @@ class QuantosAgent:
     def _safe_user_id(user_id: str) -> str:
         cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id))
         return cleaned or "default"
-
 
     def _output_dir(self, user_id: str) -> Path:
         return self._root / "output" / self._safe_user_id(user_id)
@@ -467,28 +427,18 @@ class QuantosAgent:
                         section_digest[key] = value.get(key)
 
                 if not section_digest:
-                    scalar_items = [
-                        (k, v) for k, v in value.items() if self._json_scalar(v)
-                    ][:12]
+                    scalar_items = [(k, v) for k, v in value.items() if self._json_scalar(v)][:12]
                     section_digest = {k: v for k, v in scalar_items}
 
                 if "out_of_sample" in value and isinstance(value.get("out_of_sample"), dict):
                     oos = value.get("out_of_sample") or {}
-                    oos_slim = {
-                        k: oos.get(k)
-                        for k in ("r2", "mae", "rmse")
-                        if self._json_scalar(oos.get(k))
-                    }
+                    oos_slim = {k: oos.get(k) for k in ("r2", "mae", "rmse") if self._json_scalar(oos.get(k))}
                     if oos_slim:
                         section_digest["out_of_sample"] = oos_slim
 
                 if "walk_forward" in value and isinstance(value.get("walk_forward"), dict):
                     wf = value.get("walk_forward") or {}
-                    wf_slim = {
-                        k: wf.get(k)
-                        for k in ("status", "avg_r2", "median_r2", "worst_r2")
-                        if self._json_scalar(wf.get(k))
-                    }
+                    wf_slim = {k: wf.get(k) for k in ("status", "avg_r2", "median_r2", "worst_r2") if self._json_scalar(wf.get(k))}
                     if wf_slim:
                         section_digest["walk_forward"] = wf_slim
 
@@ -593,10 +543,7 @@ class QuantosAgent:
                 model_base = self.MODEL_NAME.split(":")[0]
                 available = any(model_base in m for m in models)
                 if not available:
-                    return False, ModelNotFoundError(
-                        f"Model '{self.MODEL_NAME}' not found on server. "
-                        f"Run: ollama pull {self.MODEL_NAME}"
-                    ).args[0]
+                    return False, ModelNotFoundError(f"Model '{self.MODEL_NAME}' not found on server. Run: ollama pull {self.MODEL_NAME}").args[0]
                 return True, "Ollama connected"
             return False, LLMUnavailableError(f"HTTP {response.status_code}").args[0]
         except requests.exceptions.Timeout as exc:
@@ -608,9 +555,7 @@ class QuantosAgent:
         """Check Gemini API availability."""
         api_key = self._get_gemini_api_key()
         if not api_key:
-            return False, LLMAuthenticationError(
-                "GEMINI_API_KEY not configured. Set it in Streamlit secrets."
-            ).args[0]
+            return False, LLMAuthenticationError("GEMINI_API_KEY not configured. Set it in Streamlit secrets.").args[0]
 
         try:
             response = requests.post(
@@ -633,9 +578,7 @@ class QuantosAgent:
         """Check Groq API availability."""
         api_key = self._get_groq_api_key()
         if not api_key:
-            return False, LLMAuthenticationError(
-                "GROQ_API_KEY not configured. Set it in Streamlit secrets."
-            ).args[0]
+            return False, LLMAuthenticationError("GROQ_API_KEY not configured. Set it in Streamlit secrets.").args[0]
 
         try:
             response = requests.post(
@@ -670,11 +613,7 @@ class QuantosAgent:
         source_signature = tuple(self._file_signature(path) for path in source_paths)
         now = _time.monotonic()
         cached = _context_bundle_cache.get(safe_uid)
-        if (
-            cached
-            and (now - float(cached.get("_cached_at", 0.0))) < _CONTEXT_BUNDLE_TTL
-            and cached.get("_source_signature") == source_signature
-        ):
+        if cached and (now - float(cached.get("_cached_at", 0.0))) < _CONTEXT_BUNDLE_TTL and cached.get("_source_signature") == source_signature:
             return cached
 
         analysis, analysis_error = self._read_json_with_error(output_dir / "analysis_results.json")
@@ -728,11 +667,7 @@ class QuantosAgent:
                 "calmar_ratio": calmar,
                 "information_ratio": info_ratio,
                 "audit_status": audit.get("status") if isinstance(audit, dict) else None,
-                "quality_missing_sources": (
-                    (quality.get("summary") or {}).get("missing_sources", [])
-                    if isinstance(quality, dict)
-                    else []
-                ),
+                "quality_missing_sources": ((quality.get("summary") or {}).get("missing_sources", []) if isinstance(quality, dict) else []),
             },
             "_source_signature": source_signature,
             "_cached_at": now,
@@ -830,20 +765,14 @@ class QuantosAgent:
                 timeout=self.timeout_seconds,
             )
         except requests.exceptions.Timeout as exc:
-            raise LLMTimeoutError(
-                f"Ollama request timed out after {self.timeout_seconds}s: {exc}"
-            ) from exc
+            raise LLMTimeoutError(f"Ollama request timed out after {self.timeout_seconds}s: {exc}") from exc
         except requests.exceptions.ConnectionError as exc:
-            raise LLMConnectionError(
-                f"Cannot connect to Ollama at {self.OLLAMA_API_URL}: {exc}"
-            ) from exc
+            raise LLMConnectionError(f"Cannot connect to Ollama at {self.OLLAMA_API_URL}: {exc}") from exc
         except requests.exceptions.RequestException as exc:
             raise LLMConnectionError(f"Ollama request failed: {exc}") from exc
 
         if response.status_code != 200:
-            raise LLMUnavailableError(
-                f"Ollama returned HTTP {response.status_code}: {response.text[:200]}"
-            )
+            raise LLMUnavailableError(f"Ollama returned HTTP {response.status_code}: {response.text[:200]}")
         try:
             payload = response.json()
         except Exception as exc:
@@ -916,9 +845,7 @@ class QuantosAgent:
                     last_exc = exc
 
             # Both exhausted — surface the last known error
-            raise last_exc or LLMUnavailableError(
-                "No AI backend available. Set GEMINI_API_KEY or GROQ_API_KEY in secrets, or run Ollama locally."
-            )
+            raise last_exc or LLMUnavailableError("No AI backend available. Set GEMINI_API_KEY or GROQ_API_KEY in secrets, or run Ollama locally.")
         else:
             raise BackendSelectionError(f"Unknown backend: {self.backend}")
 
@@ -934,11 +861,7 @@ class QuantosAgent:
         lean = self._lean_prompt_context(context_bundle)
         if current_page:
             lean["user_current_page"] = current_page
-        page_hint = (
-            f"The user is viewing the '{current_page}' section.\n"
-            if current_page
-            else ""
-        )
+        page_hint = f"The user is viewing the '{current_page}' section.\n" if current_page else ""
         prompt = (
             "You are Quantos, the in-app quantitative copilot for STRATUM QUANT ANALYTICS. "
             "Answer in detailed, structured English by default. Use sections with headers (##) and bullet points where appropriate. "
@@ -1019,9 +942,7 @@ class QuantosAgent:
         output_dir = self._output_dir(user_id)
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
-            model_name = self.last_used_model or (
-                self.MODEL_NAME if self.backend == "local" else "gemini-1.5-flash"
-            )
+            model_name = self.last_used_model or (self.MODEL_NAME if self.backend == "local" else "gemini-1.5-flash")
             brief_payload = {
                 "generated_at": datetime.now().isoformat(),
                 "backend": self.last_used_backend or self.backend,
@@ -1057,7 +978,7 @@ def generate_ai_pipeline_brief(user_id: str = "default") -> dict[str, Any]:
         agent = QuantosAgent()
     except BackendSelectionError as exc:
         return {"success": False, "error": str(exc)}
-    
+
     ok, reason = agent.ping()
     if not ok:
         return {"success": False, "error": f"AI backend not available: {reason}"}
@@ -1066,5 +987,3 @@ def generate_ai_pipeline_brief(user_id: str = "default") -> dict[str, Any]:
 
 # Backward-compatible alias for existing imports/tests.
 ScenarioAIAgent = QuantosAgent
-
-

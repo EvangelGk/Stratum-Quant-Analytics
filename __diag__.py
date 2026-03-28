@@ -15,7 +15,7 @@ for name, val in checks.items():
 print("=== COMPLETENESS LOGIC ===")
 has_status = isinstance(d.get("status"), str) and bool(str(d.get("status", "")).strip())
 has_decision = isinstance(d.get("decision_ready"), bool)
-core = ["integration","density","statistics","continuity","survivorship","outputs","thresholds","governance"]
+core = ["integration", "density", "statistics", "continuity", "survivorship", "outputs", "thresholds", "governance"]
 present = sum(1 for n in core if isinstance(checks.get(n), dict))
 has_core = present >= 4
 

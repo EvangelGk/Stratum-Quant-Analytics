@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
-import sys
 import importlib
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -26,9 +25,7 @@ load_dotenv(ROOT / ".env")
 bootstrap_env_from_secrets(override=False, only_keys=["DATA_USER_ID"])
 
 _UI_USER_ID = (get_secret("DATA_USER_ID", "default") or "default").strip() or "default"
-_SAFE_UI_USER = "".join(
-    ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in _UI_USER_ID
-) or "default"
+_SAFE_UI_USER = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in _UI_USER_ID) or "default"
 
 OUTPUT_DIR = ROOT / "output" / _SAFE_UI_USER
 USER_DATA_DIR = ROOT / "data" / "users" / _SAFE_UI_USER

@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-
 YFINANCE_COLUMNS = {
     "open",
     "high",
@@ -179,12 +178,7 @@ def _future_target_from_series(
         return transformed, method
 
     if is_return_like(feature_name):
-        future = (
-            numeric.shift(-1)
-            .rolling(window=horizon, min_periods=horizon)
-            .sum()
-            .shift(-(horizon - 1))
-        )
+        future = numeric.shift(-1).rolling(window=horizon, min_periods=horizon).sum().shift(-(horizon - 1))
         return future.replace([np.inf, -np.inf], np.nan), f"forward_{horizon}d_cumulative_return"
 
     positive = numeric.dropna()
@@ -323,9 +317,7 @@ def prepare_supervised_frame(
         "target_horizon_policy": {
             "align_to_features": bool(align_target_to_features),
             "min_target_horizon_days": int(max(1, min_target_horizon_days)),
-            "max_target_horizon_days": (
-                int(max_target_horizon_days) if max_target_horizon_days is not None else None
-            ),
+            "max_target_horizon_days": (int(max_target_horizon_days) if max_target_horizon_days is not None else None),
         },
     }
     keep_columns = [date_col, target, *features]

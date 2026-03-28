@@ -10,9 +10,7 @@ def test_fred_fetcher_returns_dataframe(monkeypatch):
 
         def get_series(self, series_id, observation_start=None, observation_end=None):
             # Return a Series with a DatetimeIndex
-            return pd.Series(
-                [1.0, 2.0], index=pd.to_datetime(["2020-01-01", "2020-01-02"])
-            )
+            return pd.Series([1.0, 2.0], index=pd.to_datetime(["2020-01-01", "2020-01-02"]))
 
     # Patch the Fred client and caching layer to avoid diskcache usage
     monkeypatch.setattr(fred_module, "Fred", DummyFred)

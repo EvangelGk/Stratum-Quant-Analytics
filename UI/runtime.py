@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -20,8 +20,9 @@ from UI.constants import (
     OUTPUT_DIR,
     ROOT,
     UI_SCHEDULE_PATH,
+    UI_SNAPSHOT_PATH,
+    USER_DATA_DIR,
 )
-from UI.constants import UI_SNAPSHOT_PATH, USER_DATA_DIR
 from UI.helpers import read_json
 
 # Ensure project root and src/ are on sys.path before importing secret_store.
@@ -139,17 +140,11 @@ def show_pipeline_failure(raw_output: str) -> None:
     q_report = read_json(USER_DATA_DIR / "processed" / "quality" / "quality_report.json")
     files_info = q_report.get("files", {}) if isinstance(q_report, dict) else {}
     summary_info = q_report.get("summary", {}) if isinstance(q_report, dict) else {}
-    failed_entities = [
-        (name, meta)
-        for name, meta in files_info.items()
-        if isinstance(meta, dict) and meta.get("status") == "failed"
-    ]
+    failed_entities = [(name, meta) for name, meta in files_info.items() if isinstance(meta, dict) and meta.get("status") == "failed"]
     missing_src = summary_info.get("missing_sources", []) if isinstance(summary_info, dict) else []
 
     if missing_src:
-        st.warning(
-            f"No usable data from: {', '.join(missing_src)}. All datasets from these sources were rejected by quality checks."
-        )
+        st.warning(f"No usable data from: {', '.join(missing_src)}. All datasets from these sources were rejected by quality checks.")
     if failed_entities:
         st.markdown(f"**{len(failed_entities)} dataset(s) failed quality checks:**")
         for name, meta in failed_entities:
@@ -388,9 +383,7 @@ def rerun_stress_test_only(
     summary_file = OUTPUT_DIR / "analysis_results.json"
     if summary_file.exists():
         try:
-            summary_payload: Dict[str, Any] = json.loads(
-                summary_file.read_text(encoding="utf-8")
-            )
+            summary_payload: Dict[str, Any] = json.loads(summary_file.read_text(encoding="utf-8"))
         except Exception:
             summary_payload = {}
     else:

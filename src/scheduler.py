@@ -12,8 +12,6 @@ Usage:
 
 import argparse
 import json
-import os
-import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,14 +23,14 @@ def log_scheduled_event(user_id: str, event: str, details: dict = None):
     """Log scheduler events to a timestamped log file."""
     log_dir = Path(f"output/{user_id}/.scheduler")
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = {
         "timestamp": timestamp,
         "event": event,
         "details": details or {},
     }
-    
+
     log_file = log_dir / f"scheduler_{datetime.now().strftime('%Y%m%d')}.log"
     try:
         if log_file.exists():
@@ -55,10 +53,10 @@ def run_optimizer_once(target_score: float = 94.0, user_id: str = "default"):
     print(f"\n[SCHEDULER] Starting optimization loop at {datetime.now()}")
     print(f"[SCHEDULER] Target score: {target_score}")
     print(f"[SCHEDULER] User: {user_id}")
-    print(f"[SCHEDULER] Mode: APPROVAL-GATED (queue polling + optional mobile notifications)")
-    
+    print("[SCHEDULER] Mode: APPROVAL-GATED (queue polling + optional mobile notifications)")
+
     log_scheduled_event(user_id, "optimizer_start", {"target_score": target_score})
-    
+
     try:
         optimizer = AutomatedOptimizationLoop(
             target_score=target_score,
@@ -66,62 +64,65 @@ def run_optimizer_once(target_score: float = 94.0, user_id: str = "default"):
             user_id=user_id,
             scheduled=True,  # Force non-interactive, file-based approvals
         )
-        
+
         report = optimizer.run()
-        
+
         # Log completion
-        log_scheduled_event(user_id, "optimizer_complete", {
-            "score": report.get("raw_integrity_score"),
-            "status": report.get("status"),
-            "iterations": report.get("iterations_used"),
-        })
-        
+        log_scheduled_event(
+            user_id,
+            "optimizer_complete",
+            {
+                "score": report.get("raw_integrity_score"),
+                "status": report.get("status"),
+                "iterations": report.get("iterations_used"),
+            },
+        )
+
         print(f"[SCHEDULER] Optimization complete at {datetime.now()}")
         print(f"[SCHEDULER] Final score: {report.get('raw_integrity_score')}/100")
         print(f"[SCHEDULER] Status: {report.get('status')}")
         print(f"[SCHEDULER] Iterations used: {report.get('iterations_used')}/{report.get('max_iterations')}")
-        
+
         return report
-        
+
     except Exception as e:
         log_scheduled_event(user_id, "optimizer_error", {"error": str(e)})
         print(f"[SCHEDULER] Error during optimization: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
 
 def scheduler_loop(interval_hours: int = 24, user_id: str = "default"):
     """Run optimizer repeatedly at specified intervals."""
-    print(f"\n[SCHEDULER] Starting periodic optimizer scheduler")
+    print("\n[SCHEDULER] Starting periodic optimizer scheduler")
     print(f"[SCHEDULER] Interval: {interval_hours} hour(s)")
     print(f"[SCHEDULER] User: {user_id}")
-    print(f"[SCHEDULER] Approval method: FILE-BASED POLLING (mobile alerts if Telegram is configured)")
+    print("[SCHEDULER] Approval method: FILE-BASED POLLING (mobile alerts if Telegram is configured)")
     print(f"[SCHEDULER] To approve/reject quickly: python respond_to_approval.py --user-id {user_id} --approve|--reject")
     print(f"[SCHEDULER] Fallback manual path: output/{user_id}/.optimizer/approval_queue.json")
-    
+
     log_scheduled_event(user_id, "scheduler_start", {"interval_hours": interval_hours})
-    
+
     next_run = datetime.now()
-    
+
     try:
         while True:
             now = datetime.now()
-            
+
             if now >= next_run:
                 # Run the optimizer
                 run_optimizer_once(target_score=94.0, user_id=user_id)
-                
+
                 # Schedule next run
                 next_run = now + timedelta(hours=interval_hours)
                 print(f"\n[SCHEDULER] Next run scheduled for: {next_run}")
-                log_scheduled_event(user_id, "next_run_scheduled", {
-                    "next_run": next_run.isoformat()
-                })
-            
+                log_scheduled_event(user_id, "next_run_scheduled", {"next_run": next_run.isoformat()})
+
             # Sleep for 1 minute before checking again
             time.sleep(60)
-            
+
     except KeyboardInterrupt:
         print(f"\n[SCHEDULER] Scheduler stopped by user at {datetime.now()}")
         log_scheduled_event(user_id, "scheduler_stop", {"reason": "user_interrupt"})
@@ -132,9 +133,7 @@ def scheduler_loop(interval_hours: int = 24, user_id: str = "default"):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Automated periodic optimizer scheduler with file-based approval polling."
-    )
+    parser = argparse.ArgumentParser(description="Automated periodic optimizer scheduler with file-based approval polling.")
     parser.add_argument(
         "--interval",
         type=int,
@@ -158,9 +157,9 @@ def main():
         default=94.0,
         help="Target optimization score",
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.once:
         # Run once and exit
         run_optimizer_once(target_score=args.target_score, user_id=args.user_id)

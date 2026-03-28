@@ -1,9 +1,10 @@
-﻿"""Traffic-light scoring utilities for the STRATUM QUANT ANALYTICS UI.
+"""Traffic-light scoring utilities for the STRATUM QUANT ANALYTICS UI.
 
 Each helper returns a (color, label, description) tuple where color is one of
 "green", "yellow", "red". Use ``badge_html()`` to render an inline HTML chip
 that Streamlit can display via ``st.markdown(..., unsafe_allow_html=True)``.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -12,10 +13,7 @@ from typing import Optional
 # Core primitives
 # ---------------------------------------------------------------------------
 
-_BADGE_CSS = (
-    "display:inline-block;padding:2px 10px;border-radius:12px;"
-    "font-weight:600;font-size:0.85rem;color:#fff;"
-)
+_BADGE_CSS = "display:inline-block;padding:2px 10px;border-radius:12px;font-weight:600;font-size:0.85rem;color:#fff;"
 _COLOR_HEX = {"green": "#2e7d32", "yellow": "#f57c00", "red": "#c62828"}
 
 
@@ -23,19 +21,15 @@ def badge_html(label: str, color: str = "green", tooltip: str = "") -> str:
     """Return an inline HTML badge chip coloured by traffic-light status."""
     hex_color = _COLOR_HEX.get(color, _COLOR_HEX["red"])
     title_attr = f' title="{tooltip}"' if tooltip else ""
-    return (
-        f'<span style="{_BADGE_CSS}background:{hex_color}"{title_attr}>'
-        f"{label}</span>"
-    )
+    return f'<span style="{_BADGE_CSS}background:{hex_color}"{title_attr}>{label}</span>'
 
 
 # ---------------------------------------------------------------------------
 # Domain-specific scorers — each returns (color, short_label, business_desc)
 # ---------------------------------------------------------------------------
 
-def score_audit_status(
-    status: str, failed_count: int = 0
-) -> tuple[str, str, str]:
+
+def score_audit_status(status: str, failed_count: int = 0) -> tuple[str, str, str]:
     """
     Traffic-light for overall audit status.
 
@@ -67,9 +61,7 @@ def score_audit_status(
     return "yellow", "⚠️ Incomplete Context", "Audit context is partial; review artifacts and refresh before final decisions."
 
 
-def score_decision_ready(
-    ready: bool, failed_count: int = 0
-) -> tuple[str, str, str]:
+def score_decision_ready(ready: bool, failed_count: int = 0) -> tuple[str, str, str]:
     """
     Traffic-light for the decision-ready gate.
 
@@ -152,5 +144,3 @@ def score_check_result(passed: bool, status: str) -> tuple[str, str, str]:
     if s == "warn" or (passed and s != "pass"):
         return "yellow", "⚠️ Warning", "Check raised warnings that merit review."
     return "red", "❌ Fail", "Check failed — requires investigation."
-
-

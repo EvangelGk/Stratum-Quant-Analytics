@@ -1,31 +1,41 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
-
 import hmac
-import sys
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS
-from UI.helpers import clear_file_caches, compute_artifact_signature
-from UI.rendering import DIRECTIONS_MOD, MAIN_MOD, inject_styles, render_logger_message, show_kpis
-from UI.runtime import clear_all_run_history, run_and_cache_audit, run_pipeline, show_pipeline_failure
-from UI.runtime import run_optimizer_background
+from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS  # noqa: E402
+from UI.helpers import clear_file_caches, compute_artifact_signature  # noqa: E402
+from UI.rendering import (  # noqa: E402
+    DIRECTIONS_MOD,
+    MAIN_MOD,
+    inject_styles,
+    render_logger_message,
+    show_kpis,
+)
+from UI.runtime import (  # noqa: E402
+    clear_all_run_history,
+    run_and_cache_audit,
+    run_optimizer_background,
+    run_pipeline,
+    show_pipeline_failure,
+)
+
 try:
-    from src.secret_store import get_secret
+    from src.secret_store import get_secret  # noqa: E402
 except ModuleNotFoundError:
-    from src.secret_store import get_secret
-from UI.tabs import (
+    from src.secret_store import get_secret  # noqa: E402
+from UI.tabs import (  # noqa: E402
     render_sidebar_ai_widget,
     show_ai_assistant_tab,
     show_analytics_tab,
@@ -265,14 +275,10 @@ def _sync_artifact_freshness() -> None:
 
     if current_signature != previous_signature:
         st.session_state["_artifact_signature"] = current_signature
-        st.session_state["_artifacts_updated_message"] = (
-            "New artifacts detected. Refreshing tabs with latest outputs."
-        )
+        st.session_state["_artifacts_updated_message"] = "New artifacts detected. Refreshing tabs with latest outputs."
         clear_file_caches()
         st.cache_data.clear()
         st.rerun()
-
-
 
 
 def _check_admin_pin(entered: str) -> bool:
@@ -337,9 +343,7 @@ def _render_sidebar() -> str:
             st.markdown("- Analyst: can run pipelines and export reports, but cannot schedule jobs.")
             st.markdown("- Admin: full operational control (run, export, schedule, history deletion). Requires PIN.")
 
-        st.caption(
-            f"Permissions: run={perms['can_run']}, download={perms['can_download']}, schedule={perms['can_schedule']}"
-        )
+        st.caption(f"Permissions: run={perms['can_run']}, download={perms['can_download']}, schedule={perms['can_schedule']}")
 
         st.header(" Pipeline Execution")
 
@@ -361,10 +365,7 @@ def _render_sidebar() -> str:
         resume_mode = st.checkbox(
             "Fast rerun mode (reuse completed stages)",
             value=True,
-            help=(
-                "When enabled, pipeline can skip already completed Bronze/Silver/Gold "
-                "stages using checkpoints. Disable for a strict full rebuild."
-            ),
+            help=("When enabled, pipeline can skip already completed Bronze/Silver/Gold stages using checkpoints. Disable for a strict full rebuild."),
         )
 
         if st.button(
@@ -413,9 +414,7 @@ def _render_sidebar() -> str:
                         st.markdown(f"- {p}")
             else:
                 st.success(result["message"])
-            st.caption(
-                f"Deleted files: {result['deleted_files']} | Deleted directories: {result['deleted_dirs']}"
-            )
+            st.caption(f"Deleted files: {result['deleted_files']} | Deleted directories: {result['deleted_dirs']}")
 
         # ----------------------------------------------------------------
         # AI Copilot — always-present mini-chat in the sidebar.
@@ -430,6 +429,7 @@ def _render_sidebar() -> str:
         # Never surfaced to regular users or shown in public deployments.
         # ----------------------------------------------------------------
         import os as _os
+
         if _os.getenv("OPTIMIZER_OWNER_MODE", "").strip() == "1":
             st.markdown("---")
             st.markdown("### 🔬 Automated Optimizer")
@@ -442,11 +442,19 @@ def _render_sidebar() -> str:
             with st.expander("Pre-Optimizer Lag Correlation Heatmap (1-20)", expanded=True):
                 _render_pre_optimizer_lag_heatmap()
             opt_target = st.slider(
-                "Target score", min_value=80, max_value=99, value=94, step=1,
+                "Target score",
+                min_value=80,
+                max_value=99,
+                value=94,
+                step=1,
                 key="opt_target_score",
             )
             opt_iters = st.number_input(
-                "Max iterations", min_value=1, max_value=20, value=10, step=1,
+                "Max iterations",
+                min_value=1,
+                max_value=20,
+                value=10,
+                step=1,
                 key="opt_max_iters",
             )
 
@@ -456,6 +464,7 @@ def _render_sidebar() -> str:
                 with st.expander("Last optimizer report", expanded=False):
                     try:
                         import json as _json
+
                         _rpt = _json.loads(_opt_report.read_text(encoding="utf-8"))
                         st.json(_rpt.get("final_quant_evaluation", _rpt))
                     except Exception:
@@ -494,10 +503,12 @@ def main() -> None:
     inject_styles()
 
     if hasattr(st, "fragment"):
+
         @st.fragment(run_every="6s")
         def _artifact_watchdog() -> None:
             _sync_artifact_freshness()
     else:
+
         def _artifact_watchdog() -> None:
             components.html(
                 """
@@ -553,9 +564,7 @@ def main() -> None:
     _default_page = st.session_state.get("selected_page", "💎 Edge Arsenal")
     if _default_page not in pages:
         _default_page = "💎 Edge Arsenal"
-    selected_page = st.segmented_control(
-        "View", options=pages, default=_default_page, key="main_page_control"
-    )
+    selected_page = st.segmented_control("View", options=pages, default=_default_page, key="main_page_control")
     # Track active page in session state so sidebar AI and chips know context
     if selected_page:
         st.session_state["selected_page"] = selected_page
@@ -634,10 +643,7 @@ def _load_backtest_payload_to_session() -> None:
     try:
         artifact_path = OUTPUT_DIR / "default" / "analysis_results.json"
         # Respect DATA_USER_ID when set
-        user_id = (
-            st.secrets.get("DATA_USER_ID", "")
-            or ""
-        ).strip()
+        user_id = (st.secrets.get("DATA_USER_ID", "") or "").strip()
         if user_id:
             safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in user_id)
             candidate = OUTPUT_DIR / safe / "analysis_results.json"
@@ -648,6 +654,7 @@ def _load_backtest_payload_to_session() -> None:
             return
 
         import hashlib as _hashlib
+
         raw = artifact_path.read_bytes()
         file_hash = _hashlib.md5(raw, usedforsecurity=False).hexdigest()
 
@@ -694,5 +701,3 @@ def _render_footer() -> None:
 
 if __name__ == "__main__":
     main()
-
-

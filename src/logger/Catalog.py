@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import threading
 import time
@@ -34,12 +34,8 @@ class ApplicationCatalog:
 
         self.lock = threading.Lock()
         self.session_id = str(uuid.uuid4())
-        self._run_id_ctx: ContextVar[str] = ContextVar(
-            f"catalog_run_id_{self.session_id}", default="unassigned"
-        )
-        self._correlation_id_ctx: ContextVar[str] = ContextVar(
-            f"catalog_correlation_id_{self.session_id}", default="unassigned"
-        )
+        self._run_id_ctx: ContextVar[str] = ContextVar(f"catalog_run_id_{self.session_id}", default="unassigned")
+        self._correlation_id_ctx: ContextVar[str] = ContextVar(f"catalog_correlation_id_{self.session_id}", default="unassigned")
 
         # Setup structured logging (JSON logs at file path)
         self.logger = logging.getLogger("ApplicationCatalog")
@@ -91,9 +87,7 @@ class ApplicationCatalog:
 
             # Console handler for user feedback (plain text)
             console_handler = logging.StreamHandler()
-            console_handler.setFormatter(
-                logging.Formatter("%(asctime)s - %(operation)s - %(message)s")
-            )
+            console_handler.setFormatter(logging.Formatter("%(asctime)s - %(operation)s - %(message)s"))
             self.logger.addHandler(console_handler)
 
         # Metrics storage
@@ -205,8 +199,7 @@ class ApplicationCatalog:
             window_ops = [
                 op
                 for op in self.session_metrics["operations"]
-                if op.get("operation") == operation_name
-                and datetime.fromisoformat(op["timestamp"]) >= window_start
+                if op.get("operation") == operation_name and datetime.fromisoformat(op["timestamp"]) >= window_start
             ]
 
         if not window_ops:
@@ -224,13 +217,9 @@ class ApplicationCatalog:
             return
 
         durations = [
-            float(op.get("metrics", {}).get("duration_seconds", 0.0))
-            for op in window_ops
-            if op.get("metrics", {}).get("duration_seconds") is not None
+            float(op.get("metrics", {}).get("duration_seconds", 0.0)) for op in window_ops if op.get("metrics", {}).get("duration_seconds") is not None
         ]
-        successes = [
-            bool(op.get("metrics", {}).get("success", False)) for op in window_ops
-        ]
+        successes = [bool(op.get("metrics", {}).get("success", False)) for op in window_ops]
         success_count = sum(1 for s in successes if s)
         total_events = len(window_ops)
         failure_count = total_events - success_count
@@ -284,14 +273,9 @@ class ApplicationCatalog:
 
         details = {"source": source, "error": error}
 
-        message = (
-            f"Data {operation}: {source} - {records} records, {files} "
-            f"files in {duration:.2f}s"
-        )
+        message = f"Data {operation}: {source} - {records} records, {files} files in {duration:.2f}s"
 
-        self.log_operation(
-            f"data_{operation}", "data_pipeline", metrics, details, message
-        )
+        self.log_operation(f"data_{operation}", "data_pipeline", metrics, details, message)
 
     def log_analysis_operation(
         self,
@@ -312,13 +296,9 @@ class ApplicationCatalog:
 
         details = {"target": target, "error": error}
 
-        message = (
-            f"Analysis {analysis_type}: {target or 'N/A'} completed in {duration:.2f}s"
-        )
+        message = f"Analysis {analysis_type}: {target or 'N/A'} completed in {duration:.2f}s"
 
-        self.log_operation(
-            "analysis_run", "gold_layer", analysis_metrics, details, message
-        )
+        self.log_operation("analysis_run", "gold_layer", analysis_metrics, details, message)
 
     def log_system_metrics(
         self,
@@ -339,9 +319,7 @@ class ApplicationCatalog:
         # Filter out None values
         metrics = {k: v for k, v in metrics.items() if v is not None}
 
-        self.log_operation(
-            "system_metrics", component, metrics, {}, f"System metrics for {component}"
-        )
+        self.log_operation("system_metrics", component, metrics, {}, f"System metrics for {component}")
 
     def log_error(
         self,
@@ -382,49 +360,27 @@ class ApplicationCatalog:
         Returns:
             Path to the saved summary file.
         """
-        summary_file = (
-            self.log_file.parent
-            / f"session_summary_{self.session_id}_{int(time.time())}.json"
-        )
+        summary_file = self.log_file.parent / f"session_summary_{self.session_id}_{int(time.time())}.json"
 
         with self.lock:
             # Calculate session totals
             total_operations = len(self.session_metrics["operations"])
-            total_duration = sum(
-                op.get("metrics", {}).get("duration_seconds", 0)
-                for op in self.session_metrics["operations"]
-            )
+            total_duration = sum(op.get("metrics", {}).get("duration_seconds", 0) for op in self.session_metrics["operations"])
 
             # Data processing summary
-            data_ops = [
-                op
-                for op in self.session_metrics["operations"]
-                if op["operation"].startswith("data_")
-            ]
-            total_records = sum(
-                op.get("metrics", {}).get("records_processed", 0) for op in data_ops
-            )
-            total_files = sum(
-                op.get("metrics", {}).get("files_processed", 0) for op in data_ops
-            )
+            data_ops = [op for op in self.session_metrics["operations"] if op["operation"].startswith("data_")]
+            total_records = sum(op.get("metrics", {}).get("records_processed", 0) for op in data_ops)
+            total_files = sum(op.get("metrics", {}).get("files_processed", 0) for op in data_ops)
 
             # Analysis summary
-            analysis_ops = [
-                op
-                for op in self.session_metrics["operations"]
-                if op["operation"] == "analysis_run"
-            ]
-            successful_analyses = sum(
-                1 for op in analysis_ops if op.get("metrics", {}).get("success", False)
-            )
+            analysis_ops = [op for op in self.session_metrics["operations"] if op["operation"] == "analysis_run"]
+            successful_analyses = sum(1 for op in analysis_ops if op.get("metrics", {}).get("success", False))
 
             summary = {
                 "session_info": {
                     "session_id": self.session_id,
                     "run_id": self.session_metrics.get("run_id", "unassigned"),
-                    "correlation_id": self.session_metrics.get(
-                        "correlation_id", "unassigned"
-                    ),
+                    "correlation_id": self.session_metrics.get("correlation_id", "unassigned"),
                     "start_time": self.session_metrics["session_start"],
                     "end_time": datetime.now().isoformat(),
                     "total_duration_seconds": total_duration,
@@ -433,33 +389,18 @@ class ApplicationCatalog:
                 "data_metrics": {
                     "total_records_processed": total_records,
                     "total_files_processed": total_files,
-                    "data_sources_used": list(
-                        set(
-                            op.get("details", {}).get("source")
-                            for op in data_ops
-                            if op.get("details", {}).get("source")
-                        )
-                    ),
+                    "data_sources_used": list(set(op.get("details", {}).get("source") for op in data_ops if op.get("details", {}).get("source"))),
                 },
                 "analysis_metrics": {
                     "total_analyses_run": len(analysis_ops),
                     "successful_analyses": successful_analyses,
-                    "analysis_types": list(
-                        set(
-                            op.get("metrics", {}).get("analysis_type")
-                            for op in analysis_ops
-                        )
-                    ),
+                    "analysis_types": list(set(op.get("metrics", {}).get("analysis_type") for op in analysis_ops)),
                 },
                 "error_metrics": self.session_metrics["error_metrics"],
                 "sla_metrics": self.session_metrics.get("sla_metrics", {}),
                 "performance_metrics": {
-                    "average_operation_duration": total_duration / total_operations
-                    if total_operations > 0
-                    else 0,
-                    "operations_per_second": total_operations / total_duration
-                    if total_duration > 0
-                    else 0,
+                    "average_operation_duration": total_duration / total_operations if total_operations > 0 else 0,
+                    "operations_per_second": total_operations / total_duration if total_duration > 0 else 0,
                 },
                 "environment": self._collect_environment_snapshot(),
             }
@@ -483,9 +424,7 @@ class ApplicationCatalog:
             "platform": platform.platform(),
             "processor": platform.processor(),
             "cwd": os.getcwd(),
-            "environment_variables": {
-                k: os.environ.get(k) for k in ["PYTHONPATH"] if os.environ.get(k)
-            },
+            "environment_variables": {k: os.environ.get(k) for k in ["PYTHONPATH"] if os.environ.get(k)},
             "timestamp": datetime.now().isoformat(),
         }
         return snapshot
@@ -496,20 +435,12 @@ class ApplicationCatalog:
             return {
                 "total_operations": len(self.session_metrics["operations"]),
                 "error_count": sum(self.session_metrics["error_metrics"].values()),
-                "data_processed": sum(
-                    op.get("metrics", {}).get("records_processed", 0)
-                    for op in self.session_metrics["operations"]
-                ),
+                "data_processed": sum(op.get("metrics", {}).get("records_processed", 0) for op in self.session_metrics["operations"]),
                 "analyses_completed": sum(
-                    1
-                    for op in self.session_metrics["operations"]
-                    if op["operation"] == "analysis_run"
-                    and op.get("metrics", {}).get("success", False)
+                    1 for op in self.session_metrics["operations"] if op["operation"] == "analysis_run" and op.get("metrics", {}).get("success", False)
                 ),
             }
 
 
 # Global catalog instance
 catalog = ApplicationCatalog()
-
-

@@ -10,7 +10,12 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from exceptions.FetchersExceptions import FetcherError, MissingAPIKeyError, RateLimitError, TimeoutError
+from exceptions.FetchersExceptions import (
+    FetcherError,
+    MissingAPIKeyError,
+    RateLimitError,
+    TimeoutError,
+)
 from Fetchers.Factory import DataFactory
 from Fetchers.ProjectConfig import ProjectConfig
 from logger.Messages.FetchersMess import (
@@ -31,9 +36,7 @@ class BronzeLayer:
         if base_path is not None:
             self.base_path = os.path.abspath(base_path)
         else:
-            self.base_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "../../data/raw")
-            )
+            self.base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/raw"))
         os.makedirs(self.base_path, exist_ok=True)
         self.catalog: Dict[str, Dict[str, Any]] = {}
         self.lock = threading.Lock()
@@ -133,12 +136,7 @@ class BronzeLayer:
         # Execute tasks in parallel
         max_workers = min(self.config.max_workers, len(tasks))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_source = {
-                executor.submit(
-                    self._fetch_and_save, fetcher, params, filename, source
-                ): source
-                for fetcher, params, filename, source in tasks
-            }
+            future_to_source = {executor.submit(self._fetch_and_save, fetcher, params, filename, source): source for fetcher, params, filename, source in tasks}
             for future in concurrent.futures.as_completed(future_to_source):
                 source = future_to_source[future]
                 try:
@@ -147,37 +145,23 @@ class BronzeLayer:
                     self.logger.error(f"Fetcher error in task: {e}")
                     with self.lock:
                         self.fail_count += 1
-                        self.source_fail_count[source] = (
-                            self.source_fail_count.get(source, 0) + 1
-                        )
+                        self.source_fail_count[source] = self.source_fail_count.get(source, 0) + 1
                 except Exception as e:
                     self.logger.error(f"Unexpected error in task: {e}")
                     with self.lock:
                         self.fail_count += 1
-                        self.source_fail_count[source] = (
-                            self.source_fail_count.get(source, 0) + 1
-                        )
+                        self.source_fail_count[source] = self.source_fail_count.get(source, 0) + 1
 
         # Log summary
         total_files = self.success_count + self.fail_count
-        success_rate = (
-            (self.success_count / total_files * 100) if total_files > 0 else 0
-        )
-        print(
-            FETCHER_COMPLETION.format(
-                total_files=total_files, success_rate=f"{success_rate:.1f}"
-            )
-        )
+        success_rate = (self.success_count / total_files * 100) if total_files > 0 else 0
+        print(FETCHER_COMPLETION.format(total_files=total_files, success_rate=f"{success_rate:.1f}"))
         self.logger.info(
             "Ingestion completed. Success: %s, Failures: %s",
             self.success_count,
             self.fail_count,
         )
-        missing_sources = [
-            source
-            for source, expected in source_expected_counts.items()
-            if expected > 0 and self.source_success_count.get(source, 0) == 0
-        ]
+        missing_sources = [source for source, expected in source_expected_counts.items() if expected > 0 and self.source_success_count.get(source, 0) == 0]
         return {
             "total_files": total_files,
             "success_count": self.success_count,
@@ -188,9 +172,7 @@ class BronzeLayer:
             "missing_sources": missing_sources,
         }
 
-    def _fetch_and_save(
-        self, fetcher: Any, params: Tuple[str, ...], filename: str, source: str
-    ) -> None:
+    def _fetch_and_save(self, fetcher: Any, params: Tuple[str, ...], filename: str, source: str) -> None:
         """
         Fetches data with retry logic and saves it.
         The inter-attempt delay is applied AFTER a failure, not before the
@@ -205,47 +187,28 @@ class BronzeLayer:
                 self._record_provider_success(source)
                 with self.lock:
                     self.success_count += 1
-                    self.source_success_count[source] = (
-                        self.source_success_count.get(source, 0) + 1
-                    )
+                    self.source_success_count[source] = self.source_success_count.get(source, 0) + 1
                 break  # Success, exit retry loop
             except FetcherError as e:
                 self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
-                    delay = random.uniform(
-                        self.config.retry_delay_min, self.config.retry_delay_max
-                    )
-                    self.logger.warning(
-                        f"Attempt {attempt + 1} failed for {filename}: {e}. "
-                        f"Retrying in {delay:.1f}s..."
-                    )
+                    delay = random.uniform(self.config.retry_delay_min, self.config.retry_delay_max)
+                    self.logger.warning(f"Attempt {attempt + 1} failed for {filename}: {e}. Retrying in {delay:.1f}s...")
                     time.sleep(delay)
                 else:
-                    self.logger.error(
-                        (
-                            f"Failed to fetch {filename} after "
-                            f"{self.config.max_retries} attempts: {e}"
-                        )
-                    )
+                    self.logger.error((f"Failed to fetch {filename} after {self.config.max_retries} attempts: {e}"))
                     raise  # Re-raise after max retries
             except TimeoutError as e:
                 self._record_provider_failure(source)
                 if attempt < self.config.max_retries - 1:
-                    delay = random.uniform(
-                        self.config.retry_delay_min, self.config.retry_delay_max
-                    )
-                    self.logger.warning(
-                        f"Timeout on attempt {attempt + 1} for {filename}: {e}."
-                        f" Retrying in {delay:.1f}s..."
-                    )
+                    delay = random.uniform(self.config.retry_delay_min, self.config.retry_delay_max)
+                    self.logger.warning(f"Timeout on attempt {attempt + 1} for {filename}: {e}. Retrying in {delay:.1f}s...")
                     time.sleep(delay)
                 else:
                     raise
             except RateLimitError as e:
                 self._record_provider_failure(source)
-                self.logger.warning(
-                    f"Rate limit hit for {filename}: {e}. Waiting longer..."
-                )
+                self.logger.warning(f"Rate limit hit for {filename}: {e}. Waiting longer...")
                 time.sleep(60)  # Extra wait for rate limit
             except Exception as e:
                 self._record_provider_failure(source)
@@ -325,9 +288,7 @@ class BronzeLayer:
         # Basic validation: check for required columns based on source
         expected_columns = self._get_expected_columns(source)
         if not all(col in df.columns for col in expected_columns):
-            raise ValueError(
-                f"Data for {filename} missing required columns: {expected_columns}"
-            )
+            raise ValueError(f"Data for {filename} missing required columns: {expected_columns}")
 
         df["ingested_at"] = datetime.now().isoformat()
         df["source_system"] = source
@@ -340,9 +301,7 @@ class BronzeLayer:
 
         try:
             # Index=False to avoid saving unnecessary columns
-            df.to_parquet(
-                full_path, index=False, engine="pyarrow", compression="snappy"
-            )
+            df.to_parquet(full_path, index=False, engine="pyarrow", compression="snappy")
             self.logger.info(f"Successfully saved: {full_path}")
 
             # Update the catalog with metadata and persist atomically under lock
@@ -379,11 +338,7 @@ class BronzeLayer:
             level0 = [str(col[0]) for col in work_df.columns]
             level1 = [str(col[1]) for col in work_df.columns]
             known = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
-            work_df.columns = (
-                level0
-                if len(known.intersection(level0)) >= len(known.intersection(level1))
-                else level1
-            )
+            work_df.columns = level0 if len(known.intersection(level0)) >= len(known.intersection(level1)) else level1
 
         alias_map: Dict[str, str] = {}
         if source == "yfinance":

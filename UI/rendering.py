@@ -19,16 +19,10 @@ def import_first(*module_names: str) -> Any:
     return None
 
 
-DIRECTIONS_MOD = import_first(
-    "logger.Messages.DirectionsMess", "src.logger.Messages.DirectionsMess"
-)
+DIRECTIONS_MOD = import_first("logger.Messages.DirectionsMess", "src.logger.Messages.DirectionsMess")
 MAIN_MOD = import_first("logger.Messages.MainMess", "src.logger.Messages.MainMess")
-MEDALLION_MOD = import_first(
-    "logger.Messages.MedallionMess", "src.logger.Messages.MedallionMess"
-)
-FETCHERS_MOD = import_first(
-    "logger.Messages.FetchersMess", "src.logger.Messages.FetchersMess"
-)
+MEDALLION_MOD = import_first("logger.Messages.MedallionMess", "src.logger.Messages.MedallionMess")
+FETCHERS_MOD = import_first("logger.Messages.FetchersMess", "src.logger.Messages.FetchersMess")
 
 
 def normalize_message(msg: Any) -> str:

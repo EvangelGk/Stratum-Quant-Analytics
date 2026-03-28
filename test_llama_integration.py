@@ -7,8 +7,10 @@ Use it to verify Ollama connectivity and AI response quality.
 """
 
 import json
-import requests
 from datetime import datetime
+
+import requests
+
 
 def test_ollama_connection():
     """Test if Ollama is running and responsive."""
@@ -41,18 +43,18 @@ def test_ollama_connection():
 def test_llama_analysis():
     """Test Llama's ability to analyze a quant problem."""
     print("\n[TEST] Testing Llama AI analysis capability...")
-    
+
     # Simulate a negative R² problem
-    problem = """SERIOUS: NEGATIVE_R2 found. Score: 82.5/100. 
+    problem = """SERIOUS: NEGATIVE_R2 found. Score: 82.5/100.
 Issues: ['NEGATIVE_R2:governance_oos_r2=-0.1234']"""
-    
+
     context = """Integrity Score: 82.5/100
 Issues detected:
   - NEGATIVE_R2:governance_oos_r2=-0.1234
   - OUTLIERS:ratio_gt_5pct=0.052
 Risk metrics: VaR95=-0.0523, CVaR95=-0.0618"""
 
-    system_prompt = """You are a Senior Quant Data Fixer AI Agent. Your role is to analyze financial data 
+    system_prompt = """You are a Senior Quant Data Fixer AI Agent. Your role is to analyze financial data
 pipeline problems and recommend precise code fixes.
 
 INPUT FORMAT:
@@ -102,14 +104,14 @@ Please provide your analysis and solution recommendation."""
             },
             timeout=120,
         )
-        
+
         if response.status_code == 200:
             analysis = response.json().get("response", "")
-            print("\n" + "="*70)
+            print("\n" + "=" * 70)
             print("LLAMA AI ANALYSIS OUTPUT:")
-            print("="*70)
+            print("=" * 70)
             print(analysis)
-            print("="*70)
+            print("=" * 70)
             print("✓ Analysis completed successfully")
             return True
         else:
@@ -126,7 +128,7 @@ Please provide your analysis and solution recommendation."""
 def test_approval_flow():
     """Demonstrate the approval flow."""
     print("\n[TEST] Simulating approval flow...")
-    
+
     approval_data = {
         "action_id": "test_serious_NEGATIVE_R2",
         "description": "[LLAMA AI] Serious problem detected: NEGATIVE_R2",
@@ -141,10 +143,10 @@ def test_approval_flow():
         "requested_at": datetime.utcnow().isoformat() + "Z",
         "approved_at": None,
     }
-    
+
     print("Approval request created:")
     print(json.dumps(approval_data, indent=2))
-    
+
     print("\n✓ Approval flow is correctly structured")
     print("  - Interactive mode: Prompts user for YES/NO")
     print("  - Non-interactive mode: Polls approval_queue.json for status change")
@@ -152,25 +154,25 @@ def test_approval_flow():
 
 def main():
     """Run all tests."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("LLAMA 3.2 INTEGRATION TEST SUITE")
-    print("="*70)
-    
+    print("=" * 70)
+
     # Test 1: Connection
     if not test_ollama_connection():
         print("\n[ERROR] Cannot proceed without Ollama running.")
         print("Start Ollama with: ollama serve")
         return
-    
+
     # Test 2: Analysis
     test_llama_analysis()
-    
+
     # Test 3: Approval flow
     test_approval_flow()
-    
-    print("\n" + "="*70)
+
+    print("\n" + "=" * 70)
     print("TEST SUITE COMPLETE")
-    print("="*70)
+    print("=" * 70)
     print("\nConfiguration Summary:")
     print("  - Model: llama3.2:1b")
     print("  - API: http://localhost:11434/api/generate")

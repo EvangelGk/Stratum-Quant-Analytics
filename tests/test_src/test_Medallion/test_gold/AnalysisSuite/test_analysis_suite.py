@@ -29,8 +29,8 @@ from src.Medallion.gold.AnalysisSuite.stress_test import (
     stress_test,
 )
 
-
 # ─── Fixture helpers ──────────────────────────────────────────────────────────
+
 
 def _make_macro_panel(n: int = 120) -> pd.DataFrame:
     """Synthetic business-day macro panel with realistic-length time series."""
@@ -64,6 +64,7 @@ def _make_ticker_panel(ticker: str = "A", n: int = 60) -> pd.DataFrame:
 
 # ─── Correlation matrix ───────────────────────────────────────────────────────
 
+
 def test_correl_mtrx_basic():
     df = pd.DataFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     cm = correl_mtrx(df)
@@ -86,6 +87,7 @@ def test_correl_mtrx_stress_mode():
 
 # ─── Elasticity ───────────────────────────────────────────────────────────────
 
+
 def test_elasticity_returns_dict():
     """elasticity() returns a structured dict — not a bare float."""
     df = _make_macro_panel(120)
@@ -99,6 +101,7 @@ def test_elasticity_returns_dict():
 
 
 # ─── Lag analysis ─────────────────────────────────────────────────────────────
+
 
 def test_lag_analysis_returns_dict():
     """lag_analysis() returns a structured dict with lag_scan list."""
@@ -117,6 +120,7 @@ def test_lag_analysis_returns_dict():
 
 # ─── Monte Carlo ──────────────────────────────────────────────────────────────
 
+
 def test_monte_carlo_returns_dict_with_paths():
     """monte_carlo() returns a dict; price_paths ndarray is at key 'price_paths'."""
     df = _make_ticker_panel("A", n=60)
@@ -125,12 +129,12 @@ def test_monte_carlo_returns_dict_with_paths():
     assert "price_paths" in result
     assert result["price_paths"].shape == (3, 5)
     # Full VaR/ES suite must be present
-    for key in ("value_at_risk_95", "expected_shortfall_99", "parametric_var_95",
-                "parametric_es_95", "historical_var_95", "historical_es_95"):
+    for key in ("value_at_risk_95", "expected_shortfall_99", "parametric_var_95", "parametric_es_95", "historical_var_95", "historical_es_95"):
         assert key in result, f"Missing key: {key}"
 
 
 # ─── Stress test ──────────────────────────────────────────────────────────────
+
 
 def test_stress_test_returns_structured_dict():
     """stress_test() returns results nested under 'results' key."""
@@ -165,12 +169,11 @@ def test_stress_test_preset_scenario():
 
 # ─── Sensitivity regression ───────────────────────────────────────────────────
 
+
 def test_sensitivity_reg_ols_returns_dict():
     """OLS sensitivity_reg() returns dict with summary_text (not a Summary obj)."""
     df = _make_macro_panel(60)
-    summary = sensitivity_reg(
-        df, target="log_return", factors=["inflation", "energy_index"], model="OLS"
-    )
+    summary = sensitivity_reg(df, target="log_return", factors=["inflation", "energy_index"], model="OLS")
     assert isinstance(summary, dict)
     assert summary["model"] == "OLS"
     assert "coefficients" in summary
@@ -183,9 +186,7 @@ def test_sensitivity_reg_ols_returns_dict():
 
 def test_sensitivity_reg_ridge_returns_dict():
     df = _make_macro_panel(60)
-    ridge = sensitivity_reg(
-        df, target="log_return", factors=["inflation", "energy_index"], model="Ridge"
-    )
+    ridge = sensitivity_reg(df, target="log_return", factors=["inflation", "energy_index"], model="Ridge")
     assert isinstance(ridge, dict)
     assert ridge["model"] == "Ridge"
     assert "coefficients" in ridge
@@ -196,6 +197,7 @@ def test_sensitivity_reg_ridge_returns_dict():
 
 
 # ─── Preset scenarios ─────────────────────────────────────────────────────────
+
 
 def test_resolve_stress_scenario_preset():
     payload = resolve_stress_scenario("geopolitical_conflict")
@@ -284,6 +286,7 @@ def test_feature_decay_contract():
 
 # ─── Forecasting ──────────────────────────────────────────────────────────────
 
+
 def test_forecasting_runs():
     df = pd.DataFrame(
         {
@@ -296,6 +299,7 @@ def test_forecasting_runs():
 
 
 # ─── AutoML ───────────────────────────────────────────────────────────────────
+
 
 def test_auto_ml_regression_patched(monkeypatch):
     import src.Medallion.gold.AnalysisSuite.auto_ml as auto_ml_module
@@ -324,6 +328,7 @@ def test_auto_ml_regression_patched(monkeypatch):
 
 
 # ─── Governance ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.governance
 def test_governance_report_runs_with_temporal_split():
