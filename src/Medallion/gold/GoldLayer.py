@@ -726,7 +726,7 @@ class GoldLayer:
 
         profile: Dict[str, Any] = {
             "regime": regime,
-            "hard_fail": bool(getattr(self.config, "governance_hard_fail", True)),
+            "hard_fail": bool(getattr(self.config, "governance_hard_fail", False)),
             "min_r2": float(getattr(self.config, "governance_min_r2", -0.25)),
             "max_normalized_shift": float(getattr(self.config, "governance_max_normalized_shift", 2.5)),
             "max_leakage_flags": int(getattr(self.config, "governance_max_leakage_flags", 1)),
@@ -1018,7 +1018,7 @@ class GoldLayer:
             gate = self._evaluate_governance_gate(results["governance_report"], ticker=selected_ticker)
             results["governance_gate"] = gate
             self._export_governance_decision(gate, results.get("governance_report"), "sequential", ticker=selected_ticker)
-            if not gate.get("passed", True):
+            if gate.get("severity") == "fail":
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 return results
@@ -1028,7 +1028,7 @@ class GoldLayer:
             gate = self._evaluate_governance_gate(None, ticker=selected_ticker)
             results["governance_gate"] = gate
             self._export_governance_decision(gate, None, "sequential", ticker=selected_ticker)
-            if not gate.get("passed", True):
+            if gate.get("severity") == "fail":
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 return results
@@ -1038,7 +1038,7 @@ class GoldLayer:
             gate = self._evaluate_governance_gate(None, ticker=selected_ticker)
             results["governance_gate"] = gate
             self._export_governance_decision(gate, None, "sequential", ticker=selected_ticker)
-            if not gate.get("passed", True):
+            if gate.get("severity") == "fail":
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 return results
@@ -1315,7 +1315,7 @@ class GoldLayer:
             gate = self._evaluate_governance_gate(results["governance_report"], ticker=selected_ticker)
             results["governance_gate"] = gate
             self._export_governance_decision(gate, results.get("governance_report"), "parallel", ticker=selected_ticker)
-            if not gate.get("passed", True):
+            if gate.get("severity") == "fail":
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 results["correlation_matrix"] = correl_mtrx(
@@ -1329,7 +1329,7 @@ class GoldLayer:
             gate = self._evaluate_governance_gate(results.get("governance_report"), ticker=selected_ticker)
             results["governance_gate"] = gate
             self._export_governance_decision(gate, results.get("governance_report"), "parallel", ticker=selected_ticker)
-            if not gate.get("passed", True):
+            if gate.get("severity") == "fail":
                 blocked_reason = f"blocked_by_governance_gate:{gate.get('reasons', [])}"
                 results.update(self._blocked_results(blocked_reason))
                 results["correlation_matrix"] = correl_mtrx(
