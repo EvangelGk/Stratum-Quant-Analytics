@@ -140,7 +140,7 @@ def run_full_stack_audit_phase() -> None:
         from optimizer import run_full_stack_audit  # type: ignore[import]
 
         user_id = os.getenv("DATA_USER_ID", "default")
-        timeout = int(os.getenv("FULL_STACK_AUDIT_TIMEOUT", "300"))
+        timeout = int(os.getenv("FULL_STACK_AUDIT_TIMEOUT", "600"))
 
         print(f"[scheduler_batch] Running Full-Stack Audit (timeout={timeout}s) ...")
         result = run_full_stack_audit(

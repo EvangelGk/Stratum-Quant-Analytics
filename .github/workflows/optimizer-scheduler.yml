@@ -94,7 +94,7 @@ jobs:
           GROQ_API_KEY:              ${{ secrets.GROQ_API_KEY }}
           TELEGRAM_BOT_TOKEN:        ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:          ${{ secrets.TELEGRAM_CHAT_ID }}
-          FULL_STACK_AUDIT_TIMEOUT:  "300"
+          FULL_STACK_AUDIT_TIMEOUT:  "600"
         run: |
           set -euo pipefail
           python scripts/scheduler_batch.py
@@ -149,7 +149,17 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      # ── 8. Notify Telegram: SUCCESS ─────────────────────────────────────────
+      # ── 8. Upload dry-run PDF reports ──────────────────────────────────────
+      - name: Upload dry-run PDF reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-reports-${{ github.run_id }}
+          path: output/optimizer/dry_run_*.pdf
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # ── 10. Notify Telegram: SUCCESS ────────────────────────────────────────
       - name: Telegram — success
         if: success()
         shell: bash
@@ -176,7 +186,7 @@ jobs:
           EOF
           )" > /dev/null
 
-      # ── 9. Notify Telegram: FAILURE ─────────────────────────────────────────
+      # ── 11. Notify Telegram: FAILURE ────────────────────────────────────────
       - name: Telegram — failure
         if: failure()
         shell: bash

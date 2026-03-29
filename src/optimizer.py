@@ -89,6 +89,11 @@ class LlamaQuantAnalyzer:
         "COVERAGE_CALIBRATION": ["Medallion/gold/AnalysisSuite/governance.py"],
         "SHAP_STABILITY": ["Medallion/gold/AnalysisSuite/governance.py", "Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
         "COEFF_CI_OVERLAP": ["Medallion/gold/AnalysisSuite/sensitivity_reg.py"],
+        # ── Blind spot issue types — newly covered ─────────────────────────
+        "CORRELATION_DRIFT": ["Medallion/gold/AnalysisSuite/correl_mtrx.py", "Medallion/gold/AnalysisSuite/governance.py"],
+        "FORECASTING_BIAS": ["Medallion/gold/AnalysisSuite/forecasting.py", "Medallion/gold/AnalysisSuite/lag.py"],
+        "FEATURE_DECAY": ["Medallion/gold/AnalysisSuite/feature_decay.py", "Medallion/gold/AnalysisSuite/governance.py"],
+        "GOLD_PIPELINE_ERROR": ["Medallion/gold/GoldLayer.py", "Medallion/MedallionPipeline.py"],
     }
 
     # All files scanned during autonomous bug discovery
@@ -99,6 +104,13 @@ class LlamaQuantAnalyzer:
         "Medallion/gold/AnalysisSuite/stress_test.py",
         "Medallion/gold/AnalysisSuite/monte_carlo.py",
         "Medallion/gold/AnalysisSuite/backtest.py",
+        # ── Previously blind spots — now in scope ──────────────────────────
+        "Medallion/gold/AnalysisSuite/correl_mtrx.py",
+        "Medallion/gold/AnalysisSuite/forecasting.py",
+        "Medallion/gold/AnalysisSuite/feature_decay.py",
+        "Medallion/gold/AnalysisSuite/lag.py",
+        "Medallion/gold/GoldLayer.py",
+        # ──────────────────────────────────────────────────────────────────
         "Medallion/silver/silver.py",
         "Fetchers/FredFetcher.py",
         "Fetchers/WorldBankFetcher.py",
@@ -2638,6 +2650,7 @@ class TelegramHITL:
     _REJECT = "fs_reject"
     _TICKER_YES = "ticker_yes"
     _TICKER_NO = "ticker_no"
+    _ROLLBACK = "fs_rollback"
 
     # Finance keywords that trigger 🔴 priority tag on the diff message
     _FINANCE_KW = frozenset(
@@ -2655,7 +2668,7 @@ class TelegramHITL:
         }
     )
 
-    def __init__(self, timeout_seconds: int = 300) -> None:
+    def __init__(self, timeout_seconds: int = 600) -> None:
         self._timeout = timeout_seconds
         self._token = ""
         self._chat = ""
@@ -2974,6 +2987,136 @@ class TelegramHITL:
             return False
         return self._send(text[:3900])
 
+    def send_dry_run_pdf(
+        self,
+        before: Dict[str, float],
+        after: Dict[str, float],
+        filename_hint: str = "AI-proposed-fix",
+    ) -> bool:
+        """Generate a before/after statistics PDF and send via Telegram sendDocument.
+
+        Parameters
+        ----------
+        before : metrics dict with keys sharpe, calmar, mdd, p_value (current state)
+        after  : metrics dict with keys sharpe, calmar, mdd, p_value (with fix applied)
+        """
+        if not self._load():
+            return False
+        try:
+            import io
+
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            labels = ["Sharpe", "Calmar", "MDD %", "P-Value"]
+            b_vals = [
+                float(before.get("sharpe", 0.0)),
+                float(before.get("calmar", 0.0)),
+                abs(float(before.get("mdd", 0.0))) * 100.0,
+                float(before.get("p_value", 1.0)),
+            ]
+            a_vals = [
+                float(after.get("sharpe", 0.0)),
+                float(after.get("calmar", 0.0)),
+                abs(float(after.get("mdd", 0.0))) * 100.0,
+                float(after.get("p_value", 1.0)),
+            ]
+
+            x = list(range(len(labels)))
+            w = 0.35
+            fig, ax = plt.subplots(figsize=(9, 4))
+            bars_b = ax.bar([i - w / 2 for i in x], b_vals, w, label="Before", color="#d62728", alpha=0.85)
+            bars_a = ax.bar([i + w / 2 for i in x], a_vals, w, label="After (projected)", color="#2ca02c", alpha=0.85)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels)
+            ax.set_title(f"Dry-Run Report — {filename_hint[:60]}")
+            ax.set_ylabel("Value")
+            ax.legend()
+            for bar in list(bars_b) + list(bars_a):
+                h = bar.get_height()
+                ax.annotate(
+                    f"{h:.3f}",
+                    xy=(bar.get_x() + bar.get_width() / 2.0, h),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha="center",
+                    fontsize=7,
+                )
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="pdf")
+            plt.close(fig)
+            buf.seek(0)
+
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            url = self._BASE.format(token=self._token, method="sendDocument")
+            r = requests.post(
+                url,
+                data={
+                    "chat_id": self._chat,
+                    "caption": f"📊 Dry-Run Report — {filename_hint[:80]} ({ts})\nBefore vs Projected-After statistics",
+                },
+                files={"document": (f"dry_run_{ts}.pdf", buf, "application/pdf")},
+                timeout=30,
+            )
+            return bool(r.ok)
+        except Exception as exc:
+            self.notify(f"⚠️ Could not generate PDF dry-run report: {html.escape(str(exc)[:200])}")
+            return False
+
+    def send_rollback_offer(self, commit_sha: str, description: str) -> str:
+        """Send a rollback button after a successful optimisation.
+
+        Waits up to 10 minutes for the user to press ↩️ UNDO.
+        Returns 'fs_rollback' if pressed, 'timeout' otherwise (keep change).
+        """
+        if not self._load():
+            return "timeout"
+        short_sha = commit_sha[:8] if len(commit_sha) >= 8 else commit_sha
+        msg = (
+            "───────────────────\n"
+            "✅ <b>OPTIMIZATION APPLIED</b>\n"
+            "───────────────────\n"
+            f"📁 Change: {html.escape(description[:200])}\n"
+            f"🔖 Commit: <code>{short_sha}</code>\n\n"
+            "Monitor the Streamlit app. If you see unexpected behaviour, "
+            "press <b>↩️ UNDO</b> to revert this commit immediately "
+            "(non-destructive <code>git revert</code>).\n\n"
+            "⏳ <i>Offer expires in 10 minutes — no response = keep change.</i>"
+        )
+        self._send(
+            msg,
+            markup=self._keyboard([("↩️ UNDO LAST OPTIMIZATION", self._ROLLBACK)]),
+        )
+        return self._poll(600, frozenset({self._ROLLBACK}))
+
+    def execute_rollback(self, project_root: Path) -> bool:
+        """Revert the last commit non-destructively via git revert HEAD --no-edit."""
+        try:
+            r = subprocess.run(
+                ["git", "revert", "HEAD", "--no-edit"],
+                cwd=str(project_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if r.returncode != 0:
+                return False
+            # Push the revert commit so GitHub and Streamlit also reflect it
+            subprocess.run(
+                ["git", "push", "origin", "HEAD"],
+                cwd=str(project_root),
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            return True
+        except Exception:
+            return False
+
 
 class FullStackAuditOrchestrator:
     """Orchestrates the Full-Stack Audit workflow.
@@ -2989,7 +3132,7 @@ class FullStackAuditOrchestrator:
         self,
         project_root: Path,
         user_id: str = "default",
-        hitl_timeout: int = 300,
+        hitl_timeout: int = 600,
     ) -> None:
         self._root = project_root
         self._src = project_root / "src"
@@ -3168,11 +3311,17 @@ class FullStackAuditOrchestrator:
             fname = "AI-analysis"
             desc = "AI-proposed improvements"
 
+        # ── Baseline metrics (current state, before any patch) ───────────────
+        before_metrics = self._run_backtest_metrics()
+
         # ── Pre-validation: test the fix internally before proposing ─────────
-        # Apply → run financial gate → rollback. Only clean solutions reach user.
+        # Apply → capture projected metrics → run financial gate → rollback.
+        # Only clean solutions (gate passes) reach the user for review.
         _pre_applied = llama.apply_code_changes(analysis)
         _has_real_changes = any("[APPLIED]" in a for a in _pre_applied)
+        after_metrics_projected: Dict[str, float] = {}
         if _has_real_changes:
+            after_metrics_projected = self._run_backtest_metrics()  # with fix applied
             _rg_ok_pre, _rg_report_pre = self._financial_regression_gate()
             self._run_cmd(["git", "checkout", "HEAD", "--", "."])  # rollback after pre-test
             if not _rg_ok_pre:
@@ -3183,6 +3332,13 @@ class FullStackAuditOrchestrator:
                     "The AI agent will search for an improved solution on next iteration."
                 )
                 return "pre_validation_failed"
+
+            # Send PDF dry-run report (before vs projected-after) with the diff message
+            self._hitl.send_dry_run_pdf(
+                before=before_metrics,
+                after=after_metrics_projected,
+                filename_hint=fname,
+            )
 
         decision = self._hitl.send_code_diff_with_approval(
             old_code=old_code,
@@ -3215,13 +3371,28 @@ class FullStackAuditOrchestrator:
             _log_optimizer_telemetry(
                 self._root,
                 "code_fix_accepted",
-                {
-                    "applied": applied,
-                    "version": ver,
-                    "git": git_status,
-                },
+                {"applied": applied, "version": ver, "git": git_status},
             )
-            self._hitl.notify(f"✅ <b>Code fix applied and pushed.</b>\nChanges: {', '.join(applied[:3])}\nVersion: {ver}\nGit: {git_status}")
+
+            # ── Rollback offer — 10-minute window after successful push ──────
+            last_sha_ok, last_sha_out = self._run_cmd(["git", "rev-parse", "HEAD"])
+            last_sha = last_sha_out.strip() if last_sha_ok else "unknown"
+            rollback_decision = self._hitl.send_rollback_offer(
+                commit_sha=last_sha,
+                description=f"{desc} ({', '.join(applied[:2])})",
+            )
+            if rollback_decision == TelegramHITL._ROLLBACK:
+                rb_ok = self._hitl.execute_rollback(self._root)
+                if rb_ok:
+                    self._hitl.notify("↩️ <b>Rollback successful.</b> The previous commit has been reverted and pushed.")
+                    _log_optimizer_telemetry(self._root, "code_fix_rolled_back", {"sha": last_sha})
+                else:
+                    self._hitl.notify("⚠️ <b>Rollback failed.</b> Run <code>git revert HEAD</code> manually.")
+            else:
+                self._hitl.notify(
+                    f"✅ <b>Code fix applied and pushed.</b>\n"
+                    f"Changes: {', '.join(applied[:3])}\nVersion: {ver}\nGit: {git_status}"
+                )
         else:
             _log_optimizer_telemetry(self._root, "code_fix_rejected", {"decision": decision})
             self._hitl.notify(f"ℹ️ Code fix <b>rejected</b>. Decision: {decision}")
@@ -3328,11 +3499,56 @@ class FullStackAuditOrchestrator:
         ok, out = self._run_cmd(["git", "push", "origin", "HEAD"])
         return "[GIT] Pushed ✓" if ok else f"[GIT] Push failed: {out[:100]}"
 
+    def _run_backtest_metrics(self) -> Dict[str, float]:
+        """Run the backtest on current code state; return key metrics dict.
+
+        Returns empty dict if price data is missing or backtest errors out.
+        Used for dry-run PDF before/after comparison.
+        """
+        import importlib
+
+        master = self._root / "data" / "gold" / "master_table.parquet"
+        if not master.exists():
+            return {}
+        try:
+            import sys as _sys
+            src_str = str(self._src)
+            if src_str not in _sys.path:
+                _sys.path.insert(0, src_str)
+            import Medallion.gold.AnalysisSuite.backtest as _bt
+            importlib.reload(_bt)
+            import pandas as _pd
+            df = _pd.read_parquet(master)
+            pcol = "adj_close" if "adj_close" in df.columns else "close"
+            if pcol not in df.columns:
+                return {}
+            if "ticker" in df.columns:
+                t0 = df["ticker"].dropna().unique()[0]
+                df = df[df["ticker"] == t0]
+            if "date" in df.columns:
+                df = df.sort_values("date")
+                prices = df.set_index("date")[pcol].dropna()
+            else:
+                prices = df[pcol].dropna()
+            prices = _pd.to_numeric(prices, errors="coerce").dropna()
+            if len(prices) < 210:
+                return {}
+            res = _bt.run_strategy_backtest(prices=prices, rolling_window=20, z_threshold=1.5)
+            m = res.get("metrics", {})
+            return {
+                "sharpe": float(m.get("sharpe_ratio", 0.0) or 0.0),
+                "calmar": float(m.get("calmar_ratio", 0.0) or 0.0),
+                "mdd": float(m.get("max_drawdown", 0.0) or 0.0),
+                "p_value": float(m.get("p_value", 1.0) or 1.0),
+            }
+        except Exception:
+            return {}
+
 
 def run_full_stack_audit(
     project_root: Optional[Path] = None,
     user_id: str = "default",
-    hitl_timeout: int = 300,
+    hitl_timeout: int = 600,
 ) -> Dict[str, Any]:
     """Entry point called from scheduler_batch.py.
 
