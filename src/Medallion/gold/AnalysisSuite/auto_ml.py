@@ -145,13 +145,13 @@ def auto_ml_regression(
                 n_estimators=300,
                 min_samples_leaf=4,
                 random_state=seed,
-                n_jobs=-1,
+                n_jobs=1,
             ),
             "ExtraTrees": ExtraTreesRegressor(
                 n_estimators=300,
                 min_samples_leaf=4,
                 random_state=seed,
-                n_jobs=-1,
+                n_jobs=1,
             ),
             "GradientBoosting": GradientBoostingRegressor(random_state=seed),
         }
