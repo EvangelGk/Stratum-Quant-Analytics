@@ -1,3 +1,6 @@
+# --- Claude Code tooling (local only) ---
+.claude/
+
 # --- Data & Secrets ---
 data/*
 !data/users/
