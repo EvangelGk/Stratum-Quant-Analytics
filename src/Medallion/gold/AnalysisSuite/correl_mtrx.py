@@ -54,12 +54,15 @@ def correl_mtrx(
             "initial_nulls",
         }
         numeric_columns = [column for column in df.select_dtypes(include=[np.number]).columns if column not in exclude_columns]
-        numeric_df, _ = build_stationary_panel(
-            df=df,
-            columns=numeric_columns,
-            macro_lag_days=0,
-        )
-        numeric_df = numeric_df.drop(columns=["date"], errors="ignore")
+        if "date" in df.columns:
+            numeric_df, _ = build_stationary_panel(
+                df=df,
+                columns=numeric_columns,
+                macro_lag_days=0,
+            )
+            numeric_df = numeric_df.drop(columns=["date"], errors="ignore")
+        else:
+            numeric_df = df[numeric_columns].copy()
         if numeric_df.empty:
             raise DataValidationError("No numeric columns found in DataFrame.")
 
