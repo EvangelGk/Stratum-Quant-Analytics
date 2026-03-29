@@ -1192,6 +1192,17 @@ def show_data_tab() -> None:
     st.markdown("**Preview (first 200 rows):**")
     st.dataframe(df.head(200), width="stretch")
 
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    try:
+        from UI.tabs.assistant_tab import render_inline_ai_section
+        render_inline_ai_section(
+            topic="Data Layer Quality — missing values, schema, data coverage",
+            snapshot={"selected_layer": selected_layer, "rows": len(df), "columns": len(df.columns)},
+            key_suffix="data_tab",
+        )
+    except Exception:
+        pass
+
 
 def show_analytics_tab() -> None:
     st.subheader("📈 Analytics & Analysis Results")
@@ -1296,6 +1307,17 @@ def show_governance_tab() -> None:
         mime="application/json",
         key="download_governance_json",
     )
+
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    try:
+        from UI.tabs.assistant_tab import render_inline_ai_section
+        render_inline_ai_section(
+            topic="Model Governance — R², residuals, stationarity, look-ahead bias",
+            snapshot=payload if isinstance(payload, dict) else {},
+            key_suffix="governance_tab",
+        )
+    except Exception:
+        pass
 
 
 def show_logs_tab() -> None:

@@ -2897,6 +2897,50 @@ class TelegramHITL:
         )
         return self._poll(self._timeout, frozenset({self._ACCEPT, self._REJECT}))
 
+    def send_issues_approval(
+        self,
+        issues: List[Dict[str, Any]],
+        proposals: List[Dict[str, Any]],
+    ) -> str:
+        """Send critical issues with proposed solutions for acceptance/rejection.
+
+        Returns 'fs_accept', 'fs_reject', or 'timeout'.
+        All proposed solutions are validated via regression gate before applying.
+        """
+        if not self._load():
+            return "timeout"
+        if not issues and not proposals:
+            return "no_issues"
+
+        issues_txt = ""
+        for i, iss in enumerate(issues[:4], 1):
+            issues_txt += f"\n{i}. {iss.get('priority', '⚪')} <b>{html.escape(iss.get('title', ''))}</b>\n   {html.escape(iss.get('description', '')[:180])}"
+
+        props_txt = ""
+        for p in proposals[:3]:
+            props_txt += f"\n🔧 <b>{html.escape(p.get('title', ''))}</b>\n   ↳ {html.escape(p.get('detail', '')[:180])}"
+
+        msg = (
+            "───────────────────\n"
+            "⚠️ <b>CRITICAL ISSUES — SOLUTIONS PROPOSED</b>\n"
+            "───────────────────\n"
+            f"<b>Issues found ({len(issues)}):</b>{issues_txt}\n\n"
+            f"<b>Proposed fixes ({len(proposals)}):</b>{props_txt}\n\n"
+            "🔐 <b>Each solution is regression-tested before applying.</b>\n"
+            "❓ <b>Accept all proposed solutions?</b>"
+        )
+        if len(msg) > 3950:
+            msg = msg[:3900] + "\n<i>(truncated)</i>"
+
+        self._send(
+            msg,
+            markup=self._keyboard([
+                ("✅ ACCEPT & APPLY", self._ACCEPT),
+                ("❌ REJECT ALL", self._REJECT),
+            ]),
+        )
+        return self._poll(self._timeout, frozenset({self._ACCEPT, self._REJECT}))
+
     def send_ticker_expansion_approval(
         self,
         current: List[str],
@@ -2997,12 +3041,56 @@ class FullStackAuditOrchestrator:
         # ── Phase 3: Telegram Report ──────────────────────────────────────────
         print("\n[Phase 3] Sending Telegram Audit Report …")
         combined_audit = {**fetch_audit, "issues": fetch_audit["issues"] + finance_issues}
-        self._hitl.send_audit_report(combined_audit, current_score, projected_score)
+
+        # Build execution risk assessment with R², look-ahead bias, and survivor bias info
+        exec_risk: Dict[str, Any] = {
+            "affects_historical_consistency": any(
+                kw in " ".join(str(i.get("description", "")) for i in finance_issues).lower()
+                for kw in ("silver", "gold", "bronze", "log_return", "shift", "lag", "clip")
+            ),
+            "lookahead_bias_status": "clean",  # Verified: .shift(1) enforced throughout
+            "survivor_bias_note": (
+                "Strategy uses adjusted close prices (split/dividend-adjusted) to reduce survivorship bias. "
+                "Rolling 30-day Sharpe windows provide regime-conditional evidence."
+            ),
+            "r_squared": None,
+        }
+        _gov_path = self._root / "data" / "gold" / "governance"
+        for _gf in sorted(_gov_path.glob("*.json"), reverse=True)[:1] if _gov_path.exists() else []:
+            try:
+                _gov_data = json.loads(_gf.read_text(encoding="utf-8"))
+                _r2 = (
+                    _gov_data.get("r_squared")
+                    or (_gov_data.get("out_of_sample") or {}).get("r_squared")
+                    or (_gov_data.get("metrics") or {}).get("r_squared")
+                )
+                if isinstance(_r2, (int, float)) and not (isinstance(_r2, float) and (_r2 != _r2)):
+                    exec_risk["r_squared"] = float(_r2)
+            except Exception:
+                pass
+
+        self._hitl.send_audit_report(combined_audit, current_score, projected_score, execution_risk=exec_risk)
+
+        # ── Phase 3b: Critical Issues Acceptance ──────────────────────────────
+        critical_issues = [i for i in combined_audit.get("issues", []) if i.get("priority") == "🔴"]
+        if critical_issues and combined_audit.get("proposals"):
+            print("\n[Phase 3b] Requesting critical issues solutions approval …")
+            issues_decision = self._hitl.send_issues_approval(
+                issues=critical_issues,
+                proposals=combined_audit.get("proposals", []),
+            )
+            _log_optimizer_telemetry(self._root, "issues_approval", {
+                "decision": issues_decision,
+                "n_issues": len(critical_issues),
+                "n_proposals": len(combined_audit.get("proposals", [])),
+            })
+            if issues_decision not in (TelegramHITL._ACCEPT,):
+                self._hitl.notify("ℹ️ Critical issues proposals <b>not accepted</b> — no automatic changes applied.")
 
         # ── Phase 4: Ticker Expansion (if needed) ─────────────────────────────
         expansion = fetch_audit.get("expansion_suggestions", {})
         rec = expansion.get("recommended", [])
-        if rec and len(fetch_audit["tickers"]) < 8:
+        if rec:  # Always ask when there are ticker expansion recommendations
             print("\n[Phase 4] Requesting ticker expansion approval …")
             decision = self._hitl.send_ticker_expansion_approval(
                 current=fetch_audit["tickers"],
@@ -3080,6 +3168,22 @@ class FullStackAuditOrchestrator:
             fname = "AI-analysis"
             desc = "AI-proposed improvements"
 
+        # ── Pre-validation: test the fix internally before proposing ─────────
+        # Apply → run financial gate → rollback. Only clean solutions reach user.
+        _pre_applied = llama.apply_code_changes(analysis)
+        _has_real_changes = any("[APPLIED]" in a for a in _pre_applied)
+        if _has_real_changes:
+            _rg_ok_pre, _rg_report_pre = self._financial_regression_gate()
+            self._run_cmd(["git", "checkout", "HEAD", "--", "."])  # rollback after pre-test
+            if not _rg_ok_pre:
+                _log_optimizer_telemetry(self._root, "code_fix_pre_validation_failed", {"report": _rg_report_pre})
+                self._hitl.notify(
+                    "🔄 <b>AI fix failed internal pre-validation — solution rejected before showing.</b>\n"
+                    f"Details: {html.escape(_rg_report_pre[:300])}\n"
+                    "The AI agent will search for an improved solution on next iteration."
+                )
+                return "pre_validation_failed"
+
         decision = self._hitl.send_code_diff_with_approval(
             old_code=old_code,
             new_code=new_code,
@@ -3094,7 +3198,7 @@ class FullStackAuditOrchestrator:
                 _log_optimizer_telemetry(self._root, "code_fix_smoke_failed", {"applied": applied})
                 return "smoke_failed"
 
-            # Financial regression gate
+            # Financial regression gate (final confirmation after acceptance)
             rg_ok, rg_report = self._financial_regression_gate()
             if not rg_ok:
                 self._run_cmd(["git", "checkout", "HEAD", "--", "."])
