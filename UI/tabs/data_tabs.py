@@ -159,10 +159,10 @@ def _render_quant_insights(summary: dict) -> None:
         return
 
     # ── Build Insights rows — only include metrics that have actual values ────
-    _oos_r2 = (gov.get("out_of_sample") or {}).get("r2")
-    _mod_risk = gov.get("model_risk_score")
-    _best_lag = lag.get("best_lag_days")
-    _elas_b = elas.get("static_elasticity")
+    _oos_r2 = ((gov.get("out_of_sample") or {}).get("r2")) if isinstance(gov, dict) else None
+    _mod_risk = gov.get("model_risk_score") if isinstance(gov, dict) else None
+    _best_lag = lag.get("best_lag_days") if isinstance(lag, dict) else None
+    _elas_b = elas.get("static_elasticity") if isinstance(elas, dict) else None
 
     _top_pairs = [
         ("OOS R²", _oos_r2),
