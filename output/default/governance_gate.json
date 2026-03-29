@@ -7,13 +7,41 @@
     "severity": "warn",
     "reasons": [
       "r2_metric_alert_walk_forward_unstable_but_oos_acceptable",
-      "r2_metric_alert_oos_mild_negative_macro_noise_band:-0.1000"
+      "stationarity_ratio_below_threshold:0.1000<0.4000"
     ],
+    "stationarity_context": {
+      "considered_series": 20,
+      "stationary_series": 2,
+      "applied_min_stationary_ratio": 0.4,
+      "base_min_stationary_ratio": 0.4
+    },
+    "walk_forward_context": {
+      "status": "ok",
+      "windows_requested": 4,
+      "windows_completed": 4,
+      "applied_min_walk_forward_r2": -0.25,
+      "base_min_walk_forward_r2": -0.25,
+      "metric_unstable": true,
+      "trend_directional_accuracy": 0.6,
+      "volatility_r2": -1.935560836503479,
+      "volatility_ratio": 0.7490753389240191,
+      "trend_volatility_acceptable": true
+    },
+    "factor_concentration_context": {
+      "top_factor": null,
+      "top_share": 0.0,
+      "warn_threshold": 0.65
+    },
+    "freshness_context": {
+      "target_horizon_days": 252,
+      "max_publication_lag_days": 45,
+      "lag_alignment_ok": true,
+      "freshness_warn_days": 60
+    },
     "metric_only_signals": {
       "r2_used_as_validation_gate": false,
       "advisory_reasons": [
-        "r2_metric_alert_walk_forward_unstable_but_oos_acceptable",
-        "r2_metric_alert_oos_mild_negative_macro_noise_band:-0.1000"
+        "r2_metric_alert_walk_forward_unstable_but_oos_acceptable"
       ]
     }
   }
