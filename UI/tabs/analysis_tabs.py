@@ -158,8 +158,19 @@ def show_scenario_builder_tab() -> None:
 def show_explainability_tab() -> None:
     st.subheader("🧠 Explainability Panel")
     st.caption("What changed and why — plain language summaries.")
-    for line in build_explainability_lines():
+    lines = build_explainability_lines()
+    for line in lines:
         st.markdown(f"- {line}")
+
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    try:
+        render_inline_ai_section(
+            topic="Strategy Explainability — factor attribution, signal sources, what drove recent P&L",
+            snapshot={"explainability_lines": lines[:10] if lines else []},
+            key_suffix="explainability_tab",
+        )
+    except Exception:
+        pass
 
 
 def show_reports_tab(role: str) -> None:
@@ -182,3 +193,13 @@ def show_reports_tab(role: str) -> None:
     if ROLE_PERMISSIONS[role]["can_download"]:
         st.markdown("### Report Preview")
         st.components.v1.html(html_report, height=480, scrolling=True)
+
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    try:
+        render_inline_ai_section(
+            topic="Executive Report — strategy performance narrative, risk summary, deployment readiness",
+            snapshot={"role": role, "report_generated": bool(html_report)},
+            key_suffix="reports_tab",
+        )
+    except Exception:
+        pass

@@ -1283,6 +1283,17 @@ def show_analytics_tab() -> None:
         csv_df = _read_csv_fast(full_path)
         st.dataframe(csv_df.head(300), width="stretch")
 
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    try:
+        from UI.tabs.assistant_tab import render_inline_ai_section
+        render_inline_ai_section(
+            topic="Analytics & Analysis Results — correlation structure, factor relationships, quant insights",
+            snapshot={"selected_analysis": selected_analysis, "has_artifacts": bool(artifacts)},
+            key_suffix="analytics_tab",
+        )
+    except Exception:
+        pass
+
 
 def show_governance_tab() -> None:
     st.subheader("🛡️ Data Governance & Approvals")
