@@ -1,0 +1,737 @@
+{
+  "status": "CRITICAL",
+  "decision_ready": false,
+  "project_root": "C:\\Users\\liagk\\Project\\scenario-planner",
+  "user_id": "default",
+  "gold_path": "C:\\Users\\liagk\\Project\\scenario-planner\\data\\users\\default\\gold\\master_table.parquet",
+  "checks": {
+    "integration": {
+      "passed": true,
+      "status": "pass",
+      "metrics": {
+        "yfinance": 100.0,
+        "fred": 99.26,
+        "worldbank": 70.73
+      },
+      "cell_fill_pct": {
+        "yfinance": 99.99,
+        "fred": 99.26,
+        "worldbank": 70.73
+      },
+      "overall": {
+        "rows_with_all_sources_pct": 70.73,
+        "avg_active_source_groups_per_row": 2.7,
+        "max_source_groups_per_row": 3
+      },
+      "breadth": {
+        "yfinance": {
+          "expected": 30,
+          "observed": 30,
+          "ratio": 1.0,
+          "entities": [
+            "aapl_financials",
+            "abbv_financials",
+            "adbe_financials",
+            "amgn_financials",
+            "apd_financials",
+            "avgo_financials",
+            "bac_financials",
+            "cat_financials",
+            "cvx_financials",
+            "ge_financials",
+            "gs_financials",
+            "hon_financials",
+            "jnj_financials",
+            "jpm_financials",
+            "ko_financials",
+            "lin_financials",
+            "lly_financials",
+            "ma_financials",
+            "ms_financials",
+            "msft_financials",
+            "nem_financials",
+            "nvda_financials",
+            "orcl_financials",
+            "pfe_financials",
+            "pg_financials",
+            "slb_financials",
+            "unh_financials",
+            "v_financials",
+            "wmt_financials",
+            "xom_financials"
+          ]
+        },
+        "fred": {
+          "expected": 8,
+          "observed": 8,
+          "ratio": 1.0,
+          "entities": [
+            "consumer_sentiment",
+            "energy_index",
+            "fed_funds_rate",
+            "industrial_production",
+            "inflation",
+            "unemployment_rate",
+            "us10y_treasury_yield",
+            "vix_index"
+          ]
+        },
+        "worldbank": {
+          "expected": 5,
+          "observed": 5,
+          "ratio": 1.0,
+          "entities": [
+            "energy_usage__wld",
+            "gdp_growth__wld",
+            "inflation_wb__wld",
+            "trade_openness__wld",
+            "unemployment_wb__wld"
+          ],
+          "economies_expected": [
+            "WLD"
+          ],
+          "economies_seen": [
+            "WLD"
+          ],
+          "economy_coverage_ratio": 1.0
+        }
+      },
+      "schema_contract": {
+        "contract_exists": true,
+        "expected": {
+          "yfinance": [
+            "date",
+            "ticker",
+            "close",
+            "log_return",
+            "volume"
+          ],
+          "fred": [
+            "consumer_sentiment",
+            "energy_index",
+            "fed_funds_rate",
+            "industrial_production",
+            "inflation",
+            "unemployment_rate",
+            "us10y_treasury_yield",
+            "vix_index"
+          ],
+          "worldbank": [
+            "energy_usage",
+            "gdp_growth",
+            "inflation_wb",
+            "trade_openness",
+            "unemployment_wb"
+          ]
+        },
+        "observed": {
+          "all_columns": [
+            "__age_days_consumer_sentiment",
+            "__age_days_energy_index",
+            "__age_days_energy_usage",
+            "__age_days_fed_funds_rate",
+            "__age_days_gdp_growth",
+            "__age_days_industrial_production",
+            "__age_days_inflation",
+            "__age_days_inflation_wb",
+            "__age_days_trade_openness",
+            "__age_days_unemployment_rate",
+            "__age_days_unemployment_wb",
+            "__age_days_us10y_treasury_yield",
+            "__age_days_vix_index",
+            "adj_close",
+            "close",
+            "consumer_sentiment",
+            "date",
+            "energy_index",
+            "energy_usage",
+            "fed_funds_rate",
+            "gdp_growth",
+            "high",
+            "imputed_count",
+            "industrial_production",
+            "inflation",
+            "inflation_wb",
+            "ingested_at",
+            "initial_nulls",
+            "initial_rows",
+            "log_return",
+            "low",
+            "open",
+            "outliers_clipped",
+            "processed_at",
+            "quality_score",
+            "schema_version",
+            "silver_run_id",
+            "source_system",
+            "ticker",
+            "trade_openness",
+            "unemployment_rate",
+            "unemployment_wb",
+            "us10y_treasury_yield",
+            "vix_index",
+            "volume"
+          ],
+          "fred": [
+            "consumer_sentiment",
+            "energy_index",
+            "fed_funds_rate",
+            "industrial_production",
+            "inflation",
+            "unemployment_rate",
+            "us10y_treasury_yield",
+            "vix_index"
+          ],
+          "worldbank": [
+            "energy_usage",
+            "gdp_growth",
+            "inflation_wb",
+            "trade_openness",
+            "unemployment_wb"
+          ]
+        },
+        "missing_expected_columns": {
+          "yfinance": [],
+          "fred": [],
+          "worldbank": []
+        }
+      },
+      "issues": [],
+      "interpretation": "Checks whether the system ingests all three sources and captures most configured entities, not just a narrow corner of each source."
+    },
+    "density": {
+      "passed": true,
+      "status": "pass",
+      "null_pct": 6.77,
+      "row_non_null_pct": 100.0,
+      "zero_var_count": 0,
+      "zero_var_columns": [],
+      "all_zero_columns": [],
+      "issues": [],
+      "metrics": {
+        "null_pct": 6.77,
+        "row_non_null_pct": 100.0,
+        "zero_var_count": 0
+      },
+      "interpretation": "Checks whether the analytical table is dense enough to support modelling and whether numeric features are effectively dead."
+    },
+    "statistics": {
+      "passed": true,
+      "status": "pass",
+      "issues": [],
+      "metrics": {
+        "log_return_max_abs": 0.223144,
+        "log_return_std": 0.019079,
+        "log_return_dynamic_limit": 0.5,
+        "avg_quality_score": 98.88
+      },
+      "interpretation": "Checks whether prices, returns and quality scores look economically plausible rather than purely syntactically valid."
+    },
+    "continuity": {
+      "passed": true,
+      "max_gap": 2,
+      "median_gap": 1.0,
+      "allowed_gap": 7,
+      "failed_groups": [],
+      "per_group": {
+        "AAPL": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ABBV": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ADBE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "AMGN": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "APD": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "AVGO": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "BAC": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "CAT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "CVX": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "GE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "GS": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "HON": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "JNJ": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "JPM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "KO": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "LIN": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "LLY": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MS": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MSFT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "NEM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "NVDA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ORCL": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "PFE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "PG": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "SLB": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "TSLA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "UNH": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "V": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "WMT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "XOM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        }
+      },
+      "warnings": [],
+      "duplicate_rows_removed": 0,
+      "duplicate_signal": false,
+      "cadence": "business_day",
+      "status": "pass",
+      "metrics": {
+        "AAPL": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ABBV": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ADBE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "AMGN": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "APD": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "AVGO": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "BAC": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "CAT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "CVX": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "GE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "GS": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "HON": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "JNJ": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "JPM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "KO": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "LIN": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "LLY": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MS": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "MSFT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "NEM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "NVDA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "ORCL": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "PFE": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "PG": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "SLB": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "TSLA": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "UNH": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "V": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "WMT": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        },
+        "XOM": {
+          "max_gap": 2,
+          "median_gap": 1.0,
+          "allowed_gap": 7,
+          "cadence": "business_day"
+        }
+      },
+      "interpretation": "Evaluates continuity with business-day gaps and configurable threshold. A weekend-only break is not treated as a major gap."
+    },
+    "survivorship": {
+      "passed": true,
+      "status": "pass",
+      "issues": [],
+      "metrics": {
+        "stale_ticker_count": 0,
+        "zero_volume_ticker_count": 0,
+        "max_zero_volume_streak_days": 0
+      },
+      "stale_tickers": [],
+      "zero_volume_streaks": {},
+      "interpretation": [
+        "Flags survivorship risk where names disappear before dataset end-date.",
+        "Flags tickers with >10 consecutive zero-volume days that can bias return estimates."
+      ]
+    },
+    "outputs": {
+      "passed": false,
+      "status": "fail",
+      "summary_exists": true,
+      "result_key_count": 0,
+      "usable_outputs": [],
+      "blocked_outputs": [],
+      "nullish_outputs": [],
+      "interpretation": "Checks whether the project emits decision-support artifacts rather than empty or fully blocked placeholders."
+    },
+    "thresholds": {
+      "passed": false,
+      "status": "fail",
+      "error": "thresholds_exception:'NoneType' object has no attribute 'get'"
+    },
+    "governance": {
+      "passed": false,
+      "status": "fail",
+      "error": "governance_exception:'NoneType' object has no attribute 'get'"
+    },
+    "astronomical": {
+      "passed": false,
+      "status": "fail",
+      "error": "astronomical_exception:'NoneType' object has no attribute 'get'"
+    }
+  },
+  "meta": {
+    "expected_tickers": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "AVGO",
+      "ORCL",
+      "ADBE",
+      "JPM",
+      "BAC",
+      "GS",
+      "MS",
+      "V",
+      "MA",
+      "JNJ",
+      "PFE",
+      "UNH",
+      "ABBV",
+      "LLY",
+      "AMGN",
+      "XOM",
+      "CVX",
+      "SLB",
+      "LIN",
+      "APD",
+      "NEM",
+      "CAT",
+      "GE",
+      "HON",
+      "PG",
+      "KO",
+      "WMT"
+    ],
+    "expected_macro_series": [
+      "inflation",
+      "energy_index",
+      "unemployment_rate",
+      "fed_funds_rate",
+      "us10y_treasury_yield",
+      "vix_index",
+      "consumer_sentiment",
+      "industrial_production"
+    ],
+    "expected_worldbank_series": [
+      "gdp_growth",
+      "energy_usage",
+      "inflation_wb",
+      "unemployment_wb",
+      "trade_openness"
+    ],
+    "expected_worldbank_economies": [
+      "WLD"
+    ]
+  },
+  "row_count": 79763,
+  "column_count": 45,
+  "failed_checks": [
+    "outputs",
+    "thresholds",
+    "governance",
+    "astronomical"
+  ],
+  "warning_checks": [],
+  "auditor_judgement": {
+    "is_information_reasonable": false,
+    "can_support_decisions": false,
+    "n_failed": 4,
+    "n_warnings": 0,
+    "strategic_edge_score": 90.0,
+    "summary": [
+      "Overall status: CRITICAL",
+      "Confidence tier: Low",
+      "This auditor is independent from the pipeline runtime but integrated with its artifacts, contracts and governance outputs.",
+      "Silver null thresholds are using baseline values. They will adapt automatically once quality history accumulates across pipeline runs."
+    ]
+  }
+}
