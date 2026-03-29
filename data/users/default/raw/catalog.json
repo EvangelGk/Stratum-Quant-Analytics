@@ -1,0 +1,260 @@
+{
+    "aapl_financials": {
+        "last_update": "2026-03-29 09:41:14",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\aapl_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "abbv_financials": {
+        "last_update": "2026-03-29 09:41:29",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\abbv_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "adbe_financials": {
+        "last_update": "2026-03-29 09:41:19",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\adbe_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "amgn_financials": {
+        "last_update": "2026-03-29 09:41:31",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\amgn_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "apd_financials": {
+        "last_update": "2026-03-29 09:41:36",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\apd_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "avgo_financials": {
+        "last_update": "2026-03-29 09:41:17",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\avgo_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "bac_financials": {
+        "last_update": "2026-03-29 09:41:21",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\bac_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "cat_financials": {
+        "last_update": "2026-03-29 09:41:38",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\cat_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "consumer_sentiment": {
+        "last_update": "2026-03-29 09:41:46",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\consumer_sentiment.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "cvx_financials": {
+        "last_update": "2026-03-29 09:41:33",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\cvx_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "energy_index": {
+        "last_update": "2026-03-29 09:41:36",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\energy_index.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "energy_usage__wld": {
+        "last_update": "2026-03-29 09:41:42",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\worldbank\\energy_usage__wld.parquet",
+        "rows": 10,
+        "source": "worldbank"
+    },
+    "fed_funds_rate": {
+        "last_update": "2026-03-29 09:41:40",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\fed_funds_rate.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "gdp_growth__wld": {
+        "last_update": "2026-03-29 09:41:39",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\worldbank\\gdp_growth__wld.parquet",
+        "rows": 10,
+        "source": "worldbank"
+    },
+    "ge_financials": {
+        "last_update": "2026-03-29 09:41:39",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\ge_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "gs_financials": {
+        "last_update": "2026-03-29 09:41:22",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\gs_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "hon_financials": {
+        "last_update": "2026-03-29 09:41:40",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\hon_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "industrial_production": {
+        "last_update": "2026-03-29 09:41:48",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\industrial_production.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "inflation": {
+        "last_update": "2026-03-29 09:41:34",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\inflation.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "inflation_wb__wld": {
+        "last_update": "2026-03-29 09:41:45",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\worldbank\\inflation_wb__wld.parquet",
+        "rows": 10,
+        "source": "worldbank"
+    },
+    "jnj_financials": {
+        "last_update": "2026-03-29 09:41:26",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\jnj_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "jpm_financials": {
+        "last_update": "2026-03-29 09:41:20",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\jpm_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "ko_financials": {
+        "last_update": "2026-03-29 09:41:42",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\ko_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "lin_financials": {
+        "last_update": "2026-03-29 09:41:35",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\lin_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "lly_financials": {
+        "last_update": "2026-03-29 09:41:30",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\lly_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "ma_financials": {
+        "last_update": "2026-03-29 09:41:25",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\ma_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "ms_financials": {
+        "last_update": "2026-03-29 09:41:23",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\ms_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "msft_financials": {
+        "last_update": "2026-03-29 09:41:15",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\msft_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "nem_financials": {
+        "last_update": "2026-03-29 09:41:37",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\nem_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "nvda_financials": {
+        "last_update": "2026-03-29 09:41:16",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\nvda_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "orcl_financials": {
+        "last_update": "2026-03-29 09:41:18",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\orcl_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "pfe_financials": {
+        "last_update": "2026-03-29 09:41:27",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\pfe_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "pg_financials": {
+        "last_update": "2026-03-29 09:41:41",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\pg_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "slb_financials": {
+        "last_update": "2026-03-29 09:41:34",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\slb_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "trade_openness__wld": {
+        "last_update": "2026-03-29 09:41:51",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\worldbank\\trade_openness__wld.parquet",
+        "rows": 10,
+        "source": "worldbank"
+    },
+    "unemployment_rate": {
+        "last_update": "2026-03-29 09:41:38",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\unemployment_rate.parquet",
+        "rows": 122,
+        "source": "fred"
+    },
+    "unemployment_wb__wld": {
+        "last_update": "2026-03-29 09:41:48",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\worldbank\\unemployment_wb__wld.parquet",
+        "rows": 10,
+        "source": "worldbank"
+    },
+    "unh_financials": {
+        "last_update": "2026-03-29 09:41:28",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\unh_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "us10y_treasury_yield": {
+        "last_update": "2026-03-29 09:41:42",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\us10y_treasury_yield.parquet",
+        "rows": 2670,
+        "source": "fred"
+    },
+    "v_financials": {
+        "last_update": "2026-03-29 09:41:24",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\v_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "vix_index": {
+        "last_update": "2026-03-29 09:41:44",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\fred\\vix_index.parquet",
+        "rows": 2670,
+        "source": "fred"
+    },
+    "wmt_financials": {
+        "last_update": "2026-03-29 09:41:43",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\wmt_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    },
+    "xom_financials": {
+        "last_update": "2026-03-29 09:41:32",
+        "path": "C:\\Users\\liagk\\Project\\scenario-planner\\src\\..\\data\\users\\default\\raw\\yfinance\\xom_financials.parquet",
+        "rows": 2573,
+        "source": "yfinance"
+    }
+}

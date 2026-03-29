@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-03-29T08:28:20.029698",
+  "backend": "online",
+  "model": "groq/llama-3.3-70b-versatile",
+  "brief": "### 1. Run Health\nThe pipeline run has completed, but the governance gate check failed. All data sources (yfinance, worldbank, fred) were successfully accessed with no reported failures.\n\n### 2. Key Signals\nKey signals are not available due to the failed governance gate check. However, the correlation matrix was generated successfully.\n\n### 3. Risks & Gaps\nThe audit status is critical, and several analysis components (elasticity, feature_decay, lag_analysis, monte_carlo, stress_test, sensitivity_regression, forecasting, auto_ml, backtest_2020) were blocked by the governance gate. The model risk score and overall score are not available.\n\n### 4. Recommended Next Actions\nInvestigate and resolve the governance gate check failure to unlock further analysis. Review the correlation matrix for potential insights. Once the governance gate issue is resolved, re-run the pipeline to generate complete analysis results, including key signals and risk assessments.",
+  "quick_signals": {
+    "oos_r2": null,
+    "model_risk_score": null,
+    "expectancy_per_trade": null,
+    "profit_factor": null,
+    "calmar_ratio": null,
+    "information_ratio": null,
+    "audit_status": "CRITICAL",
+    "quality_missing_sources": []
+  }
+}

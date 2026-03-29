@@ -199,7 +199,7 @@ def run_and_cache_audit() -> dict[str, Any]:
         result: dict[str, Any] = {"status": "ERROR", "error": "Auditor module could not be loaded."}
     else:
         try:
-            auditor = AuditorClass(user_id=os.getenv("DATA_USER_ID", "default"))
+            auditor = AuditorClass(user_id="default")
             result = auditor.run_audit()
         except Exception as exc:
             result = {"status": "ERROR", "error": str(exc)}

@@ -1,0 +1,155 @@
+{
+  "schema_version": "gold-contract.v1",
+  "generated_at": "2026-03-29T09:41:57.908146",
+  "config_fingerprint": "d8068761ec68683a9cd457c1522fa84ac3330e46b53cfb8cb02e1a6ea4264884",
+  "expected": {
+    "yfinance": [
+      "date",
+      "ticker",
+      "close",
+      "log_return",
+      "volume"
+    ],
+    "fred": [
+      "consumer_sentiment",
+      "energy_index",
+      "fed_funds_rate",
+      "industrial_production",
+      "inflation",
+      "unemployment_rate",
+      "us10y_treasury_yield",
+      "vix_index"
+    ],
+    "worldbank": [
+      "energy_usage",
+      "gdp_growth",
+      "inflation_wb",
+      "trade_openness",
+      "unemployment_wb"
+    ]
+  },
+  "observed": {
+    "all_columns": [
+      "__age_days_consumer_sentiment",
+      "__age_days_energy_index",
+      "__age_days_energy_usage",
+      "__age_days_fed_funds_rate",
+      "__age_days_gdp_growth",
+      "__age_days_industrial_production",
+      "__age_days_inflation",
+      "__age_days_inflation_wb",
+      "__age_days_trade_openness",
+      "__age_days_unemployment_rate",
+      "__age_days_unemployment_wb",
+      "__age_days_us10y_treasury_yield",
+      "__age_days_vix_index",
+      "adj_close",
+      "close",
+      "consumer_sentiment",
+      "date",
+      "energy_index",
+      "energy_usage",
+      "fed_funds_rate",
+      "gdp_growth",
+      "high",
+      "imputed_count",
+      "industrial_production",
+      "inflation",
+      "inflation_wb",
+      "ingested_at",
+      "initial_nulls",
+      "initial_rows",
+      "log_return",
+      "low",
+      "open",
+      "outliers_clipped",
+      "processed_at",
+      "quality_score",
+      "schema_version",
+      "silver_run_id",
+      "source_system",
+      "ticker",
+      "trade_openness",
+      "unemployment_rate",
+      "unemployment_wb",
+      "us10y_treasury_yield",
+      "vix_index",
+      "volume"
+    ],
+    "fred": [
+      "consumer_sentiment",
+      "energy_index",
+      "fed_funds_rate",
+      "industrial_production",
+      "inflation",
+      "unemployment_rate",
+      "us10y_treasury_yield",
+      "vix_index"
+    ],
+    "worldbank": [
+      "energy_usage",
+      "gdp_growth",
+      "inflation_wb",
+      "trade_openness",
+      "unemployment_wb"
+    ]
+  },
+  "source_usage": {
+    "yfinance": 100.0,
+    "fred": 99.26156237854644,
+    "worldbank": 70.73455110765643
+  },
+  "staleness_days": {
+    "fred": {
+      "max_age_days": 30,
+      "median_age_days": 15.0
+    },
+    "worldbank": {
+      "max_age_days": 1095,
+      "median_age_days": 246.5
+    }
+  },
+  "join_tolerance_days": {
+    "fred": 120,
+    "worldbank": 730
+  },
+  "post_join_null_density_pct": {
+    "date": 0.0,
+    "open": 0.0,
+    "high": 0.0,
+    "low": 0.0,
+    "close": 0.0,
+    "adj_close": 0.0,
+    "volume": 0.0,
+    "ingested_at": 0.0,
+    "source_system": 0.0,
+    "processed_at": 0.0,
+    "silver_run_id": 0.0,
+    "schema_version": 0.0,
+    "imputed_count": 0.0,
+    "outliers_clipped": 0.0,
+    "initial_rows": 0.0,
+    "initial_nulls": 0.0,
+    "quality_score": 0.0,
+    "ticker": 0.0,
+    "log_return": 0.04,
+    "consumer_sentiment": 0.74,
+    "energy_index": 0.74,
+    "fed_funds_rate": 0.74,
+    "industrial_production": 0.74,
+    "inflation": 0.74,
+    "unemployment_rate": 0.74,
+    "us10y_treasury_yield": 0.74,
+    "vix_index": 0.74,
+    "energy_usage": 29.27,
+    "gdp_growth": 29.27,
+    "inflation_wb": 29.27,
+    "trade_openness": 29.27,
+    "unemployment_wb": 29.27
+  },
+  "join_strategy": {
+    "fred": "merge_asof_backward",
+    "worldbank": "linear_interpolation_then_merge_asof",
+    "log_return_clip": "\u00b1ln(1.25)\u2248\u00b10.2231"
+  }
+}

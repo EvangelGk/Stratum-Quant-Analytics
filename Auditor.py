@@ -156,7 +156,7 @@ class ScenarioAuditor:
     def _resolve_user_id(self, explicit_user_id: Optional[str]) -> str:
         if explicit_user_id:
             return explicit_user_id
-        return os.getenv("DATA_USER_ID", "default").strip() or "default"
+        return "default"
 
     def _load_config(self) -> Any:
         if ProjectConfig is None:

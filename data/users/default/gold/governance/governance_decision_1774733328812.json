@@ -1,0 +1,19 @@
+{
+  "schema_version": "governance-decision.v1",
+  "generated_at": "2026-03-28T23:28:48.812120",
+  "run_mode": "parallel",
+  "run_id": "57784d7f-8215-4243-bb88-872cebb1f8da",
+  "correlation_id": "ee04cceb-5a93-4cd5-ab09-380f9eef1eac",
+  "ticker": "AAPL",
+  "gate": {
+    "schema_version": "governance-gate.v1",
+    "hard_fail": true,
+    "passed": false,
+    "regime": "normal",
+    "severity": "pass",
+    "reasons": [
+      "governance_report_unavailable"
+    ]
+  },
+  "report": null
+}

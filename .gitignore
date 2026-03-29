@@ -1,5 +1,8 @@
 # --- Data & Secrets ---
-data/
+data/*
+!data/users/
+data/users/*
+!data/users/default/
 .env
 *.env.*
 !.env.example
@@ -39,7 +42,9 @@ test_output.txt
 
 # --- Logs & output ---
 logs/
-output/
+output/*
+!output/default/
+output/default/*.gz
 *.log
 
 # --- Project-specific runtime cache ---
