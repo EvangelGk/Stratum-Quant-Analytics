@@ -635,13 +635,35 @@ class ScenarioAuditor:
         """Check whether outputs are non-empty, non-zero and usable for downstream decisions."""
         summary_path = self.output_dir / "analysis_results.json"
         summary = self._read_json(summary_path)
-        result_keys = list(summary.get("result_keys", [])) if summary else []
-        results = summary.get("results", {}) if isinstance(summary, dict) else {}
+        result_keys = list(summary.get("result_keys") or []) if summary else []
+        results = (summary.get("results") or {}) if isinstance(summary, dict) else {}
+        if not isinstance(results, dict):
+            results = {}
+
+        # Also scan individual artifact files in output_dir (pipeline writes
+        # each analysis as its own JSON; summary result_keys may be empty when
+        # all results were blocked but artifacts were still written).
+        KNOWN_ARTIFACTS = [
+            "governance_gate", "elasticity", "feature_decay", "lag_analysis",
+            "monte_carlo", "stress_test", "sensitivity_regression", "forecasting",
+            "auto_ml", "backtest_2020", "correlation_matrix",
+        ]
+        artifact_results: Dict[str, Any] = {}
+        for name in KNOWN_ARTIFACTS:
+            p = self.output_dir / f"{name}.json"
+            if p.exists():
+                d = self._read_json(p)
+                artifact_results[name] = (d.get("value") if isinstance(d, dict) and "value" in d else d)
+
+        # Merge: individual artifacts take priority
+        merged = {**results, **artifact_results}
+        if not result_keys:
+            result_keys = list(merged.keys())
 
         blocked = []
         nullish = []
         usable = []
-        for key, value in results.items():
+        for key, value in merged.items():
             if isinstance(value, dict) and "value" in value:
                 value = value["value"]
             if isinstance(value, str) and value.startswith("blocked_by_governance_gate"):
@@ -747,15 +769,20 @@ class ScenarioAuditor:
     def _check_threshold_design(self) -> Dict[str, Any]:
         """Check whether thresholds are dynamic or fixed and whether strictness is balanced."""
         latest_governance = self._read_json(self._latest_governance_file()) if self._latest_governance_file() else {}
-        gate = latest_governance.get("gate", {}) if isinstance(latest_governance, dict) else {}
-        report = latest_governance.get("report", {}) if isinstance(latest_governance, dict) else {}
+        gate = (latest_governance.get("gate") or {}) if isinstance(latest_governance, dict) else {}
+        report = (latest_governance.get("report") or {}) if isinstance(latest_governance, dict) else {}
+        # Ensure both are dicts even when JSON has null values
+        if not isinstance(gate, dict):
+            gate = {}
+        if not isinstance(report, dict):
+            report = {}
 
         silver_dynamic = bool(self.quality_history_path.exists()) and bool(
             getattr(self.config, "silver_dynamic_threshold_window", 0) > 1 if self.config else True
         )
         contract_driven = bool(SOURCE_CONTRACTS)
-        stationarity_context = gate.get("stationarity_context", {}) if isinstance(gate, dict) else {}
-        walk_forward_context = gate.get("walk_forward_context", {}) if isinstance(gate, dict) else {}
+        stationarity_context = gate.get("stationarity_context") or {}
+        walk_forward_context = gate.get("walk_forward_context") or {}
         governance_stationarity_dynamic = stationarity_context.get("applied_min_stationary_ratio") != stationarity_context.get("base_min_stationary_ratio")
         governance_walk_forward_dynamic = (
             walk_forward_context.get("applied_min_walk_forward_r2") != walk_forward_context.get("base_min_walk_forward_r2")
@@ -807,11 +834,15 @@ class ScenarioAuditor:
             }
 
         payload = self._read_json(latest_file)
-        gate = payload.get("gate", {}) if isinstance(payload, dict) else {}
-        report = payload.get("report", {}) if isinstance(payload, dict) else {}
-        reasons = list(gate.get("reasons", [])) if isinstance(gate, dict) else []
-        walk_forward = report.get("walk_forward", {}) if isinstance(report, dict) else {}
-        oos = report.get("out_of_sample", {}) if isinstance(report, dict) else {}
+        gate = (payload.get("gate") or {}) if isinstance(payload, dict) else {}
+        report = (payload.get("report") or {}) if isinstance(payload, dict) else {}
+        if not isinstance(gate, dict):
+            gate = {}
+        if not isinstance(report, dict):
+            report = {}
+        reasons = list(gate.get("reasons") or [])
+        walk_forward = report.get("walk_forward") or {}
+        oos = report.get("out_of_sample") or {}
 
         clipped_avg_r2 = walk_forward.get("clipped_avg_r2")
         avg_r2 = walk_forward.get("avg_r2")
@@ -969,7 +1000,9 @@ class ScenarioAuditor:
         gov_file = self._latest_governance_file()
         if gov_file:
             gov = self._read_json(gov_file)
-            report = gov.get("report", {}) if isinstance(gov, dict) else {}
+            report = (gov.get("report") or {}) if isinstance(gov, dict) else {}
+            if not isinstance(report, dict):
+                report = {}
             for key in ("maximum_drawdown", "max_drawdown"):
                 mdd_val = (report.get(key) or (report.get("backtest") or {}).get(key))
                 if mdd_val is not None:

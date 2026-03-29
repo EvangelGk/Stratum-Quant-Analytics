@@ -137,7 +137,7 @@ def _candidate_registry(seed: int) -> Dict[str, tuple[Pipeline, Dict[str, Any] |
             tree_pipe(
                 RandomForestRegressor(
                     random_state=seed,
-                    n_jobs=-1,
+                    n_jobs=1,
                 )
             ),
             {
@@ -165,7 +165,7 @@ def _fit_candidate_with_cv(
             param_grid=param_distributions,
             scoring="r2",
             cv=splitter,
-            n_jobs=-1,
+            n_jobs=1,
             refit=True,
         )
         tuner.fit(x, y)
@@ -178,7 +178,7 @@ def _fit_candidate_with_cv(
             },
         )
 
-    scores = cross_val_score(candidate, x, y, cv=splitter, scoring="r2", n_jobs=-1)
+    scores = cross_val_score(candidate, x, y, cv=splitter, scoring="r2", n_jobs=1)
     candidate.fit(x, y)
     return (
         candidate,
@@ -209,7 +209,7 @@ def _quick_cv_r2(panel: pd.DataFrame, target: str, features: List[str]) -> float
         ]
     )
     try:
-        scores = cross_val_score(probe, x, y, cv=splitter, scoring="r2", n_jobs=-1)
+        scores = cross_val_score(probe, x, y, cv=splitter, scoring="r2", n_jobs=1)
         return float(np.mean(scores))
     except Exception:
         return float("-inf")
@@ -516,7 +516,7 @@ def sensitivity_reg(
                     ("model", LinearRegression()),
                 ]
             )
-            cv_scores = cross_val_score(cv_model, x_final, y, cv=splitter, scoring="r2", n_jobs=-1)
+            cv_scores = cross_val_score(cv_model, x_final, y, cv=splitter, scoring="r2", n_jobs=1)
             return {
                 "model": "OLS",
                 "ticker": ticker,

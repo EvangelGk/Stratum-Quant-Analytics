@@ -1011,7 +1011,7 @@ class GoldLayer:
                 model_type=regression_model,
                 min_target_horizon_days=int(getattr(self.config, "governance_min_target_horizon_days", 1)),
                 max_target_horizon_days=int(getattr(self.config, "governance_max_target_horizon_days", 252)),
-                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", True)),
+                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", False)),
                 factor_concentration_warn_threshold=float(getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)),
                 freshness_warn_days=int(getattr(self.config, "governance_freshness_warn_days", 60)),
             )
@@ -1308,7 +1308,7 @@ class GoldLayer:
                 model_type=regression_model,
                 min_target_horizon_days=int(getattr(self.config, "governance_min_target_horizon_days", 1)),
                 max_target_horizon_days=int(getattr(self.config, "governance_max_target_horizon_days", 252)),
-                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", True)),
+                walk_forward_tune_per_window=bool(getattr(self.config, "governance_walk_forward_tune_per_window", False)),
                 factor_concentration_warn_threshold=float(getattr(self.config, "governance_factor_concentration_warn_threshold", 0.65)),
                 freshness_warn_days=int(getattr(self.config, "governance_freshness_warn_days", 60)),
             )
