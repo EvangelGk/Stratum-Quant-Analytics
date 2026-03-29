@@ -124,7 +124,78 @@ def backtest_pre2020_holdout(
         signal = signal[:_min_len]
         actual_arr = actual_arr[:_min_len]
         predictions = predictions[:_min_len]
-        strategy_returns = signal * actual_arr
+
+        # ── Professional Risk Management Layer ─────────────────────────────────
+        # Applied to execution only; core Ridge model logic is unchanged.
+        # P-value / Pearson-r test below uses original arrays (unaffected).
+
+        # 1. Regime Filter — reconstruct price from full log-return history
+        _full_lr_rm = _orig["log_return"].astype(float)
+        _cum_px_rm = pd.Series(
+            np.exp(np.cumsum(np.nan_to_num(_full_lr_rm.values, nan=0.0))),
+            index=_full_lr_rm.index,
+        )
+        _sma200_rm = _cum_px_rm.rolling(200, min_periods=200).mean()
+        _test_dt_rm = pd.to_datetime(_test_dates[:_min_len])
+        _test_px_rm = _cum_px_rm.reindex(_test_dt_rm, method="pad").fillna(0.0).values
+        _test_sma_rm = _sma200_rm.reindex(_test_dt_rm, method="pad").fillna(0.0).values
+        _in_uptrend_rm = _test_px_rm > _test_sma_rm
+        signal_rm = signal.astype(float).copy()
+        # Long only in uptrend; short only in downtrend (regime-consistent trading)
+        signal_rm = np.where((signal_rm == 1.0) & (~_in_uptrend_rm), 0.0, signal_rm)
+        signal_rm = np.where((signal_rm == -1.0) & _in_uptrend_rm, 0.0, signal_rm)
+
+        # 2. Inverse Volatility Scaling — target 15% annualised vol, no leverage
+        _actual_pd_rm = pd.Series(actual_arr)
+        _vol14_rm = _actual_pd_rm.rolling(14, min_periods=14).std(ddof=1)
+        _ann_vol_rm = (_vol14_rm * np.sqrt(252.0)).shift(1).fillna(0.15)
+        _ann_vol_rm = _ann_vol_rm.replace(0.0, 0.15)
+        _vol_scale_rm = (0.15 / _ann_vol_rm).clip(lower=0.0, upper=1.0).values
+        signal_rm = signal_rm * _vol_scale_rm
+
+        # 3. Per-trade ATR stop — exit if cumulative trade loss > min(2.5×vol, 5%)
+        _vol14_vals_rm = _vol14_rm.shift(1).fillna(0.02).values
+        _cum_trade_rm = 0.0
+        _entry_vol_rm = 0.02
+        _prev_base_rm = 0.0
+        _atr_flags_rm = np.zeros(_min_len, dtype=bool)
+        for _i_rm in range(_min_len):
+            _base_sig_rm = float(signal[_i_rm])
+            if abs(_base_sig_rm) > 1e-10 and abs(_prev_base_rm) < 1e-10:
+                _cum_trade_rm = 0.0
+                _ev = float(_vol14_vals_rm[_i_rm])
+                _entry_vol_rm = _ev if (np.isfinite(_ev) and _ev > 0) else 0.02
+            if abs(signal_rm[_i_rm]) < 1e-10:
+                _cum_trade_rm = 0.0
+            else:
+                _cum_trade_rm += float(actual_arr[_i_rm]) * np.sign(_base_sig_rm)
+            _stop_lvl_rm = min(2.5 * _entry_vol_rm, 0.05)
+            if abs(signal_rm[_i_rm]) > 1e-10 and _cum_trade_rm < -_stop_lvl_rm:
+                _atr_flags_rm[_i_rm] = True
+            _prev_base_rm = _base_sig_rm
+        _atr_shifted_rm = np.zeros(_min_len, dtype=bool)
+        _atr_shifted_rm[1:] = _atr_flags_rm[:-1]
+        signal_rm = np.where(_atr_shifted_rm, 0.0, signal_rm)
+
+        # 4. Time-based exit — close after 10 days to reduce opportunity cost
+        _days_rm = 0
+        _tex_flags_rm = np.zeros(_min_len, dtype=bool)
+        for _i_rm in range(_min_len):
+            if abs(signal_rm[_i_rm]) > 1e-10:
+                _days_rm += 1
+                if _days_rm >= 10:
+                    _tex_flags_rm[_i_rm] = True
+            else:
+                _days_rm = 0
+        _tex_shifted_rm = np.zeros(_min_len, dtype=bool)
+        _tex_shifted_rm[1:] = _tex_flags_rm[:-1]
+        signal_rm = np.where(_tex_shifted_rm, 0.0, signal_rm)
+
+        # 5. Friction on direction changes
+        _pos_chg_rm = np.abs(np.diff(np.sign(signal_rm), prepend=0.0)) > 0.5
+        _costs_rm = _pos_chg_rm.astype(float) * 0.0015
+
+        strategy_returns = signal_rm * actual_arr - _costs_rm
         benchmark_returns = actual_arr
         actual = pd.Series(actual_arr)
 
@@ -331,7 +402,12 @@ def run_strategy_backtest(
     vol_window: int = 14,
     vol_ma_window: int = 20,
     trend_sma_window: int = 200,
-    stop_loss_pct: float = 0.30,
+    stop_loss_pct: float = 0.20,
+    atr_stop_multiplier: float = 2.5,
+    atr_fixed_stop: float = 0.05,
+    inv_vol_target: float = 0.15,
+    max_hold_days: int = 10,
+    regime_long_only: bool = True,
 ) -> Dict[str, Any]:
     """
     Bias-free, vectorised mean-reversion strategy backtest.
@@ -369,6 +445,14 @@ def run_strategy_backtest(
     vol_window      : rolling window for volatility measurement (default 14).
     vol_ma_window   : MA window applied to the vol series (default 20).
     trend_sma_window: SMA window for trend detection (default 200).
+    atr_stop_multiplier : ATR multiplier for per-trade dynamic stop (default 2.5).
+    atr_fixed_stop  : Maximum per-trade loss as fraction (default 0.05 = 5%).
+    inv_vol_target  : Target annualised vol for inverse-vol scaling (default 0.15).
+                      Set to 0.0 to disable. Caps position at 1.0 (no leverage).
+    max_hold_days   : Time-based exit: flatten after this many days (default 10).
+                      Set to 0 to disable.
+    regime_long_only: If True, only allow Long entries when price > 200-day SMA.
+                      Avoids 'falling knife' buys in sustained downtrends.
 
     Returns
     -------
@@ -407,38 +491,101 @@ def run_strategy_backtest(
         vol_active = rolling_vol > vol_ma
         raw_signal = raw_signal.where(vol_active, other=0.0)
 
-    # ── 4b. Trend filter — suppress shorts in up-trends ──────────────────────
-    if trend_filter:
+    # ── 4b. Trend filter & Regime filter ─────────────────────────────────────
+    if trend_filter or regime_long_only:
         sma_200 = px.rolling(window=trend_sma_window, min_periods=trend_sma_window).mean()
         in_uptrend = px > sma_200
-        # Suppress -1 (short) signals when price is above 200-day SMA
-        raw_signal = raw_signal.where(~((raw_signal == -1.0) & in_uptrend), other=0.0)
+        if trend_filter:
+            # Suppress -1 (short) signals when price is above 200-day SMA
+            raw_signal = raw_signal.where(~((raw_signal == -1.0) & in_uptrend), other=0.0)
+        if regime_long_only:
+            # Only allow Long (+1) entries when price is in a confirmed uptrend
+            # Avoids 'falling knife' buys in sustained long-term downtrends
+            raw_signal = raw_signal.where(~((raw_signal == 1.0) & ~in_uptrend), other=0.0)
 
     # ── 5. Execution lag — enter the position on the NEXT day's open ─────────
     signal = raw_signal.shift(1)  # trade executes day-after signal
 
+    # ── 5b. Inverse Volatility Scaling — target constant annualised volatility ─
+    #        Position size = inv_vol_target / realised_vol, capped at 1.0.
+    #        shift(1) on vol prevents look-ahead. No leverage allowed (cap=1.0).
+    if inv_vol_target > 0.0:
+        ann_vol = log_ret.rolling(window=vol_window, min_periods=vol_window).std(ddof=1) * np.sqrt(252.0)
+        vol_scale = (inv_vol_target / ann_vol.replace(0.0, np.nan)).clip(upper=1.0)
+        signal = signal * vol_scale.shift(1).fillna(1.0)
+
     # ── 6. Daily strategy returns ────────────────────────────────────────────
     strategy_ret = signal * log_ret
 
-    # ── 7. Friction — deduct cost only when position changes (actual trade) ──
-    position_change = signal.diff().fillna(0.0).abs() > 0.5  # True on trade days
+    # ── 7. Friction — deduct on direction changes; use sign to handle fractional ─
+    # np.sign detects real entries/exits even when inv-vol scaling makes the
+    # position fractional (e.g. 0.25), avoiding double-charging on size adjustments.
+    _sig_dir = pd.Series(np.sign(signal.values), index=signal.index)
+    position_change = _sig_dir.diff().fillna(0.0).abs() > 0.5
     trade_cost = position_change.astype(float) * friction
     strategy_ret = strategy_ret - trade_cost
 
-    # ── 7b. Portfolio stop-loss — flatten position when running drawdown
-    #        exceeds stop_loss_pct from the most-recent equity peak.
-    #        Uses the PREVIOUS day's equity (shift(1)) to avoid look-ahead.
+    # ── 7b. Portfolio stop-loss — flatten when running drawdown > stop_loss_pct ─
+    #        Uses PREVIOUS day's equity (shift(1)) to avoid look-ahead.
     if stop_loss_pct > 0.0:
         log_cum = strategy_ret.cumsum()
         log_peak = log_cum.cummax()
-        # drawdown in log space: log(equity/peak) = log_cum - log_peak
         log_dd = log_cum - log_peak
         stop_active = log_dd.shift(1).fillna(0.0) < -stop_loss_pct
-        # Zero out signal on all days the stop is active
         signal = signal.where(~stop_active, other=0.0)
-        # Recompute returns and trade costs with the stopped signal
         strategy_ret = signal * log_ret
-        position_change = signal.diff().fillna(0.0).abs() > 0.5
+        _sig_dir = pd.Series(np.sign(signal.values), index=signal.index)
+        position_change = _sig_dir.diff().fillna(0.0).abs() > 0.5
+        trade_cost = position_change.astype(float) * friction
+        strategy_ret = strategy_ret - trade_cost
+
+    # ── 7c. Time-based exit — close position after max_hold_days ─────────────
+    #        Prevents open trades that never hit target from tying up capital.
+    #        shift(1) on days counter prevents look-ahead.
+    if max_hold_days > 0:
+        days_held = pd.Series(0.0, index=signal.index)
+        _prev_in_pos = False
+        for _i in range(len(signal)):
+            _in_pos = abs(float(signal.iloc[_i])) > 1e-10
+            if _in_pos:
+                days_held.iloc[_i] = (days_held.iloc[_i - 1] + 1.0) if (_prev_in_pos and _i > 0) else 1.0
+            _prev_in_pos = _in_pos
+        time_exit = days_held.shift(1).fillna(0.0) >= float(max_hold_days)
+        signal = signal.where(~time_exit, other=0.0)
+        strategy_ret = signal * log_ret
+        _sig_dir = pd.Series(np.sign(signal.values), index=signal.index)
+        position_change = _sig_dir.diff().fillna(0.0).abs() > 0.5
+        trade_cost = position_change.astype(float) * friction
+        strategy_ret = strategy_ret - trade_cost
+
+    # ── 7d. ATR per-trade stop — exit if cumulative loss > min(2.5×ATR, 5%) ──
+    #        Cuts fat-tail losses that drive large drawdowns.
+    #        Tracked from most recent entry; stop triggers NEXT day (shift effect).
+    if atr_stop_multiplier > 0.0 and atr_fixed_stop > 0.0:
+        atr_proxy = log_ret.rolling(window=vol_window, min_periods=vol_window).std(ddof=1)
+        atr_stop_flags = pd.Series(False, index=signal.index)
+        _cum_trade_pnl = 0.0
+        _entry_atr = 0.02
+        _prev_sig_v = 0.0
+        for _i in range(len(signal)):
+            _sig_v = float(signal.iloc[_i])
+            if abs(_sig_v) > 1e-10 and abs(_prev_sig_v) < 1e-10:
+                # New trade entry: reset cumulative P&L and capture ATR at entry
+                _cum_trade_pnl = 0.0
+                _raw_atr = float(atr_proxy.iloc[_i - 1]) if (_i > 0 and pd.notna(atr_proxy.iloc[_i - 1])) else 0.02
+                _entry_atr = _raw_atr if _raw_atr > 0 else 0.02
+            if abs(_sig_v) < 1e-10:
+                _cum_trade_pnl = 0.0
+            else:
+                _cum_trade_pnl += float(strategy_ret.iloc[_i])
+            _stop_lvl = min(atr_stop_multiplier * _entry_atr, atr_fixed_stop)
+            if abs(_sig_v) > 1e-10 and _cum_trade_pnl < -_stop_lvl:
+                atr_stop_flags.iloc[_i] = True
+            _prev_sig_v = _sig_v
+        signal = signal.where(~atr_stop_flags.shift(1).fillna(value=False), other=0.0)
+        strategy_ret = signal * log_ret
+        _sig_dir = pd.Series(np.sign(signal.values), index=signal.index)
+        position_change = _sig_dir.diff().fillna(0.0).abs() > 0.5
         trade_cost = position_change.astype(float) * friction
         strategy_ret = strategy_ret - trade_cost
 
@@ -478,10 +625,15 @@ def run_strategy_backtest(
             "friction": friction,
             "volatility_filter": volatility_filter,
             "trend_filter": trend_filter,
+            "regime_long_only": regime_long_only,
             "vol_window": vol_window,
             "vol_ma_window": vol_ma_window,
             "trend_sma_window": trend_sma_window,
             "stop_loss_pct": stop_loss_pct,
+            "atr_stop_multiplier": atr_stop_multiplier,
+            "atr_fixed_stop": atr_fixed_stop,
+            "inv_vol_target": inv_vol_target,
+            "max_hold_days": max_hold_days,
         },
         "metrics": metrics,
         "benchmark_metrics": bm_metrics,

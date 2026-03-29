@@ -77,6 +77,13 @@ def show_run_comparison_tab() -> None:
         c4.metric("Removed", len(files["removed"]))
         c5.metric("Changed", len(files["changed"]))
 
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    render_inline_ai_section(
+        topic="Run Comparison — what changed between pipeline runs",
+        snapshot={"diff_summary": diff if isinstance(diff, dict) else {}},
+        key_suffix="run_comparison",
+    )
+
 
 def show_scenario_builder_tab() -> None:
     st.subheader("🎛️ Scenario Builder (Custom Shocks)")
@@ -139,6 +146,13 @@ def show_scenario_builder_tab() -> None:
             ca.metric(factor, f"{detail.get('shock', 0.0):+.2%}", delta_color="off")
             cb.metric("β", f"{detail.get('beta', 0.0):.4f}")
             cc.metric("Impact", f"{detail.get('predicted_impact', 0.0):.2%}", delta_color="inverse")
+
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    render_inline_ai_section(
+        topic="Scenario Builder — stress test shocks, macro impact analysis",
+        snapshot={"stress_results": stress_res.get("results", {}) if isinstance(stress_res, dict) else {}},
+        key_suffix="scenario_builder",
+    )
 
 
 def show_explainability_tab() -> None:

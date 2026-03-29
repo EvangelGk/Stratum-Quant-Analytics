@@ -489,23 +489,32 @@ def show_edge_arsenal_tab() -> None:
     st.markdown("")
 
     # ── Strategic Edge Quality Score ──────────────────────────────────────────
+    # Calibrated for realistic quant strategies:
+    #   Expectancy > 0           → 25 pts  (binary: edge exists)
+    #   Profit Factor            → 0-25 pts (PF=1.1 → 3pts, PF=2.0 → 30pts capped)
+    #   Calmar Ratio             → 0-20 pts (Calmar=1.0→8pts, Calmar=2.5→20pts)
+    #   Sharpe Ratio             → 0-20 pts (Sharpe=0.5→6pts, Sharpe=1.67→20pts)
+    #   Information Ratio        → 0-10 pts (IR=1.0→4pts, IR=2.5→10pts)
     score = 0.0
     if isinstance(expectancy, (int, float)) and expectancy > 0:
         score += 25.0
     if isinstance(pf, (int, float)) and pf != float("inf"):
         score += min(max((float(pf) - 1.0) * 30.0, 0.0), 25.0)
     if isinstance(calmar, (int, float)):
-        score += min(max(min(float(calmar), 20.0) * 1.0, 0.0), 20.0)
+        # More realistic: Calmar=2.5 earns full 20pts (previously needed Calmar=20!)
+        score += min(max(float(calmar) * 8.0, 0.0), 20.0)
     if isinstance(sharpe, (int, float)):
-        score += min(max(min(float(sharpe), 5.0) * 4.0, 0.0), 20.0)
+        # More realistic: Sharpe=1.67 earns full 20pts (previously needed Sharpe=5!)
+        score += min(max(float(sharpe) * 12.0, 0.0), 20.0)
     if isinstance(ir, (int, float)):
-        score += min(max(min(float(ir), 5.0) * 2.0, 0.0), 10.0)
+        # More realistic: IR=2.5 earns full 10pts
+        score += min(max(float(ir) * 4.0, 0.0), 10.0)
     score = min(score, 100.0)
 
     _score_color = "🟢" if score >= 65 else ("🟡" if score >= 35 else "🔴")
     st.progress(
         score / 100.0,
-        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100 — composite of Expectancy, Profit Factor, Calmar, Sharpe & IR",
+        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100 — composite of Expectancy, Profit Factor, Calmar (×8), Sharpe (×12) & IR",
     )
 
     # ── Validated findings banner ─────────────────────────────────────────────
@@ -662,3 +671,21 @@ def show_edge_arsenal_tab() -> None:
             )
     else:
         st.caption("Strategy returns and chart data not yet available. Re-run Full Analysis to populate.")
+
+    # ── Quantos AI Insights ───────────────────────────────────────────────────
+    from UI.tabs.assistant_tab import render_inline_ai_section
+    _edge_snapshot = {
+        "sharpe_ratio": sharpe,
+        "calmar_ratio": calmar,
+        "max_drawdown": mdd,
+        "profit_factor": pf,
+        "expectancy": expectancy,
+        "strategic_edge_score": score,
+        "p_value": p_value,
+        "annualized_return": backtest.get("annualized_return"),
+    }
+    render_inline_ai_section(
+        topic="Strategic Edge Arsenal — backtest quality, Sharpe, Calmar, drawdown analysis",
+        snapshot=_edge_snapshot,
+        key_suffix="edge_arsenal",
+    )
