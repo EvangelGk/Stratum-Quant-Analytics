@@ -1061,6 +1061,20 @@ def _render_stress_payload(value: object) -> bool:
 def _render_governance_consistency_panel(results: dict) -> None:
     report = _load_analysis_payload("governance_report", results)
     gate = _load_analysis_payload("governance_gate", results)
+
+    # Prefer the live governance_decision_current_run.json (written each pipeline run)
+    # over the potentially stale output/default/governance_gate.json artifact.
+    _live_gov_path = GOLD_DIR / "governance" / "governance_decision_current_run.json"
+    if _live_gov_path.exists():
+        _live = _read_json_fast(_live_gov_path)
+        if isinstance(_live, dict):
+            _lg = _unwrap_value_payload(_live.get("gate", {}))
+            _lr = _live.get("report")
+            if isinstance(_lg, dict) and _lg:
+                gate = _lg
+            if isinstance(_lr, dict) and _lr:
+                report = _lr
+
     if not isinstance(report, dict) and not isinstance(gate, dict):
         return
 

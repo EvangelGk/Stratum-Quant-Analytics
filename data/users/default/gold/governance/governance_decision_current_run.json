@@ -1,5 +1,7 @@
 {
-  "value": {
+  "schema_version": "governance-decision-aggregated.v1",
+  "generated_at": "2026-03-29T21:04:00",
+  "gate": {
     "schema_version": "governance-gate.v1",
     "hard_fail": false,
     "passed": true,
@@ -7,14 +9,21 @@
     "severity": "warn",
     "reasons": [
       "r2_metric_alert_walk_forward_unstable_but_oos_acceptable",
-      "r2_metric_alert_oos_mild_negative_macro_noise_band:-0.1000"
+      "stationarity_ratio_below_threshold:0.1000<0.4000"
     ],
     "metric_only_signals": {
       "r2_used_as_validation_gate": false,
       "advisory_reasons": [
         "r2_metric_alert_walk_forward_unstable_but_oos_acceptable",
-        "r2_metric_alert_oos_mild_negative_macro_noise_band:-0.1000"
+        "stationarity_ratio_below_threshold:0.1000<0.4000"
       ]
     }
+  },
+  "report": {
+    "status": "ok",
+    "out_of_sample": {
+      "r2": -0.1
+    },
+    "model_risk_score": 0.441
   }
 }
