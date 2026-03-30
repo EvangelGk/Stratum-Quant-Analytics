@@ -243,9 +243,14 @@ def _compute_missing_metrics(backtest: dict) -> dict:
             else:
                 out["sharpe_ratio"] = None
 
+            # strategy_returns are always daily (1-day actual log-returns),
+            # regardless of the ML prediction horizon stored in transformations.
+            # _infer_periods_per_year reads target_horizon_days (e.g. 252) and
+            # returns 252/252 = 1, treating 756 daily points as 756 years.
+            # Hard-code 252 to get correct daily → annual compounding.
             ann_return = _annualized_return(
                 sret,
-                periods_per_year=_infer_periods_per_year(out),
+                periods_per_year=252,
             )
             out["annualized_return"] = float(ann_return)
             mdd = float(out.get("maximum_drawdown") or 0.0)
@@ -406,6 +411,13 @@ def show_edge_arsenal_tab() -> None:
 
     if source_path is not None:
         st.caption(f"Loaded backtest artifact: {source_path}")
+        try:
+            mtime = source_path.stat().st_mtime
+            ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            st.caption(f"📈 Metrics from analysis run at: **{ts}**")
+        except Exception:
+            # Ignore if stat fails, the path is still useful
+            pass
 
     expectancy = backtest.get("expectancy_per_trade")
     pf = backtest.get("profit_factor")
@@ -595,7 +607,10 @@ def show_edge_arsenal_tab() -> None:
             yaxis_title="Frequency",
             legend_title_text="",
         )
-        st.plotly_chart(hist_fig, use_container_width=True)
+        try:
+            st.plotly_chart(hist_fig, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Could not render return distribution chart. Error: {e}")
 
         rolling = backtest.get("rolling_sharpe_30d", [])
         if isinstance(rolling, list) and rolling:
@@ -615,7 +630,10 @@ def show_edge_arsenal_tab() -> None:
                 rs_fig.add_hline(y=0.5, line_dash="dash", line_color="#f59e0b", annotation_text="0.5 — acceptable")
                 rs_fig.add_hline(y=1.0, line_dash="dash", line_color="#2e7d32", annotation_text="1.0 — strong")
                 rs_fig.update_layout(height=340, yaxis_title="Sharpe Ratio")
-                st.plotly_chart(rs_fig, use_container_width=True)
+                try:
+                    st.plotly_chart(rs_fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not render rolling Sharpe ratio chart. Error: {e}")
 
         benchmark_returns = backtest.get("benchmark_returns", [])
         if isinstance(benchmark_returns, list) and benchmark_returns and len(benchmark_returns) == len(sret):
@@ -666,7 +684,10 @@ def show_edge_arsenal_tab() -> None:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 hovermode="x unified",
             )
-            st.plotly_chart(eq_fig, use_container_width=True)
+            try:
+                st.plotly_chart(eq_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not render equity curve chart. Error: {e}")
             _final_strat = float(curve_df["Strategy"].iloc[-1])
             _final_bm = float(curve_df["Buy & Hold"].iloc[-1])
             _alpha = _final_strat - _final_bm
