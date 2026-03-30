@@ -420,12 +420,24 @@ def rerun_stress_test_only(
 
 def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     """Re-run only the Gold layer analyses using existing Silver data (no Bronze/Silver fetch)."""
+    # Remove only the 'gold' entry from the checkpoint so Bronze/Silver stay skipped
+    # but Gold is forced to re-run from scratch (not served from cache).
+    _cp_path = USER_DATA_DIR / "pipeline_checkpoint.json"
+    if _cp_path.exists():
+        try:
+            _cp = json.loads(_cp_path.read_text(encoding="utf-8"))
+            if isinstance(_cp, dict) and "gold" in _cp:
+                _cp.pop("gold")
+                _cp_path.write_text(json.dumps(_cp, indent=2), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+
     bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
     env["ENVIRONMENT"] = "actual"
-    env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # skip Bronze/Silver if already checkpointed
+    env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # keep Bronze/Silver skipped; Gold key was removed above
     cmd = [sys.executable, "src/main.py"]
-    estimated_seconds = 180
+    estimated_seconds = 300
     stages = [
         (0.00, "Initialising Gold layer..."),
         (0.15, "Loading Silver data..."),
