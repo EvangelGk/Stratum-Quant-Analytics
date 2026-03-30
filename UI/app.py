@@ -365,8 +365,8 @@ def _render_sidebar() -> str:
 
         resume_mode = st.checkbox(
             "Fast rerun mode (reuse completed stages)",
-            value=True,
-            help=("When enabled, pipeline can skip already completed Bronze/Silver/Gold stages using checkpoints. Disable for a strict full rebuild."),
+            value=False,
+            help=("When enabled, pipeline skips already completed Bronze/Silver/Gold stages using checkpoints. DISABLE for a fresh full rebuild with updated results."),
         )
 
         if st.button(
@@ -385,11 +385,11 @@ def _render_sidebar() -> str:
             prog.empty()
             if ok:
                 st.cache_data.clear()
-                st.session_state.pop("audit_report", None)
+                for _k in ["audit_report", "backtest_payload", "_backtest_payload_hash", "backtest_payload_loaded_at"]:
+                    st.session_state.pop(_k, None)
                 st.success("Full analysis completed successfully.")
                 with st.spinner("Running system audit..."):
                     run_and_cache_audit()
-                st.info("Check Output and Auditor tabs for results.")
                 st.rerun()
             else:
                 show_pipeline_failure(output)
@@ -656,14 +656,7 @@ def _load_backtest_payload_to_session() -> None:
     Called once per ``main()`` invocation before any tabs are rendered.
     """
     try:
-        artifact_path = OUTPUT_DIR / "default" / "analysis_results.json"
-        # Respect DATA_USER_ID when set
-        user_id = (st.secrets.get("DATA_USER_ID", "") or "").strip()
-        if user_id:
-            safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in user_id)
-            candidate = OUTPUT_DIR / safe / "analysis_results.json"
-            if candidate.exists():
-                artifact_path = candidate
+        artifact_path = OUTPUT_DIR / "analysis_results.json"
 
         if not artifact_path.exists():
             return
