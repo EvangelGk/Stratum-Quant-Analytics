@@ -412,6 +412,76 @@ def rerun_stress_test_only(
     return result
 
 
+def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
+    """Re-run only the Gold layer analyses using existing Silver data (no Bronze/Silver fetch)."""
+    bootstrap_env_from_secrets(override=True)
+    env = os.environ.copy()
+    env["ENVIRONMENT"] = "actual"
+    env["PIPELINE_GOLD_ONLY"] = "1"
+    cmd = [sys.executable, "src/main.py", "--gold-only"]
+    estimated_seconds = 120
+    stages = [
+        (0.00, "Initialising Gold layer..."),
+        (0.15, "Loading Silver data..."),
+        (0.35, "Running analyses (lag, elasticity, forecast)..."),
+        (0.65, "Running stress test and Monte Carlo..."),
+        (0.85, "Running governance and feature checks..."),
+        (0.95, "Exporting results..."),
+    ]
+
+    log_path: Path | None = None
+    proc = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            errors="ignore",
+            delete=False,
+            suffix="_gold_only.log",
+        ) as tmp:
+            log_path = Path(tmp.name)
+
+        try:
+            with log_path.open("w", encoding="utf-8", errors="ignore") as log_file:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=ROOT,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                )
+        except (FileNotFoundError, OSError) as exc:
+            raise PipelineSubprocessError(f"Failed to start Gold-only subprocess: {exc}") from exc
+
+        start = time.time()
+        stage_i = 0
+        while proc.poll() is None:
+            elapsed = time.time() - start
+            pct = min(elapsed / estimated_seconds, 0.97)
+            while stage_i < len(stages) - 1 and pct >= stages[stage_i + 1][0]:
+                stage_i += 1
+            if progress_bar is not None:
+                progress_bar.progress(pct, text=f"{int(pct * 100)}% — {stages[stage_i][1]}")
+            time.sleep(0.5)
+
+        output = log_path.read_text(encoding="utf-8", errors="ignore")
+        ok = proc.returncode == 0
+        if progress_bar is not None:
+            progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
+        return ok, output.strip()
+    except (PipelineSubprocessError, PipelineProgressTrackingError):
+        raise
+    except Exception as exc:
+        raise PipelineExecutionError(f"Unexpected Gold-only error: {exc}") from exc
+    finally:
+        if log_path is not None:
+            try:
+                log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def run_optimizer_background(
     target_score: float = 94.0,
     max_iterations: int = 10,
@@ -549,6 +619,7 @@ def clear_all_run_history() -> dict[str, Any]:
 
 __all__ = [
     "run_pipeline",
+    "run_gold_analyses_only",
     "show_pipeline_failure",
     "run_and_cache_audit",
     "get_audit_report",

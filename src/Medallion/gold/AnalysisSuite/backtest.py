@@ -141,16 +141,17 @@ def backtest_pre2020_holdout(
         _test_sma_rm = _sma200_rm.reindex(_test_dt_rm, method="pad").fillna(0.0).values
         _in_uptrend_rm = _test_px_rm > _test_sma_rm
         signal_rm = signal.astype(float).copy()
-        # Long only in uptrend; short only in downtrend (regime-consistent trading)
-        signal_rm = np.where((signal_rm == 1.0) & (~_in_uptrend_rm), 0.0, signal_rm)
-        signal_rm = np.where((signal_rm == -1.0) & _in_uptrend_rm, 0.0, signal_rm)
+        # Soft regime filter: reduce counter-trend positions to 40% rather than going flat.
+        # Hard zero eliminated too many macro trades whose 45-day lag signals need time to play out.
+        signal_rm = np.where((signal_rm == 1.0) & (~_in_uptrend_rm), 0.4, signal_rm)
+        signal_rm = np.where((signal_rm == -1.0) & _in_uptrend_rm, -0.4, signal_rm)
 
-        # 2. Inverse Volatility Scaling — target 15% annualised vol, no leverage
+        # 2. Inverse Volatility Scaling — target 20% annualised vol, no leverage
         _actual_pd_rm = pd.Series(actual_arr)
         _vol14_rm = _actual_pd_rm.rolling(14, min_periods=14).std(ddof=1)
-        _ann_vol_rm = (_vol14_rm * np.sqrt(252.0)).shift(1).fillna(0.15)
-        _ann_vol_rm = _ann_vol_rm.replace(0.0, 0.15)
-        _vol_scale_rm = (0.15 / _ann_vol_rm).clip(lower=0.0, upper=1.0).values
+        _ann_vol_rm = (_vol14_rm * np.sqrt(252.0)).shift(1).fillna(0.20)
+        _ann_vol_rm = _ann_vol_rm.replace(0.0, 0.20)
+        _vol_scale_rm = (0.20 / _ann_vol_rm).clip(lower=0.0, upper=1.0).values
         signal_rm = signal_rm * _vol_scale_rm
 
         # 3. Per-trade ATR stop — exit if cumulative trade loss > min(2.5×vol, 5%)
@@ -169,7 +170,7 @@ def backtest_pre2020_holdout(
                 _cum_trade_rm = 0.0
             else:
                 _cum_trade_rm += float(actual_arr[_i_rm]) * np.sign(_base_sig_rm)
-            _stop_lvl_rm = min(2.5 * _entry_vol_rm, 0.05)
+            _stop_lvl_rm = min(3.0 * _entry_vol_rm, 0.07)
             if abs(signal_rm[_i_rm]) > 1e-10 and _cum_trade_rm < -_stop_lvl_rm:
                 _atr_flags_rm[_i_rm] = True
             _prev_base_rm = _base_sig_rm
@@ -177,13 +178,13 @@ def backtest_pre2020_holdout(
         _atr_shifted_rm[1:] = _atr_flags_rm[:-1]
         signal_rm = np.where(_atr_shifted_rm, 0.0, signal_rm)
 
-        # 4. Time-based exit — close after 10 days to reduce opportunity cost
+        # 4. Time-based exit — close after 30 days (aligned with 45-day macro lag; 10 days was too short)
         _days_rm = 0
         _tex_flags_rm = np.zeros(_min_len, dtype=bool)
         for _i_rm in range(_min_len):
             if abs(signal_rm[_i_rm]) > 1e-10:
                 _days_rm += 1
-                if _days_rm >= 10:
+                if _days_rm >= 30:
                     _tex_flags_rm[_i_rm] = True
             else:
                 _days_rm = 0
@@ -193,7 +194,7 @@ def backtest_pre2020_holdout(
 
         # 5. Friction on direction changes
         _pos_chg_rm = np.abs(np.diff(np.sign(signal_rm), prepend=0.0)) > 0.5
-        _costs_rm = _pos_chg_rm.astype(float) * 0.0015
+        _costs_rm = _pos_chg_rm.astype(float) * 0.001
 
         strategy_returns = signal_rm * actual_arr - _costs_rm
         benchmark_returns = actual_arr

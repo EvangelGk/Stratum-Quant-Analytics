@@ -47,6 +47,7 @@ from UI.tabs import (  # noqa: E402
     show_health_alerts_tab,
     show_logs_tab,
     show_ops_tab,
+    show_gold_rerun_tab,
     show_output_tab,
     show_reports_tab,
     show_run_comparison_tab,
@@ -383,14 +384,25 @@ def _render_sidebar() -> str:
             )
             prog.empty()
             if ok:
+                st.cache_data.clear()
+                st.session_state.pop("audit_report", None)
                 st.success("Full analysis completed successfully.")
                 with st.spinner("Running system audit..."):
                     run_and_cache_audit()
                 st.info("Check Output and Auditor tabs for results.")
+                st.rerun()
             else:
                 show_pipeline_failure(output)
 
         st.info("Full Analysis: complete dataset and all analyses. Typical runtime: 4-10 minutes (usually around 6).")
+
+        st.markdown("---")
+        st.markdown("### 🔄 Session Reset")
+        if st.button("⚡ Emergency Reset Session", width="stretch", type="secondary"):
+            st.cache_data.clear()
+            st.session_state.clear()
+            st.rerun()
+        st.caption("Clears all cached data and session state. Use when the UI shows stale results.")
 
         st.markdown("---")
         st.markdown("### 🧹 History Control")
@@ -550,6 +562,7 @@ def main() -> None:
         "🧪 Auditor",
         "📊 Run Comparison",
         "🎛️ Scenario Builder",
+        "⚡ Gold Rerun",
         "🧠 Explainability",
         "🧾 Reports",
         "⚙️ Ops",
@@ -581,6 +594,8 @@ def main() -> None:
         show_run_comparison_tab()
     elif selected_page == "🎛️ Scenario Builder":
         show_scenario_builder_tab()
+    elif selected_page == "⚡ Gold Rerun":
+        show_gold_rerun_tab(role)
     elif selected_page == "🧠 Explainability":
         show_explainability_tab()
     elif selected_page == "🧾 Reports":

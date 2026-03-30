@@ -5,6 +5,7 @@ from datetime import datetime
 import streamlit as st
 
 from UI.constants import OUTPUT_DIR, ROLE_PERMISSIONS
+from UI.runtime import run_and_cache_audit, run_gold_analyses_only
 from UI.helpers import (
     build_executive_report_html,
     build_explainability_lines,
@@ -171,6 +172,45 @@ def show_explainability_tab() -> None:
         )
     except Exception:
         pass
+
+
+def show_gold_rerun_tab(role: str) -> None:
+    st.subheader("⚡ Re-run Gold Analyses")
+    st.caption(
+        "Re-runs only the Gold layer analyses using the existing Silver data — no Bronze/Silver data fetch. "
+        "Use when you want fresh analysis results without waiting for a full pipeline run (~2 min vs ~6 min)."
+    )
+
+    perms = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["Viewer"])
+    if not perms.get("can_run"):
+        st.warning("You do not have permission to run analyses.")
+        return
+
+    st.info(
+        "This skips Bronze (data fetch) and Silver (cleaning) stages. "
+        "Your existing Silver dataset is reused as-is."
+    )
+
+    if st.button("⚡ Re-run Gold Analyses Only", type="primary", width="stretch"):
+        prog = st.progress(0, text="Starting Gold layer...")
+        try:
+            ok, output = run_gold_analyses_only(progress_bar=prog)
+        except Exception as exc:
+            prog.empty()
+            st.error(f"Gold-only run failed: {exc}")
+            return
+        prog.empty()
+        if ok:
+            st.cache_data.clear()
+            st.session_state.pop("audit_report", None)
+            st.success("Gold analyses completed successfully.")
+            with st.spinner("Updating audit report..."):
+                run_and_cache_audit()
+            st.rerun()
+        else:
+            st.error("Gold-only run did not complete successfully.")
+            with st.expander("Raw output", expanded=False):
+                st.text(output[-3000:] if len(output) > 3000 else output)
 
 
 def show_reports_tab(role: str) -> None:
