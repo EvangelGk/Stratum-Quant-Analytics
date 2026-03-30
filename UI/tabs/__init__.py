@@ -1,5 +1,6 @@
 from UI.tabs.analysis_tabs import (
     show_explainability_tab,
+    show_gold_rerun_tab,
     show_health_alerts_tab,
     show_reports_tab,
     show_run_comparison_tab,
@@ -29,6 +30,7 @@ __all__ = [
     "show_data_tab",
     "show_edge_arsenal_tab",
     "show_explainability_tab",
+    "show_gold_rerun_tab",
     "show_governance_tab",
     "show_health_alerts_tab",
     "show_logs_tab",
