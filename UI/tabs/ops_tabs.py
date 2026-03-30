@@ -321,14 +321,19 @@ def show_auditor_tab() -> None:
                     return "\u26a0\ufe0f Limited"
                 return "\u274c No"
 
-            j1, j2 = st.columns(2)
+            j1, j2, j3 = st.columns(3)
             j1.metric(
-                "Information Reasonable",
+                "Data Quality Acceptable",
                 _judgement_label(bool(judgement.get("is_information_reasonable"))),
             )
             j2.metric(
-                "Can Support Decisions",
+                "Supports Decision-Making",
                 _judgement_label(bool(judgement.get("can_support_decisions"))),
+            )
+            edge_score = judgement.get("strategic_edge_score")
+            j3.metric(
+                "Strategic Edge Score",
+                f"{edge_score:.0f} / 100" if isinstance(edge_score, (int, float)) else "—",
             )
             for line in judgement.get("summary", []):
                 st.markdown(f"- {line}")

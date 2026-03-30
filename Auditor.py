@@ -1081,17 +1081,20 @@ class ScenarioAuditor:
         is_info_ok = (status != "CRITICAL") or (n_failed <= 2)
         can_decide = report.get("decision_ready", False) or (n_failed <= 2)
 
-        # Human-readable confidence tier for the summary
+        # Human-readable status and confidence tier — must match traffic_light.py tone
         if status == "PASS" or (status == "WARN" and n_failed == 0):
+            status_label = "All Clear"
             confidence = "High"
         elif n_failed <= 2:
-            confidence = "Moderate (advisory issues present — use with awareness)"
+            status_label = "Caution"
+            confidence = "Moderate — advisory issues present, outputs are usable with awareness"
         else:
+            status_label = "Action Required"
             confidence = "Low"
 
         summary_lines = [
-            f"Overall status: {status}",
-            f"Confidence tier: {confidence}",
+            f"Overall status: {status_label}",
+            f"Confidence: {confidence}.",
             "This auditor is independent from the pipeline runtime but integrated with its artifacts, contracts and governance outputs.",
         ]
         if integration.get("issues"):

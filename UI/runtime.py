@@ -114,7 +114,13 @@ def run_pipeline(
             while stage_i < len(stages) - 1 and pct >= stages[stage_i + 1][0]:
                 stage_i += 1
             if progress_bar is not None:
-                progress_bar.progress(pct, text=f"{int(pct * 100)}% — {stages[stage_i][1]}")
+                if elapsed > estimated_seconds:
+                    mins = int(elapsed / 60)
+                    secs = int(elapsed % 60)
+                    msg = f"97% — Gold layer still running ({mins}m {secs:02d}s elapsed) — please wait..."
+                else:
+                    msg = f"{int(pct * 100)}% — {stages[stage_i][1]}"
+                progress_bar.progress(pct, text=msg)
             time.sleep(0.5)
 
         output = log_path.read_text(encoding="utf-8", errors="ignore")
@@ -462,7 +468,13 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
             while stage_i < len(stages) - 1 and pct >= stages[stage_i + 1][0]:
                 stage_i += 1
             if progress_bar is not None:
-                progress_bar.progress(pct, text=f"{int(pct * 100)}% — {stages[stage_i][1]}")
+                if elapsed > estimated_seconds:
+                    mins = int(elapsed / 60)
+                    secs = int(elapsed % 60)
+                    msg = f"97% — Gold analyses still running ({mins}m {secs:02d}s elapsed) — please wait..."
+                else:
+                    msg = f"{int(pct * 100)}% — {stages[stage_i][1]}"
+                progress_bar.progress(pct, text=msg)
             time.sleep(0.5)
 
         output = log_path.read_text(encoding="utf-8", errors="ignore")
