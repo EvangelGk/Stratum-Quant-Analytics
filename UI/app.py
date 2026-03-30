@@ -385,6 +385,7 @@ def _render_sidebar() -> str:
             prog.empty()
             if ok:
                 st.cache_data.clear()
+                st.cache_resource.clear()
                 for _k in ["audit_report", "backtest_payload", "_backtest_payload_hash", "backtest_payload_loaded_at"]:
                     st.session_state.pop(_k, None)
                 st.success("Full analysis completed successfully.")
@@ -400,6 +401,7 @@ def _render_sidebar() -> str:
         st.markdown("### 🔄 Session Reset")
         if st.button("⚡ Emergency Reset Session", width="stretch", type="secondary"):
             st.cache_data.clear()
+            st.cache_resource.clear()
             st.session_state.clear()
             st.rerun()
         st.caption("Clears all cached data and session state. Use when the UI shows stale results.")

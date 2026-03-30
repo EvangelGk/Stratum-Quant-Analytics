@@ -133,6 +133,17 @@ def show_kpis() -> None:
     c3.metric("Gold Runs", k["gold_runs"])
     c4.metric("Output Artifacts", k["artifacts"])
 
+    # Last Calculated timestamp — read directly from analysis_results.json (no cache)
+    try:
+        import json as _json
+        _summary = OUTPUT_DIR / "analysis_results.json"
+        if _summary.exists():
+            _ts = _json.loads(_summary.read_text(encoding="utf-8")).get("generated_at", "")
+            if _ts:
+                st.caption(f"🕐 Last Calculated: {_ts}")
+    except Exception:
+        pass
+
 
 __all__ = [
     "DIRECTIONS_MOD",
