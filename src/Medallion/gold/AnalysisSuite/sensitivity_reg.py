@@ -120,17 +120,17 @@ def _candidate_registry(seed: int) -> Dict[str, tuple[Pipeline, Dict[str, Any] |
         "Linear": (linear_pipe(LinearRegression()), None),
         "Ridge": (
             linear_pipe(Ridge(random_state=seed)),
-            {"model__alpha": [1e-3, 1e-2, 1e-1, 1.0, 5.0, 10.0, 50.0]},
+            {"model__alpha": [1e-2, 1e-1, 1.0, 10.0]},
         ),
         "Lasso": (
-            linear_pipe(Lasso(random_state=seed, max_iter=5000)),
-            {"model__alpha": [1e-4, 5e-4, 1e-3, 1e-2, 5e-2, 1e-1, 1.0]},
+            linear_pipe(Lasso(random_state=seed, max_iter=3000)),
+            {"model__alpha": [1e-3, 1e-2, 5e-2, 1e-1]},
         ),
         "ElasticNet": (
-            linear_pipe(ElasticNet(random_state=seed, max_iter=5000)),
+            linear_pipe(ElasticNet(random_state=seed, max_iter=3000)),
             {
-                "model__alpha": [1e-4, 1e-3, 1e-2, 1e-1, 1.0],
-                "model__l1_ratio": [0.1, 0.3, 0.5, 0.7, 0.9],
+                "model__alpha": [1e-3, 1e-2, 1e-1],
+                "model__l1_ratio": [0.2, 0.5, 0.8],
             },
         ),
         "RandomForest": (
@@ -141,10 +141,9 @@ def _candidate_registry(seed: int) -> Dict[str, tuple[Pipeline, Dict[str, Any] |
                 )
             ),
             {
-                "model__n_estimators": [200, 300, 500],
-                "model__max_depth": [3, 5, 8, None],
-                "model__min_samples_leaf": [1, 2, 4, 8],
-                "model__max_features": ["sqrt", "log2", 0.6],
+                "model__n_estimators": [100, 200],
+                "model__max_depth": [3, 5, None],
+                "model__min_samples_leaf": [2, 4, 8],
             },
         ),
     }
@@ -464,7 +463,7 @@ def sensitivity_reg(
             features=factors,
             seed=42,
             max_features_considered=12,
-            max_evaluations=120,
+            max_evaluations=80,
         )
         if not selected_factors:
             raise DataValidationError("No valid feature subset found for regression.")

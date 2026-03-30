@@ -678,9 +678,15 @@ def governance_report(
                 }
                 continue
 
-            adf_stat, adf_p_value, *_ = adfuller(series, autolag="AIC")
+            # Fixed maxlag avoids the O(n²) AIC/BIC search over all lags
+            # (autolag="AIC" fits up to ~25 OLS regressions per series on
+            # 2000+ row datasets, multiplied by 20 columns = 500+ fits).
+            # maxlag=8 is statistically sufficient for daily financial returns.
+            _adf_maxlag = min(8, max(1, len(series) // 50))
+            adf_stat, adf_p_value, *_ = adfuller(series, maxlag=_adf_maxlag, autolag=None)
             try:
-                kpss_stat, kpss_p_value, *_ = kpss(series, regression="c", nlags="auto")
+                _kpss_nlags = min(8, max(1, len(series) // 50))
+                kpss_stat, kpss_p_value, *_ = kpss(series, regression="c", nlags=_kpss_nlags)
             except Exception:
                 kpss_stat, kpss_p_value = np.nan, np.nan
 
@@ -867,7 +873,7 @@ def governance_report(
             test_df=ci_frame,
             x_cols=retained_features,
             y_col=target,
-            n_bootstrap=200,
+            n_bootstrap=100,
             confidence=0.90,
             random_seed=random_seed if reproducibility_enforced else None,
         )
