@@ -298,11 +298,13 @@ class MedallionPipeline:
             with tqdm(total=4, desc="Full Pipeline") as pbar:
                 if resume and self._is_stage_done("bronze"):
                     print("[resume] Skipping Bronze stage (checkpoint valid).")
+                    self._stage_success["bronze"] = True
                 else:
                     self._run_stage_with_retry("bronze", self.run_bronze)
                 pbar.update(1)
                 if resume and self._is_stage_done("silver"):
                     print("[resume] Skipping Silver stage (checkpoint valid).")
+                    self._stage_success["silver"] = True
                 else:
                     self._run_stage_with_retry("silver", self.run_silver)
                 pbar.update(1)
@@ -313,6 +315,7 @@ class MedallionPipeline:
 
                 if resume and self._is_stage_done("gold"):
                     print("[resume] Skipping Gold stage (checkpoint valid).")
+                    self._stage_success["gold"] = True
                 else:
                     self._run_stage_with_retry("gold", self.run_gold)
                 pbar.update(1)
@@ -345,11 +348,13 @@ class MedallionPipeline:
         with tqdm(total=4, desc="Full Pipeline") as pbar:
             if resume and self._is_stage_done("bronze"):
                 print("[resume] Skipping Bronze stage (checkpoint valid).")
+                self._stage_success["bronze"] = True
             else:
                 self._run_stage_with_retry("bronze", self.run_bronze)
             pbar.update(1)
             if resume and self._is_stage_done("silver"):
                 print("[resume] Skipping Silver stage (checkpoint valid).")
+                self._stage_success["silver"] = True
             else:
                 self._run_stage_with_retry("silver", self.run_silver)
             pbar.update(1)
@@ -360,6 +365,7 @@ class MedallionPipeline:
 
             if resume and self._is_stage_done("gold"):
                 print("[resume] Skipping Gold stage (checkpoint valid).")
+                self._stage_success["gold"] = True
             else:
                 self._run_stage_with_retry("gold", self.run_gold)
             pbar.update(1)

@@ -426,11 +426,14 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     if _cp_path.exists():
         try:
             _cp = json.loads(_cp_path.read_text(encoding="utf-8"))
-            if isinstance(_cp, dict) and "gold" in _cp:
-                _cp.pop("gold")
+            if isinstance(_cp, dict):
+                _cp.pop("gold", None)
                 _cp_path.write_text(json.dumps(_cp, indent=2), encoding="utf-8")
         except (OSError, ValueError):
-            pass
+            try:
+                _cp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
