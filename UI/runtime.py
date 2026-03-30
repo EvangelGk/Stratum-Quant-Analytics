@@ -67,7 +67,7 @@ def run_pipeline(
     env["ENVIRONMENT"] = mode
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
     cmd = [sys.executable, "src/main.py"]
-    estimated_seconds = 420 if mode == "actual" else 150
+    estimated_seconds = 720 if mode == "actual" else 240
     stages = [
         (0.00, "Starting pipeline..."),
         (0.08, "Checking prerequisites..."),
@@ -76,7 +76,7 @@ def run_pipeline(
         (0.50, "Bronze layer: organizing raw data..."),
         (0.68, "Silver layer: cleaning and validating..."),
         (0.85, "Gold layer: running analyses..."),
-        (0.95, "Exporting results and audit artifacts..."),
+        (0.95, "Gold layer: Monte Carlo & final exports (may take a few minutes)..."),
     ]
 
     log_path: Path | None = None
@@ -417,9 +417,9 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
     env["ENVIRONMENT"] = "actual"
-    env["PIPELINE_GOLD_ONLY"] = "1"
-    cmd = [sys.executable, "src/main.py", "--gold-only"]
-    estimated_seconds = 120
+    env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # skip Bronze/Silver if already checkpointed
+    cmd = [sys.executable, "src/main.py"]
+    estimated_seconds = 180
     stages = [
         (0.00, "Initialising Gold layer..."),
         (0.15, "Loading Silver data..."),
