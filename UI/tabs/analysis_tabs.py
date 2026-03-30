@@ -207,6 +207,7 @@ def show_gold_rerun_tab(role: str) -> None:
             st.success("Gold analyses completed successfully.")
             with st.spinner("Updating audit report..."):
                 run_and_cache_audit()
+            st.session_state["selected_page"] = "💎 Edge Arsenal"
             st.rerun()
         else:
             st.error("Gold-only run did not complete successfully.")
