@@ -13,7 +13,7 @@ def monte_carlo(
     df: pd.DataFrame,
     ticker: str,
     days: int = 252,
-    iterations: int = 10000,
+    iterations: int = 1000,
     random_state: Optional[int] = None,
     macro_scenario: Optional[str] = None,
     macro_factor: str = "inflation",

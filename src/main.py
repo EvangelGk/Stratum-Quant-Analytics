@@ -1,4 +1,5 @@
 # Copyright (c) 2026 EvangelGK. All Rights Reserved.
+import gc
 import gzip
 import hashlib
 import json
@@ -351,6 +352,7 @@ def main() -> None:
         else:
             results = pipeline.run_full_pipeline_sequential()
 
+        gc.collect()  # free Bronze/Silver DataFrames from RAM before serialising Gold results
         output_artifacts = _write_output_artifacts(results, user_id=getattr(config, "data_user_id", "default"))
         ai_brief = generate_ai_pipeline_brief(user_id=getattr(config, "data_user_id", "default"))
         if ai_brief.get("success"):
