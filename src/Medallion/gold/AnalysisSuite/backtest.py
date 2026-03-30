@@ -217,7 +217,13 @@ def backtest_pre2020_holdout(
         gross_loss_abs = float(abs(np.sum(losses))) if len(losses) else 0.0
         profit_factor = float(gross_profit / gross_loss_abs) if gross_loss_abs > 1e-12 else (None if gross_profit == 0.0 else float("inf"))
 
-        periods_per_year = _effective_periods_per_year(metadata, target)
+        # strategy_returns are ALWAYS daily (actual_arr = 1-day log-returns from
+        # the raw price series), regardless of the ML target prediction horizon.
+        # _effective_periods_per_year reads the target transformation horizon
+        # (e.g. 252 days for a 252-day forward-return target), which gives
+        # 252/252 = 1 period/year and turns 756 daily returns into "756 years".
+        # Always use 252 trading days per year for daily return annualisation.
+        periods_per_year = 252
         ann_return = _annualized_return(strategy_returns, periods_per_year=periods_per_year)
         calmar = float(ann_return / max(abs(mdd), 0.01))
 

@@ -60,12 +60,55 @@ def run_pipeline(
     progress_bar: Any = None,
     resume_from_checkpoint: bool = False,
 ) -> tuple[bool, str]:
+    """
+    Run the full pipeline, ensuring a total reset for cache and session state.
+    """
+    # 0. Hard Reset: Delete old output files for the current user profile if not resuming.
+    bootstrap_env_from_secrets(override=True)
+    if not resume_from_checkpoint:
+        active_user_id = os.environ.get("DATA_USER_ID", "default")
+        active_output_dir = ROOT / "output" / active_user_id
+        active_audit_report_path = active_output_dir / "audit_report.json"
+
+        output_files_to_delete = [
+            active_output_dir / "analysis_results.json",
+            active_output_dir / "backtest_2020.json",
+            active_output_dir / "stress_test.json",
+            active_audit_report_path,
+        ]
+        for f in output_files_to_delete:
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                st.warning(f"Could not delete old artifact before run: {f}")
+                pass
+
+    # 1. Cache Busting: Clear all Streamlit caches unless we are explicitly resuming.
+    if not resume_from_checkpoint:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+
+        # 2. Session State Purge: Reset all KPI keys.
+        kpi_keys = [
+            # Edge Arsenal KPIs
+            "expectancy", "profit_factor", "calmar", "sharpe", "info_ratio", "max_drawdown",
+            "strategy_final_value", "alpha_vs_benchmark", "audit_report",
+            # AI Agent state
+            "_ai_agent_instance", "_ai_agent_signature", "ai_messages", "ai_ready",
+            "ai_ready_checked_at", "ai_last_error", "ai_last_ollama_ok", "ai_pending_question",
+        ]
+        for key in kpi_keys:
+            if key in st.session_state:
+                del st.session_state[key]
+
     # Ensure Streamlit secrets are reflected in os.environ before subprocess spawn
     # so DATA_USER_ID and governance knobs are visible to src/main.py.
-    bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
     env["ENVIRONMENT"] = mode
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
+    # Force stochastic run to ensure new numbers are generated, per user request.
+    if not resume_from_checkpoint:
+        env["ENFORCE_REPRODUCIBILITY"] = "0"
     cmd = [sys.executable, "src/main.py"]
     estimated_seconds = 720 if mode == "actual" else 240
     stages = [
@@ -81,6 +124,8 @@ def run_pipeline(
 
     log_path: Path | None = None
     proc = None
+    ok = False
+    output = ""
     try:
         with tempfile.NamedTemporaryFile(
             mode="w+",
@@ -125,19 +170,24 @@ def run_pipeline(
 
         output = log_path.read_text(encoding="utf-8", errors="ignore")
         ok = proc.returncode == 0
-        if progress_bar is not None:
-            progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
-        return ok, output.strip()
     except (PipelineSubprocessError, PipelineProgressTrackingError):
         raise
     except Exception as exc:
         raise PipelineExecutionError(f"Unexpected pipeline error: {exc}") from exc
     finally:
+        if progress_bar is not None:
+            progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
+
         if log_path is not None:
             try:
                 log_path.unlink(missing_ok=True)
             except OSError:
                 pass
+        
+        if ok and not resume_from_checkpoint:
+            st.rerun()
+
+    return ok, output.strip()
 
 
 def show_pipeline_failure(raw_output: str) -> None:
@@ -419,7 +469,49 @@ def rerun_stress_test_only(
 
 
 def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
-    """Re-run only the Gold layer analyses using existing Silver data (no Bronze/Silver fetch)."""
+    """
+    Re-run only the Gold layer analyses, ensuring a total reset for cache and session state.
+    This function explicitly clears Streamlit's caches and purges relevant session state
+    keys before starting the pipeline to prevent stale data from being shown.
+    """
+    # 0. Hard Reset: Delete old output files for the current user profile to force regeneration.
+    bootstrap_env_from_secrets(override=True)
+    active_user_id = os.environ.get("DATA_USER_ID", "default")
+    active_output_dir = ROOT / "output" / active_user_id
+    active_audit_report_path = active_output_dir / "audit_report.json"
+
+    output_files_to_delete = [
+        active_output_dir / "analysis_results.json",
+        active_output_dir / "backtest_2020.json",
+        active_output_dir / "stress_test.json",
+        active_audit_report_path,
+    ]
+    for f in output_files_to_delete:
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            # Don't block the run if a file is locked, but warn the user.
+            st.warning(f"Could not delete old artifact before run: {f}")
+            pass
+
+    # 1. Cache Busting: Clear all Streamlit caches.
+    st.cache_data.clear()
+    st.cache_resource.clear()
+
+    # 2. Session State Purge: Reset all KPI keys to ensure they are re-fetched.
+    kpi_keys = [
+        # Edge Arsenal KPIs
+        "expectancy", "profit_factor", "calmar", "sharpe", "info_ratio", "max_drawdown",
+        "strategy_final_value", "alpha_vs_benchmark", "audit_report",
+        # AI Agent state
+        "_ai_agent_instance", "_ai_agent_signature", "ai_messages", "ai_ready",
+        "ai_ready_checked_at", "ai_last_error", "ai_last_ollama_ok", "ai_pending_question",
+    ]
+    for key in kpi_keys:
+        if key in st.session_state:
+            # Using del is safer than setting to None if downstream code uses .get() with defaults
+            del st.session_state[key]
+
     # Remove only the 'gold' entry from the checkpoint so Bronze/Silver stay skipped
     # but Gold is forced to re-run from scratch (not served from cache).
     _cp_path = USER_DATA_DIR / "pipeline_checkpoint.json"
@@ -435,10 +527,11 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
             except OSError:
                 pass
 
-    bootstrap_env_from_secrets(override=True)
     env = os.environ.copy()
     env["ENVIRONMENT"] = "actual"
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # keep Bronze/Silver skipped; Gold key was removed above
+    # Force stochastic run to ensure new numbers are generated, per user request.
+    env["ENFORCE_REPRODUCIBILITY"] = "0"
     cmd = [sys.executable, "src/main.py"]
     estimated_seconds = 300
     stages = [
@@ -452,6 +545,8 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
 
     log_path: Path | None = None
     proc = None
+    ok = False
+    output = ""
     try:
         with tempfile.NamedTemporaryFile(
             mode="w+",
@@ -494,19 +589,27 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
 
         output = log_path.read_text(encoding="utf-8", errors="ignore")
         ok = proc.returncode == 0
-        if progress_bar is not None:
-            progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
-        return ok, output.strip()
     except (PipelineSubprocessError, PipelineProgressTrackingError):
+        # Re-raise to be handled by the caller, which should show an error message.
         raise
     except Exception as exc:
         raise PipelineExecutionError(f"Unexpected Gold-only error: {exc}") from exc
     finally:
+        if progress_bar is not None:
+            # This ensures the progress bar always reaches 100%, addressing the "hang" perception.
+            progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
+
         if log_path is not None:
             try:
                 log_path.unlink(missing_ok=True)
             except OSError:
                 pass
+        
+        # Force a UI refresh on success to pull in the new data immediately.
+        if ok:
+            st.rerun()
+
+    return ok, output.strip()
 
 
 def run_optimizer_background(
