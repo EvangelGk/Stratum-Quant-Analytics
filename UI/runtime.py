@@ -480,18 +480,23 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     active_output_dir = ROOT / "output" / active_user_id
     active_audit_report_path = active_output_dir / "audit_report.json"
 
-    output_files_to_delete = [
+    # Back up old artifacts instead of deleting them outright.
+    # If the pipeline fails the backups are restored so the UI never shows
+    # "No backtest payload found" due to a failed/killed run.
+    _artifacts_to_reset = [
         active_output_dir / "analysis_results.json",
         active_output_dir / "backtest_2020.json",
         active_output_dir / "stress_test.json",
         active_audit_report_path,
     ]
-    for f in output_files_to_delete:
+    _backup_map: dict[Path, Path] = {}
+    for f in _artifacts_to_reset:
+        bak = f.with_suffix(f.suffix + ".bak")
         try:
-            f.unlink(missing_ok=True)
+            if f.exists():
+                f.rename(bak)
+                _backup_map[f] = bak
         except OSError:
-            # Don't block the run if a file is locked, but warn the user.
-            st.warning(f"Could not delete old artifact before run: {f}")
             pass
 
     # 1. Cache Busting: Clear all Streamlit caches.
@@ -604,7 +609,24 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
                 log_path.unlink(missing_ok=True)
             except OSError:
                 pass
-        
+
+        if ok:
+            # Success: remove backups (new files already written by pipeline).
+            for bak in _backup_map.values():
+                try:
+                    bak.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        else:
+            # Failure: restore backups so the UI keeps showing old results
+            # instead of "No backtest payload found".
+            for original, bak in _backup_map.items():
+                try:
+                    if bak.exists() and not original.exists():
+                        bak.rename(original)
+                except OSError:
+                    pass
+
         # Force a UI refresh on success to pull in the new data immediately.
         if ok:
             st.rerun()
