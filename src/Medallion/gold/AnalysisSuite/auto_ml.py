@@ -142,13 +142,13 @@ def auto_ml_regression(
             "Ridge": Ridge(alpha=0.5),
             "ElasticNet": ElasticNet(alpha=0.01, l1_ratio=0.3, random_state=seed),
             "RandomForest": RandomForestRegressor(
-                n_estimators=300,
+                n_estimators=150,
                 min_samples_leaf=4,
                 random_state=seed,
                 n_jobs=1,
             ),
             "ExtraTrees": ExtraTreesRegressor(
-                n_estimators=300,
+                n_estimators=150,
                 min_samples_leaf=4,
                 random_state=seed,
                 n_jobs=1,
@@ -213,7 +213,7 @@ def auto_ml_regression(
                 best_model,
                 x_test_scaled,
                 y_test,
-                n_repeats=10,
+                n_repeats=5,
                 random_state=seed,
                 scoring="r2",
             )
