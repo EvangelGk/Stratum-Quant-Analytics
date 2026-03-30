@@ -1074,7 +1074,7 @@ class GoldLayer:
             results["lag_analysis"] = lag_analysis(
                 analysis_df,
                 selected_macro_factor,
-                max(lags, 90),
+                max(lags, 60),
                 target=target,
                 ticker=selected_ticker,
                 reference_lag_days=30,
@@ -1101,7 +1101,7 @@ class GoldLayer:
                 analysis_df,
                 target=target,
                 features=resolved_factors,
-                max_lag=180,
+                max_lag=90,
             )
         except AnalysisError as e:
             self.logger.error(f"Analysis error in feature_decay: {e}")
@@ -1354,7 +1354,7 @@ class GoldLayer:
                 lag_analysis,
                 analysis_df,
                 selected_macro_factor,
-                max(lags, 90),
+                max(lags, 60),
                 target,
                 selected_ticker,
                 30,
@@ -1364,7 +1364,7 @@ class GoldLayer:
                 analysis_df,
                 target,
                 safe_factors,
-                180,
+                90,
             ),
             "sensitivity_regression": partial(
                 sensitivity_reg,
@@ -1424,7 +1424,7 @@ class GoldLayer:
                 analysis_df,
                 selected_ticker,
                 252,
-                10000,
+                1000,
                 random_seed,
                 "high_inflation" if shock_map and float(shock_map.get("inflation", 0.0)) > 0.0 else None,
                 selected_macro_factor,
