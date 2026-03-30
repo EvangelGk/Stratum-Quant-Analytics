@@ -286,54 +286,40 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
 
 def _discover_backtest_payload() -> tuple[dict, Path | None]:
-    # 1) Prefer the dedicated artifact over embedded summary payloads because
-    # summary files are often older and can contain stale copied metrics.
-    current_bt = _read_json(OUTPUT_DIR / "backtest_2020.json")
-    bt = _extract_backtest(current_bt)
-    if bt:
-        return bt, OUTPUT_DIR / "backtest_2020.json"
+    """
+    Discover the most recent backtest payload by scanning all output profiles.
 
-    current_analysis = _read_json(OUTPUT_DIR / "analysis_results.json")
-    bt = _extract_backtest(current_analysis)
-    if bt:
-        return bt, OUTPUT_DIR / "analysis_results.json"
-
-    # analysis_results may provide a path map instead of embedding payload
-    if isinstance(current_analysis, dict):
-        artifacts = current_analysis.get("artifacts")
-        if isinstance(artifacts, dict):
-            bt_path_raw = artifacts.get("backtest_2020")
-            if isinstance(bt_path_raw, str) and bt_path_raw.strip():
-                bt_path = Path(bt_path_raw)
-                if not bt_path.is_absolute():
-                    bt_path = OUTPUT_DIR / bt_path
-                payload = _read_json(bt_path)
-                bt = _extract_backtest(payload)
-                if bt:
-                    return bt, bt_path
-    # 2) fallback: scan all output/* folders and pick most recently modified artifact
+    It searches for 'analysis_results.json' and 'backtest_2020.json' across all
+    subdirectories of the main output folder, sorts them by modification time,
+    and uses the newest valid file. This ensures the dashboard always shows
+    the latest results, regardless of the active user profile.
+    """
     output_root = OUTPUT_DIR.parent
-    if not output_root.exists():
+    if not output_root.is_dir():
         return {}, None
 
     candidates: list[tuple[float, Path]] = []
-    for child in output_root.iterdir():
-        if not child.is_dir():
+    # Scan all subdirectories in the output folder (e.g., output/default, output/user_a)
+    for profile_dir in output_root.iterdir():
+        if not profile_dir.is_dir():
             continue
-        for name in ("analysis_results.json", "backtest_2020.json"):
-            p = child / name
-            if p.exists() and p.is_file():
+        for filename in ("analysis_results.json", "backtest_2020.json"):
+            p = profile_dir / filename
+            if p.is_file():
                 try:
                     candidates.append((p.stat().st_mtime, p))
                 except OSError:
                     continue
 
+    # Sort candidates by modification time, newest first
     for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
         payload = _read_json(path)
         bt = _extract_backtest(payload)
         if bt:
+            # Found a valid backtest in the newest file, return it.
             return bt, path
 
+        # Special handling for analysis_results.json which might point to another file
         if path.name == "analysis_results.json" and isinstance(payload, dict):
             artifacts = payload.get("artifacts")
             if isinstance(artifacts, dict):
@@ -341,12 +327,17 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
                 if isinstance(bt_path_raw, str) and bt_path_raw.strip():
                     bt_path = Path(bt_path_raw)
                     if not bt_path.is_absolute():
+                        # Resolve path relative to the analysis_results.json file
                         bt_path = path.parent / bt_path
-                    inner_payload = _read_json(bt_path)
-                    bt = _extract_backtest(inner_payload)
-                    if bt:
-                        return bt, bt_path
 
+                    if bt_path.is_file():
+                        inner_payload = _read_json(bt_path)
+                        bt = _extract_backtest(inner_payload)
+                        if bt:
+                            # This is the actual backtest file, return its contents and path
+                            return bt, bt_path
+
+    # If no valid backtest is found after checking all candidates
     return {}, None
 
 
@@ -372,12 +363,32 @@ def show_edge_arsenal_tab() -> None:
     backtest = _compute_missing_metrics(backtest)
 
     st.markdown("### 🔗 Data Lineage Health")
+
+    # Determine active profile paths for lineage. By default, use paths from
+    # constants, but if a more recent artifact was found, derive paths from its
+    # location to ensure the health check is for the correct run.
+    lineage_output_dir = OUTPUT_DIR
+    lineage_user_data_dir = USER_DATA_DIR
+    profile_name = "default"
+
+    if source_path:
+        active_output_dir = source_path.parent
+        profile_name = active_output_dir.name
+        lineage_output_dir = active_output_dir
+
+        # Assume a parallel directory structure for data, e.g., output/profile_A <=> data/users/profile_A
+        # This resolves the issue where lineage pointed to a default/stale user data folder.
+        # We find the base 'data/users' dir by going up from the default USER_DATA_DIR constant.
+        if USER_DATA_DIR.name.lower() in ("default", profile_name.lower(), "main") and len(USER_DATA_DIR.parts) > 1:
+            lineage_user_data_dir = USER_DATA_DIR.parent / profile_name
+        # else: keep the constant path as a fallback if the structure is unexpected
+
     lineage_rows = [
-        _artifact_row(USER_DATA_DIR / "raw" / "catalog.json", "Bronze catalog"),
-        _artifact_row(USER_DATA_DIR / "processed" / "quality" / "quality_report.json", "Silver quality"),
-        _artifact_row(USER_DATA_DIR / "gold" / "master_table.parquet", "Gold master"),
-        _artifact_row(OUTPUT_DIR / "analysis_results.json", "Output summary"),
-        _artifact_row(OUTPUT_DIR / "backtest_2020.json", "Backtest artifact"),
+        _artifact_row(lineage_user_data_dir / "raw" / "catalog.json", "Bronze catalog"),
+        _artifact_row(lineage_user_data_dir / "processed" / "quality" / "quality_report.json", "Silver quality"),
+        _artifact_row(lineage_user_data_dir / "gold" / "master_table.parquet", "Gold master"),
+        _artifact_row(lineage_output_dir / "analysis_results.json", "Output summary"),
+        _artifact_row(lineage_output_dir / "backtest_2020.json", "Backtest artifact"),
     ]
     st.dataframe(pd.DataFrame(lineage_rows), width="stretch", hide_index=True)
 
