@@ -202,7 +202,8 @@ def show_gold_rerun_tab(role: str) -> None:
         prog.empty()
         if ok:
             st.cache_data.clear()
-            st.session_state.pop("audit_report", None)
+            for _k in ["audit_report", "backtest_payload", "_backtest_payload_hash", "backtest_payload_loaded_at"]:
+                st.session_state.pop(_k, None)
             st.success("Gold analyses completed successfully.")
             with st.spinner("Updating audit report..."):
                 run_and_cache_audit()
