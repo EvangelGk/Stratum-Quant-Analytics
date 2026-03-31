@@ -228,9 +228,12 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
         return created
 
     for key, value in results.items():
-        # Validation: Prevent saving empty payloads for critical artifacts
+        # Validation: log and skip empty payloads for critical artifacts instead of
+        # raising, which would abort the entire export and leave no summary file.
         if key == "backtest_2020" and (value is None or (isinstance(value, dict) and not value) or (isinstance(value, list) and not value)):
-            raise ValueError(f"Attempting to save empty payload for critical artifact: {key}")
+            logger.warning("Skipping empty payload for critical artifact: %s", key)
+            created[key] = "empty_payload_skipped"
+            continue
         try:
             created[key] = _write_analysis_artifact(str(key), value)
         except Exception:

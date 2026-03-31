@@ -960,6 +960,9 @@ class AutomatedOptimizationLoop:
                     "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
                     "Τα αρχεία επαναφέρθηκαν στην προηγούμενη κατάσταση.\n\n"
                     "Αποτυχίες:\n" + "\n".join(f"  • {html.escape(f)}" for f in failures)
+                    "The solution passed the syntax check but failed Financial Validation.\n"
+                    "Files have been reverted to their previous state.\n\n"
+                    "Failures:\n" + "\n".join(f"  • {html.escape(f)}" for f in failures)
                 )
                 return False, "[GATE FAILED] " + "; ".join(failures)
 
@@ -3361,6 +3364,7 @@ class FullStackAuditOrchestrator:
                 self._hitl.notify(
                     "⚠️ <b>Regression Gate FAILED</b>\n"
                     "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
+                    "The solution passed the syntax check but failed Financial Validation.\n"
                     f"Details: {html.escape(rg_report[:400])}"
                 )
                 _log_optimizer_telemetry(self._root, "code_fix_regression_failed", {"report": rg_report})

@@ -85,7 +85,7 @@ def _render_api_keys_status() -> None:
 
     st.markdown("### 🔐 API Keys Status")
     if not missing:
-        st.success("🟢 Connected: όλα τα αναγκαία API keys είναι διαθέσιμα")
+        st.success("🟢 Connected: All required API keys are available.")
     elif llm_ok:
         st.warning("🟡 Partial: τουλάχιστον ένα LLM key διαθέσιμο")
     else:
