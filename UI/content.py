@@ -96,34 +96,3 @@ ANALYSIS_HELP: dict[str, dict[str, str]] = {
         "use": "Predictive modelling with model comparison and feature ranking.",
     },
 }
-
-PIPELINE_STAGES = [
-    (
-        "Prerequisites check",
-        "Verifies Python version, installed packages, and API key presence.",
-    ),
-    (
-        "Configuration load",
-        "Reads environment variables, API keys, and sets processing parameters.",
-    ),
-    (
-        "Data fetching",
-        "Downloads stock prices, economic indicators, and global data from APIs.",
-    ),
-    (
-        "Bronze layer",
-        "Organises raw files, applies initial cleaning, updates the data catalog.",
-    ),
-    (
-        "Silver layer",
-        "Validates schemas, imputes missing values, detects and clips outliers.",
-    ),
-    (
-        "Gold layer",
-        "Builds master table, runs analyses, applies governance decisions.",
-    ),
-    (
-        "Export results",
-        "Saves analysis files and governance decisions to user-scoped folders.",
-    ),
-]
