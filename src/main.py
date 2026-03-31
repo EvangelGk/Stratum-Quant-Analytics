@@ -228,6 +228,9 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
         return created
 
     for key, value in results.items():
+        # Validation: Prevent saving empty payloads for critical artifacts
+        if key == "backtest_2020" and (value is None or (isinstance(value, dict) and not value) or (isinstance(value, list) and not value)):
+            raise ValueError(f"Attempting to save empty payload for critical artifact: {key}")
         try:
             created[key] = _write_analysis_artifact(str(key), value)
         except Exception:
@@ -467,5 +470,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

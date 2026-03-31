@@ -84,10 +84,24 @@ def _read_json_cached(path_str: str, mtime_ns: int) -> dict:
     path = Path(path_str)
     if not path.exists():
         return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+
+    # Retry logic for potentially empty/corrupted files
+    for attempt in range(3):
+        try:
+            content = path.read_text(encoding="utf-8")
+            if not content.strip():  # Check if file is empty or only whitespace
+                raise ValueError("File is empty or contains only whitespace.")
+            return json.loads(content)
+        except (json.JSONDecodeError, ValueError) as e:
+            if attempt < 2:  # Retry up to 2 times (total 3 attempts)
+                import time
+                time.sleep(0.5)
+            else:
+                st.error(f"Failed to read JSON file after multiple attempts: {path.name}. Error: {e}")
+                return {}
+        except Exception:
+            return {} # For other unexpected errors, return empty dict
+    return {} # Should not be reached, but for type safety
 
 
 @st.cache_data(show_spinner=False)
