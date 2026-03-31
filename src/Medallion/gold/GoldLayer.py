@@ -1236,10 +1236,10 @@ class GoldLayer:
             )
         except AnalysisError as e:
             self.logger.error(f"Analysis error in backtest_2020: {e}")
-            results["backtest_2020"] = None
+            results["backtest_2020"] = {"status": "failed", "error": str(e), "error_type": "AnalysisError"}
         except Exception as e:
             self.logger.error(f"Unexpected error in backtest_2020: {e}")
-            results["backtest_2020"] = None
+            results["backtest_2020"] = {"status": "failed", "error": str(e), "error_type": type(e).__name__}
 
         # Write worst-case aggregated governance file so Auditor has a single
         # stable artifact to read regardless of how many tickers were analysed.

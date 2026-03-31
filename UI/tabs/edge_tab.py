@@ -468,6 +468,20 @@ def show_edge_arsenal_tab() -> None:
                 if child.is_dir():
                     available_profiles.append(child.name)
 
+        # Check whether the backtest returned a structured error dict (exception was captured).
+        _ar_path_diag = OUTPUT_DIR / "analysis_results.json"
+        if _ar_path_diag.exists():
+            try:
+                _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
+                _bt_diag = (_raw_diag.get("results") or {}).get("backtest_2020")
+                if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "failed":
+                    st.error(
+                        f"**Backtest failed with exception** ({_bt_diag.get('error_type', '?')}):  \n"
+                        f"`{_bt_diag.get('error', 'unknown error')}`"
+                    )
+            except Exception:
+                pass
+
         # Check whether the governance gate specifically blocked the backtest.
         gov_block = _check_governance_block()
         if gov_block:
@@ -510,6 +524,8 @@ def show_edge_arsenal_tab() -> None:
                         st.caption(f"backtest_2020 value: `{bt_raw[:200]}`")
                     elif isinstance(bt_raw, dict):
                         st.caption(f"backtest_2020 keys: `{list(bt_raw.keys())[:10]}`")
+                        if bt_raw.get("status") == "failed":
+                            st.error(f"**Backtest error** ({bt_raw.get('error_type', '?')}): {bt_raw.get('error', '?')}")
                     generated_at = raw.get("generated_at")
                     st.caption(f"generated_at: `{generated_at}`")
                 except Exception as _e:
