@@ -375,7 +375,12 @@ def _simulate_risk_managed_returns(
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
     vol_scale = (inv_vol_target / ann_vol).clip(lower=0.10, upper=1.00).to_numpy(dtype=float)
-    desired_pos = raw_signal * vol_scale
+
+    # Benchmark-anchored positioning:
+    # keep structural long exposure, use model as tactical tilt.
+    core_pos = np.where(trend, 0.95, 0.25).astype(float)
+    tilt_pos = raw_signal * (0.45 * vol_scale)
+    desired_pos = np.clip(core_pos + tilt_pos, 0.0, 1.35)
 
     exec_pos = np.roll(desired_pos, 1)
     exec_pos[0] = 0.0
@@ -411,7 +416,7 @@ def _simulate_risk_managed_returns(
         days_in_trade += 1
 
         trailing_breach = (peak_trade - cum_trade) > (atr_multiplier * entry_atr)
-        hard_loss = cum_trade < -min(atr_multiplier * entry_atr, 0.08)
+        hard_loss = cum_trade < -min(atr_multiplier * entry_atr, 0.12)
         timed_exit = max_hold_days > 0 and days_in_trade >= max_hold_days
         if (trailing_breach or hard_loss or timed_exit) and (i + 1) < n:
             stop_next[i + 1] = True
@@ -483,7 +488,7 @@ def _optimize_entry_threshold(
     best = {"threshold": 0.75, "score": -1e9, "stats": {}}
     bench = np.asarray(actual_train, dtype=float)
     for th in candidates:
-        strat_ret, _ = _simulate_risk_managed_returns(
+        strat_ret, pos = _simulate_risk_managed_returns(
             pred_z=pred_z_train,
             actual_arr=actual_train,
             in_uptrend=trend_train,
@@ -498,11 +503,17 @@ def _optimize_entry_threshold(
         pf = float(stats["profit_factor"]) if isinstance(stats.get("profit_factor"), (int, float)) and np.isfinite(float(stats["profit_factor"])) else 0.0
         expectancy = float(stats.get("expectancy", 0.0))
         mdd = abs(float(stats.get("mdd", 0.0)))
+        ir = float(stats["ir"]) if isinstance(stats.get("ir"), (int, float)) else -1.0
+        ann = float(stats.get("ann_return", 0.0))
+        bench_ann = _annualized_return(bench[: len(strat_ret)], periods_per_year=252)
+        ann_alpha = ann - float(bench_ann)
         score = (
             (expectancy * 2500.0)
             + (max(pf - 1.0, 0.0) * 35.0)
             + (max(sharpe, 0.0) * 12.0)
-            - (mdd * 80.0)
+            + (max(ir, 0.0) * 10.0)
+            + (ann_alpha * 35.0)
+            - (mdd * 120.0)
             + (active_ratio * 10.0)
         )
         if score > float(best["score"]):
