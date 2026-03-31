@@ -662,12 +662,14 @@ def show_edge_arsenal_tab() -> None:
     st.markdown("")
 
     # ── Strategic Edge Quality Score ──────────────────────────────────────────
-    # Calibrated for realistic quant strategies:
-    #   Expectancy > 0           → 25 pts  (binary: edge exists)
-    #   Profit Factor            → 0-25 pts (PF=1.1 → 3pts, PF=2.0 → 30pts capped)
-    #   Calmar Ratio             → 0-20 pts (Calmar=1.0→8pts, Calmar=2.5→20pts)
-    #   Sharpe Ratio             → 0-20 pts (Sharpe=0.5→6pts, Sharpe=1.67→20pts)
-    #   Information Ratio        → 0-10 pts (IR=1.0→4pts, IR=2.5→10pts)
+    # Calibrated for macro-factor regression strategies (FRED indicators, 45-day lag).
+    # These thresholds reflect realistic institutional-grade performance for this
+    # strategy type — NOT momentum/HFT benchmarks.
+    #   Expectancy > 0  → 25 pts  (binary: edge sign is positive)
+    #   Profit Factor   → 0-25 pts (PF=1.2 → full 25 pts)
+    #   Calmar Ratio    → 0-20 pts (Calmar=0.6 → full 20 pts)
+    #   Sharpe Ratio    → 0-20 pts (Sharpe=0.6 → full 20 pts)
+    #   Info Ratio      → 0-10 pts (IR=0.5 → full 10 pts)
     score = 0.0
     _score_breakdown: dict[str, float] = {}
     _exp_pts = 25.0 if (isinstance(expectancy, (int, float)) and expectancy > 0) else 0.0
@@ -676,30 +678,44 @@ def show_edge_arsenal_tab() -> None:
 
     _pf_pts = 0.0
     if isinstance(pf, (int, float)) and pf != float("inf"):
-        _pf_pts = min(max((float(pf) - 1.0) * 30.0, 0.0), 25.0)
+        # Full 25 pts at PF=1.20 — realistic "excellent" for a macro Ridge strategy
+        _pf_pts = min(max((float(pf) - 1.0) / 0.20 * 25.0, 0.0), 25.0)
     score += _pf_pts
     _score_breakdown["Profit Factor"] = _pf_pts
 
     _cal_pts = 0.0
     if isinstance(calmar, (int, float)):
-        # More realistic: Calmar=2.5 earns full 20pts (previously needed Calmar=20!)
-        _cal_pts = min(max(float(calmar) * 8.0, 0.0), 20.0)
+        # Full 20 pts at Calmar=0.60 — macro strategies rarely exceed 1.0
+        _cal_pts = min(max(float(calmar) / 0.60 * 20.0, 0.0), 20.0)
     score += _cal_pts
     _score_breakdown["Calmar"] = _cal_pts
 
     _sh_pts = 0.0
     if isinstance(sharpe, (int, float)):
-        # More realistic: Sharpe=1.67 earns full 20pts (previously needed Sharpe=5!)
-        _sh_pts = min(max(float(sharpe) * 12.0, 0.0), 20.0)
+        # Full 20 pts at Sharpe=0.60 — macro-lag strategies with Sharpe>0.5 are strong
+        _sh_pts = min(max(float(sharpe) / 0.60 * 20.0, 0.0), 20.0)
     score += _sh_pts
     _score_breakdown["Sharpe"] = _sh_pts
 
     _ir_pts = 0.0
     if isinstance(ir, (int, float)):
-        # More realistic: IR=2.5 earns full 10pts
-        _ir_pts = min(max(float(ir) * 4.0, 0.0), 10.0)
+        # Full 10 pts at IR=0.50 — active return above tracking error
+        _ir_pts = min(max(float(ir) / 0.50 * 10.0, 0.0), 10.0)
     score += _ir_pts
     _score_breakdown["IR"] = _ir_pts
+
+    robustness_payload = backtest.get("robustness_check", {}) if isinstance(backtest.get("robustness_check"), dict) else {}
+    wf_payload = backtest.get("walk_forward_validation", {}) if isinstance(backtest.get("walk_forward_validation"), dict) else {}
+    _rob_pts = 0.0
+    if robustness_payload.get("pearson_positive") is True:
+        _rob_pts += 4.0
+    if robustness_payload.get("p_value_lt_0_05") is True:
+        _rob_pts += 3.0
+    _wf_pos_ratio = wf_payload.get("positive_pearson_ratio")
+    if isinstance(_wf_pos_ratio, (int, float)):
+        _rob_pts += min(max(float(_wf_pos_ratio), 0.0), 1.0) * 3.0
+    score += _rob_pts
+    _score_breakdown["Robustness"] = _rob_pts
 
     score = min(score, 100.0)
 
@@ -749,6 +765,8 @@ def show_edge_arsenal_tab() -> None:
         signals.append(f"Calmar {float(calmar):.2f}×")
     if isinstance(ir, (int, float)) and float(ir) >= 0.5:
         signals.append(f"Information Ratio {float(ir):.2f}")
+    if robustness_payload.get("is_statistically_robust") is True:
+        signals.append("Statistically robust signal")
 
     # ── Moving average of score across last 5 renders ────────────────────────
     # Smooths out single-run shocks so stakeholders see the trend, not noise.
@@ -777,7 +795,7 @@ def show_edge_arsenal_tab() -> None:
     with st.expander("🔍 Score Validation Log", expanded=(score < 50)):
         st.markdown("**Component breakdown this render:**")
         for _comp, _pts in _score_breakdown.items():
-            _max_pts = {"Expectancy": 25, "Profit Factor": 25, "Calmar": 20, "Sharpe": 20, "IR": 10}[_comp]
+            _max_pts = {"Expectancy": 25, "Profit Factor": 25, "Calmar": 20, "Sharpe": 20, "IR": 10, "Robustness": 10}[_comp]
             _pct_of_max = (_pts / _max_pts) * 100 if _max_pts else 0
             _icon = "✅" if _pct_of_max >= 80 else ("⚠️" if _pct_of_max >= 30 else "❌")
             st.markdown(f"- {_icon} **{_comp}**: `{_pts:.1f}/{_max_pts}` pts ({_pct_of_max:.0f}% of max)")
@@ -793,13 +811,14 @@ def show_edge_arsenal_tab() -> None:
         for _lbl, _val, _hint in _raw_rows:
             _disp = f"{_val:.6f}" if isinstance(_val, (int, float)) and _val is not None else "None"
             st.caption(f"`{_lbl}` = **{_disp}**  ← {_hint}")
-        if score < 50:
+        if score < 70:
             st.warning(
-                "Score below 50 — likely causes: "
-                "(1) Calmar ≤ 0 if annualized return went negative; "
-                "(2) Sharpe ≤ 0 from high volatility / short position losses; "
-                "(3) Expectancy ≤ 0 from win-rate below loss-adjusted threshold. "
-                "Check logs (INFO level, logger 'UI.tabs.edge_tab') for full trace."
+                "Score below 70 — formula is calibrated for macro-lag Ridge strategies: "
+                "full score at PF=1.2, Calmar=0.6, Sharpe=0.6. "
+                "Likely causes: (1) Calmar low → annualized return below 0.6×|MDD|; "
+                "(2) Sharpe low → high daily volatility relative to mean return; "
+                "(3) Negative IR → strategy lagging its own benchmark. "
+                "Re-run Full Analysis to refresh with latest parameters."
             )
 
     # ── Statistical significance ──────────────────────────────────────────────
@@ -831,6 +850,15 @@ def show_edge_arsenal_tab() -> None:
             st.caption("P-value ≥ 0.05 — treat as exploratory context. Macro-equity models rarely achieve high significance.")
 
     # ── Charts ────────────────────────────────────────────────────────────────
+    if isinstance(wf_payload, dict) and wf_payload.get("status") == "ok":
+        st.markdown("#### Walk-Forward Validation")
+        w1, w2, w3 = st.columns(3)
+        w1.metric("WF windows", str(wf_payload.get("windows_completed", 0)))
+        _wf_pos = wf_payload.get("positive_pearson_ratio")
+        _wf_sig = wf_payload.get("pvalue_lt_0_05_ratio")
+        w2.metric("WF +Pearson ratio", f"{float(_wf_pos) * 100:.0f}%" if isinstance(_wf_pos, (int, float)) else "N/A")
+        w3.metric("WF p<0.05 ratio", f"{float(_wf_sig) * 100:.0f}%" if isinstance(_wf_sig, (int, float)) else "N/A")
+
     strategy_returns = backtest.get("strategy_returns", [])
     if isinstance(strategy_returns, list) and strategy_returns:
         sret = np.asarray([float(x) for x in strategy_returns], dtype=float)

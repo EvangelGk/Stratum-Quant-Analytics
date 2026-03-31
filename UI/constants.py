@@ -15,8 +15,8 @@ def _get_data_user_id() -> str:
 USER_ID = _get_data_user_id()
 
 # Core data directories
-RAW_DIR = ROOT / "data" / "raw"
 USER_DATA_DIR = ROOT / "data" / "users" / USER_ID
+RAW_DIR = USER_DATA_DIR / "raw"
 PROCESSED_DIR = USER_DATA_DIR / "processed"
 GOLD_DIR = USER_DATA_DIR / "gold"
 OUTPUT_DIR = ROOT / "output" / USER_ID
