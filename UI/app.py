@@ -165,7 +165,9 @@ def _render_optimizer_approval_panel() -> None:
 
 def _render_pre_optimizer_lag_heatmap() -> None:
     """Render lag-correlation heatmap (1-20 days) before optimizer execution."""
-    master_path = PROJECT_ROOT / "data" / "gold" / "master_table.parquet"
+    import os as _os_hm
+    _hm_user = _os_hm.environ.get("DATA_USER_ID", "default").strip() or "default"
+    master_path = PROJECT_ROOT / "data" / "users" / _hm_user / "gold" / "master_table.parquet"
     if not master_path.exists():
         st.caption("No Gold master table found yet. Run Full Analysis first.")
         return
