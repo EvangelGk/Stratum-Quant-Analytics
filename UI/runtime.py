@@ -468,33 +468,51 @@ def rerun_stress_test_only(
     return result
 
 
+def _is_valid_json_artifact(path: Path) -> bool:
+    """Return True if *path* exists, is non-empty, and contains parseable JSON."""
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if not text.strip():
+            return False
+        json.loads(text)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     """
     Re-run only the Gold layer analyses, ensuring a total reset for cache and session state.
-    This function explicitly clears Streamlit's caches and purges relevant session state
-    keys before starting the pipeline to prevent stale data from being shown.
+
+    Backup strategy — copy-on-write (NOT rename):
+      Old artifact files are *copied* to .bak, leaving the originals in place.
+      This eliminates the "Not Found" window that existed when rename() was used:
+      with rename the file disappeared between the backup and the pipeline write.
+      Now the UI always has access to the previous valid snapshot during the run.
+      After success the .bak copies are deleted.
+      After failure only files that became invalid (corrupt/empty) are restored
+      from .bak; files that were successfully updated are kept as-is.
     """
-    # 0. Hard Reset: Delete old output files for the current user profile to force regeneration.
     bootstrap_env_from_secrets(override=True)
     active_user_id = os.environ.get("DATA_USER_ID", "default")
     active_output_dir = ROOT / "output" / active_user_id
     active_audit_report_path = active_output_dir / "audit_report.json"
 
-    # Back up old artifacts instead of deleting them outright.
-    # If the pipeline fails the backups are restored so the UI never shows
-    # "No backtest payload found" due to a failed/killed run.
-    _artifacts_to_reset = [
+    _artifacts_to_track = [
         active_output_dir / "analysis_results.json",
         active_output_dir / "backtest_2020.json",
         active_output_dir / "stress_test.json",
         active_audit_report_path,
     ]
+    # Copy-on-write: preserve originals during the run so the UI never sees "Not Found".
     _backup_map: dict[Path, Path] = {}
-    for f in _artifacts_to_reset:
+    for f in _artifacts_to_track:
         bak = f.with_suffix(f.suffix + ".bak")
         try:
             if f.exists():
-                f.rename(bak)
+                shutil.copy2(f, bak)   # copy, NOT rename — original stays in place
                 _backup_map[f] = bak
         except OSError:
             pass
@@ -595,13 +613,11 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
         output = log_path.read_text(encoding="utf-8", errors="ignore")
         ok = proc.returncode == 0
     except (PipelineSubprocessError, PipelineProgressTrackingError):
-        # Re-raise to be handled by the caller, which should show an error message.
         raise
     except Exception as exc:
         raise PipelineExecutionError(f"Unexpected Gold-only error: {exc}") from exc
     finally:
         if progress_bar is not None:
-            # This ensures the progress bar always reaches 100%, addressing the "hang" perception.
             progress_bar.progress(1.0, text="100% — Completed!" if ok else "100% — Failed")
 
         if log_path is not None:
@@ -610,26 +626,84 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
             except OSError:
                 pass
 
+        _run_ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+
         if ok:
-            # Success: remove backups (new files already written by pipeline).
-            for bak in _backup_map.values():
-                try:
-                    bak.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            # ── Validate that the pipeline actually wrote valid output ──────────
+            # The subprocess may exit 0 but still fail to produce a parseable file
+            # (e.g. governance gate blocked output, disk full, serialization error).
+            # If the critical backtest artifact is missing or corrupt, treat the
+            # run as a soft failure so the UI shows an actionable message.
+            _bt_path = active_output_dir / "backtest_2020.json"
+            _ar_path = active_output_dir / "analysis_results.json"
+            _bt_valid = _is_valid_json_artifact(_bt_path)
+            _ar_valid = _is_valid_json_artifact(_ar_path)
+            _artifacts_valid = _bt_valid or _ar_valid   # at least one must exist
+
+            if _artifacts_valid:
+                # Full success: clean up .bak copies, they are no longer needed.
+                for bak in _backup_map.values():
+                    try:
+                        bak.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                st.session_state["_gold_run_status"] = {
+                    "status": "success",
+                    "ts": _run_ts,
+                    "user_id": active_user_id,
+                    "error": None,
+                }
+                # Navigate to Arsenal tab so the user immediately sees the new results.
+                # selected_page MUST be set before st.rerun() — the RerunException
+                # (BaseException) prevents the caller from ever running after this point.
+                st.session_state["selected_page"] = "💎 Edge Arsenal"
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.rerun()
+            else:
+                # Pipeline exited 0 but produced no valid output artifacts.
+                # Restore backups and surface a clear error to the user.
+                ok = False
+                _err = (
+                    "Pipeline exited successfully but produced no valid backtest output. "
+                    f"backtest_2020.json valid={_bt_valid}, analysis_results.json valid={_ar_valid}. "
+                    "This usually means the Governance Gate blocked the run or a serialization "
+                    "error occurred. Check the logs for details."
+                )
+                st.session_state["_gold_run_status"] = {
+                    "status": "failed",
+                    "ts": _run_ts,
+                    "user_id": active_user_id,
+                    "error": _err,
+                }
+                for original, bak in _backup_map.items():
+                    try:
+                        if bak.exists() and not _is_valid_json_artifact(original):
+                            bak.replace(original)
+                    except OSError:
+                        pass
         else:
-            # Failure: restore backups so the UI keeps showing old results
-            # instead of "No backtest payload found".
+            # ── Pipeline failed: selective restore ───────────────────────────
+            # Only restore files that were corrupted/removed by the failed run.
+            # Files the pipeline successfully updated (valid JSON) are kept.
+            _restored: list[str] = []
             for original, bak in _backup_map.items():
                 try:
-                    if bak.exists() and not original.exists():
-                        bak.rename(original)
+                    if bak.exists() and not _is_valid_json_artifact(original):
+                        bak.replace(original)
+                        _restored.append(original.name)
                 except OSError:
                     pass
-
-        # Force a UI refresh on success to pull in the new data immediately.
-        if ok:
-            st.rerun()
+            _err_msg = (
+                f"Gold-only run failed (exit code non-zero). "
+                f"Restored {len(_restored)} artifact(s) from backup: {_restored or 'none needed'}."
+            )
+            st.session_state["_gold_run_status"] = {
+                "status": "failed",
+                "ts": _run_ts,
+                "user_id": active_user_id,
+                "error": _err_msg,
+            }
 
     return ok, output.strip()
 
