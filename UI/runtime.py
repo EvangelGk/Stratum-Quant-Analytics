@@ -469,14 +469,31 @@ def rerun_stress_test_only(
 
 
 def _is_valid_json_artifact(path: Path) -> bool:
-    """Return True if *path* exists, is non-empty, and contains parseable JSON."""
+    """Return True if *path* exists, is non-empty, contains parseable JSON,
+    and has NOT been replaced by a governance-gate block string.
+
+    A governance-blocked artifact contains {"value": "blocked_by_governance_gate:..."}
+    or has results["backtest_2020"] set to that string.  Such files are valid JSON
+    but carry no usable backtest payload, so they must not be treated as success.
+    """
     if not path.exists():
         return False
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
         if not text.strip():
             return False
-        json.loads(text)
+        data = json.loads(text)
+        # Detect governance block in individual artifact file ({"value": "blocked_by..."})
+        if isinstance(data, dict):
+            wrapped = data.get("value")
+            if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
+                return False
+            # Detect governance block in analysis_results summary file
+            results = data.get("results")
+            if isinstance(results, dict):
+                bt = results.get("backtest_2020")
+                if isinstance(bt, str) and bt.startswith("blocked_by_governance_gate"):
+                    return False
         return True
     except (OSError, ValueError):
         return False
