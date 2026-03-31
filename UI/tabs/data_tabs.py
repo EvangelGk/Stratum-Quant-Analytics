@@ -1009,7 +1009,7 @@ def _render_stress_rerun_controls() -> None:
                 "scenario": scenario_choice,
                 "ticker": ticker_choice or "ALL",
             }
-            st.success("Stress test ολοκληρώθηκε. Το αποτέλεσμα αποθηκεύτηκε και εμφανίζεται ακριβώς από κάτω.")
+            st.success("Stress test completed. The result has been saved and is displayed below.")
         except Exception as exc:
             st.error(f"Stress rerun failed: {exc}")
 
