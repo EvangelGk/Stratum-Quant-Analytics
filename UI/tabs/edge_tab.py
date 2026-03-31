@@ -491,6 +491,40 @@ def show_edge_arsenal_tab() -> None:
         st.caption(f"🔍 Active OUTPUT_DIR: `{OUTPUT_DIR}`")
         if available_profiles:
             st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
+
+        # ── Deep diagnostics: show raw artifact contents so we can see exactly
+        # what the pipeline wrote (governance block, empty, wrong structure, etc.)
+        with st.expander("🔬 Raw artifact diagnostics (click to debug)", expanded=False):
+            ar_path = OUTPUT_DIR / "analysis_results.json"
+            bt_path = OUTPUT_DIR / "backtest_2020.json"
+            st.caption(f"`analysis_results.json` exists: **{ar_path.exists()}**")
+            st.caption(f"`backtest_2020.json` exists: **{bt_path.exists()}**")
+            if ar_path.exists():
+                try:
+                    raw = json.loads(ar_path.read_text(encoding="utf-8", errors="ignore"))
+                    result_keys = raw.get("result_keys") or list((raw.get("results") or {}).keys())
+                    st.caption(f"result_keys: `{result_keys}`")
+                    bt_raw = (raw.get("results") or {}).get("backtest_2020")
+                    st.caption(f"backtest_2020 value type: `{type(bt_raw).__name__}`")
+                    if isinstance(bt_raw, str):
+                        st.caption(f"backtest_2020 value: `{bt_raw[:200]}`")
+                    elif isinstance(bt_raw, dict):
+                        st.caption(f"backtest_2020 keys: `{list(bt_raw.keys())[:10]}`")
+                    generated_at = raw.get("generated_at")
+                    st.caption(f"generated_at: `{generated_at}`")
+                except Exception as _e:
+                    st.caption(f"Could not parse analysis_results.json: `{_e}`")
+            if bt_path.exists():
+                try:
+                    raw2 = json.loads(bt_path.read_text(encoding="utf-8", errors="ignore"))
+                    inner = raw2.get("value")
+                    st.caption(f"backtest_2020.json → value type: `{type(inner).__name__}`")
+                    if isinstance(inner, str):
+                        st.caption(f"value: `{inner[:200]}`")
+                    elif isinstance(inner, dict):
+                        st.caption(f"value keys: `{list(inner.keys())[:10]}`")
+                except Exception as _e:
+                    st.caption(f"Could not parse backtest_2020.json: `{_e}`")
         return
 
     if source_path is not None:
