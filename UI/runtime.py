@@ -526,6 +526,9 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
         # Edge Arsenal KPIs
         "expectancy", "profit_factor", "calmar", "sharpe", "info_ratio", "max_drawdown",
         "strategy_final_value", "alpha_vs_benchmark", "audit_report",
+        # Backtest payload cache — must be cleared so _load_backtest_payload_to_session
+        # re-reads from disk on the next render instead of serving the stale snapshot.
+        "backtest_payload", "_backtest_payload_hash", "backtest_payload_loaded_at",
         # AI Agent state
         "_ai_agent_instance", "_ai_agent_signature", "ai_messages", "ai_ready",
         "ai_ready_checked_at", "ai_last_error", "ai_last_ollama_ok", "ai_pending_question",
@@ -657,6 +660,7 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
                 # selected_page MUST be set before st.rerun() — the RerunException
                 # (BaseException) prevents the caller from ever running after this point.
                 st.session_state["selected_page"] = "💎 Edge Arsenal"
+                st.session_state["data_refreshed"] = True
                 st.cache_data.clear()
                 st.cache_resource.clear()
                 st.rerun()

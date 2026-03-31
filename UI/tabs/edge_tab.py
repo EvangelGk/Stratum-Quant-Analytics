@@ -432,6 +432,8 @@ def show_edge_arsenal_tab() -> None:
                 if child.is_dir():
                     available_profiles.append(child.name)
         st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
+        st.caption(f"🔍 Searching in: `{output_root}`")
+        st.caption(f"🔍 Active OUTPUT_DIR: `{OUTPUT_DIR}`")
         if available_profiles:
             st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
         return
