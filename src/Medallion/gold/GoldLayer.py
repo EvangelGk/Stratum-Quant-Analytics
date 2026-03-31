@@ -1456,10 +1456,10 @@ class GoldLayer:
                         results[key] = future.result()
                     except AnalysisError as e:
                         self.logger.error(f"Analysis error in {key}: {e}")
-                        results[key] = None
+                        results[key] = {"status": "failed", "error": str(e), "error_type": "AnalysisError"}
                     except Exception as e:
                         self.logger.error(f"Unexpected error in {key}: {e}")
-                        results[key] = None
+                        results[key] = {"status": "failed", "error": str(e), "error_type": type(e).__name__}
             except AttributeError:
                 # Test doubles may not implement internal Future synchronization fields.
                 for future in submitted_futures:
@@ -1468,10 +1468,10 @@ class GoldLayer:
                         results[key] = future.result()
                     except AnalysisError as e:
                         self.logger.error(f"Analysis error in {key}: {e}")
-                        results[key] = None
+                        results[key] = {"status": "failed", "error": str(e), "error_type": "AnalysisError"}
                     except Exception as e:
                         self.logger.error(f"Unexpected error in {key}: {e}")
-                        results[key] = None
+                        results[key] = {"status": "failed", "error": str(e), "error_type": type(e).__name__}
 
         # Write worst-case aggregated governance file.
         try:
