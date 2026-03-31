@@ -354,6 +354,42 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
     return {}, None
 
 
+def _check_governance_block() -> str | None:
+    """Return the governance block reason string if the latest run was blocked, else None."""
+    output_root = OUTPUT_DIR.parent
+    if not output_root.is_dir():
+        return None
+    # Collect analysis_results.json files sorted newest-first
+    candidates: list[tuple[float, Path]] = []
+    for profile_dir in output_root.iterdir():
+        if not profile_dir.is_dir():
+            continue
+        p = profile_dir / "analysis_results.json"
+        if p.is_file():
+            try:
+                candidates.append((p.stat().st_mtime, p))
+            except OSError:
+                continue
+    for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        results = payload.get("results", {})
+        if not isinstance(results, dict):
+            continue
+        bt_val = results.get("backtest_2020")
+        if isinstance(bt_val, str) and bt_val.startswith("blocked_by_governance_gate"):
+            return bt_val
+        # Also check individual backtest_2020.json artifact
+        p2 = path.parent / "backtest_2020.json"
+        if p2.is_file():
+            inner = _read_json(p2)
+            wrapped = inner.get("value") if isinstance(inner, dict) else None
+            if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
+                return wrapped
+    return None
+
+
 def show_edge_arsenal_tab() -> None:
     _render_hero_style()
     st.markdown(
@@ -431,7 +467,26 @@ def show_edge_arsenal_tab() -> None:
             for child in output_root.iterdir():
                 if child.is_dir():
                     available_profiles.append(child.name)
-        st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
+
+        # Check whether the governance gate specifically blocked the backtest.
+        gov_block = _check_governance_block()
+        if gov_block:
+            reasons_str = gov_block.replace("blocked_by_governance_gate:", "").strip()
+            st.error(
+                "**Governance Gate blocked the backtest.**  \n"
+                "The pipeline ran successfully but the model risk score exceeded the fail threshold (0.6). "
+                "No backtest metrics are displayed until the model passes governance checks.  \n"
+                f"**Reasons:** `{reasons_str}`"
+            )
+            st.info(
+                "To resolve: check the **Governance** tab for the full report. "
+                "The model_risk_score must drop below 0.6. "
+                "You can lower thresholds via `.env` (e.g. `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD=0.85`) "
+                "or re-run Full Analysis after adjusting tickers/macro factors."
+            )
+        else:
+            st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
+
         st.caption(f"🔍 Searching in: `{output_root}`")
         st.caption(f"🔍 Active OUTPUT_DIR: `{OUTPUT_DIR}`")
         if available_profiles:
