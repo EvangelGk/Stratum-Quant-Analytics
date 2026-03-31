@@ -483,7 +483,7 @@ def _optimize_entry_threshold(
     best = {"threshold": 0.75, "score": -1e9, "stats": {}}
     bench = np.asarray(actual_train, dtype=float)
     for th in candidates:
-        strat_ret, _ = _simulate_risk_managed_returns(
+        strat_ret, positions = _simulate_risk_managed_returns(
             pred_z=pred_z_train,
             actual_arr=actual_train,
             in_uptrend=trend_train,
@@ -493,7 +493,7 @@ def _optimize_entry_threshold(
             max_hold_days=50,
         )
         stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
-        active_ratio = float(np.mean(np.abs(pos) > 1e-10)) if len(pos) else 0.0
+        active_ratio = float(np.mean(np.abs(positions) > 1e-10)) if len(positions) else 0.0
         sharpe = float(stats["sharpe"]) if isinstance(stats.get("sharpe"), (int, float)) else -2.0
         pf = float(stats["profit_factor"]) if isinstance(stats.get("profit_factor"), (int, float)) and np.isfinite(float(stats["profit_factor"])) else 0.0
         expectancy = float(stats.get("expectancy", 0.0))

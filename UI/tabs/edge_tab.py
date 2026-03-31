@@ -11,13 +11,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from UI.constants import (
-    OUTPUT_DIR,
-    RAW_DIR,
-    USER_DATA_DIR,
-)
+from UI.constants import get_active_paths
 
 _log = logging.getLogger(__name__)
+
+
+def _paths() -> dict:
+    return get_active_paths()
 
 
 def _read_json(path: Path) -> dict:
@@ -309,72 +309,13 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
 
 def _discover_backtest_payload() -> tuple[dict, Path | None]:
-    """
-    Discover the most recent backtest payload by scanning all output profiles.
-
-    It searches for 'analysis_results.json' and 'backtest_2020.json' across all
-    subdirectories of the main output folder, sorts them by modification time,
-    and uses the newest valid file. This ensures the dashboard always shows
-    the latest results, regardless of the active user profile.
-    """
-    output_root = OUTPUT_DIR.parent
-    if not output_root.is_dir():
+    """Discover backtest payload only inside the active session output directory."""
+    output_dir = _paths()["output"]
+    if not output_dir.is_dir():
         return {}, None
-
     candidates: list[tuple[float, Path]] = []
-    # Scan all subdirectories in the output folder (e.g., output/default, output/user_a)
-    for profile_dir in output_root.iterdir():
-        if not profile_dir.is_dir():
-            continue
-        for filename in ("analysis_results.json", "backtest_2020.json"):
-            p = profile_dir / filename
-            if p.is_file():
-                try:
-                    candidates.append((p.stat().st_mtime, p))
-                except OSError:
-                    continue
-
-    # Sort candidates by modification time, newest first
-    for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
-        payload = _read_json(path)
-        bt = _extract_backtest(payload)
-        if bt:
-            # Found a valid backtest in the newest file, return it.
-            return bt, path
-
-        # Special handling for analysis_results.json which might point to another file
-        if path.name == "analysis_results.json" and isinstance(payload, dict):
-            artifacts = payload.get("artifacts")
-            if isinstance(artifacts, dict):
-                bt_path_raw = artifacts.get("backtest_2020")
-                if isinstance(bt_path_raw, str) and bt_path_raw.strip():
-                    bt_path = Path(bt_path_raw)
-                    if not bt_path.is_absolute():
-                        # Resolve path relative to the analysis_results.json file
-                        bt_path = path.parent / bt_path
-
-                    if bt_path.is_file():
-                        inner_payload = _read_json(bt_path)
-                        bt = _extract_backtest(inner_payload)
-                        if bt:
-                            # This is the actual backtest file, return its contents and path
-                            return bt, bt_path
-
-    # If no valid backtest is found after checking all candidates
-    return {}, None
-
-
-def _check_governance_block() -> str | None:
-    """Return the governance block reason string if the latest run was blocked, else None."""
-    output_root = OUTPUT_DIR.parent
-    if not output_root.is_dir():
-        return None
-    # Collect analysis_results.json files sorted newest-first
-    candidates: list[tuple[float, Path]] = []
-    for profile_dir in output_root.iterdir():
-        if not profile_dir.is_dir():
-            continue
-        p = profile_dir / "analysis_results.json"
+    for filename in ("analysis_results.json", "backtest_2020.json"):
+        p = output_dir / filename
         if p.is_file():
             try:
                 candidates.append((p.stat().st_mtime, p))
@@ -382,21 +323,45 @@ def _check_governance_block() -> str | None:
                 continue
     for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
         payload = _read_json(path)
+        bt = _extract_backtest(payload)
+        if bt:
+            return bt, path
+
+        if path.name == "analysis_results.json" and isinstance(payload, dict):
+            artifacts = payload.get("artifacts")
+            if isinstance(artifacts, dict):
+                bt_path_raw = artifacts.get("backtest_2020")
+                if isinstance(bt_path_raw, str) and bt_path_raw.strip():
+                    bt_path = Path(bt_path_raw)
+                    if not bt_path.is_absolute():
+                        bt_path = path.parent / bt_path
+
+                    if bt_path.is_file():
+                        inner_payload = _read_json(bt_path)
+                        bt = _extract_backtest(inner_payload)
+                        if bt:
+                            return bt, bt_path
+    return {}, None
+
+
+def _check_governance_block() -> str | None:
+    """Return governance block reason from the active session artifacts only."""
+    path = _paths()["output"] / "analysis_results.json"
+    if path.is_file():
+        payload = _read_json(path)
         if not isinstance(payload, dict):
-            continue
+            return None
         results = payload.get("results", {})
-        if not isinstance(results, dict):
-            continue
-        bt_val = results.get("backtest_2020")
-        if isinstance(bt_val, str) and bt_val.startswith("blocked_by_governance_gate"):
-            return bt_val
-        # Also check individual backtest_2020.json artifact
-        p2 = path.parent / "backtest_2020.json"
-        if p2.is_file():
-            inner = _read_json(p2)
-            wrapped = inner.get("value") if isinstance(inner, dict) else None
-            if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
-                return wrapped
+        if isinstance(results, dict):
+            bt_val = results.get("backtest_2020")
+            if isinstance(bt_val, str) and bt_val.startswith("blocked_by_governance_gate"):
+                return bt_val
+    p2 = _paths()["output"] / "backtest_2020.json"
+    if p2.is_file():
+        inner = _read_json(p2)
+        wrapped = inner.get("value") if isinstance(inner, dict) else None
+        if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
+            return wrapped
     return None
 
 
@@ -445,24 +410,16 @@ def show_edge_arsenal_tab() -> None:
     # Determine active profile paths for lineage. By default, use paths from
     # constants, but if a more recent artifact was found, derive paths from its
     # location to ensure the health check is for the correct run.
-    lineage_output_dir = OUTPUT_DIR
-    lineage_user_data_dir = USER_DATA_DIR
-    profile_name = "default"
+    paths = _paths()
+    lineage_output_dir = paths["output"]
+    lineage_user_data_dir = paths["user_root"]
 
     if source_path:
         active_output_dir = source_path.parent
-        profile_name = active_output_dir.name
         lineage_output_dir = active_output_dir
 
-        # Assume a parallel directory structure for data, e.g., output/profile_A <=> data/users/profile_A
-        # This resolves the issue where lineage pointed to a default/stale user data folder.
-        # We find the base 'data/users' dir by going up from the default USER_DATA_DIR constant.
-        if USER_DATA_DIR.name.lower() in ("default", profile_name.lower(), "main") and len(USER_DATA_DIR.parts) > 1:
-            lineage_user_data_dir = USER_DATA_DIR.parent / profile_name
-        # else: keep the constant path as a fallback if the structure is unexpected
-
     lineage_rows = [
-        _artifact_row(RAW_DIR / "catalog.json", "Bronze catalog"),
+        _artifact_row(paths["raw"] / "catalog.json", "Bronze catalog"),
         _artifact_row(lineage_user_data_dir / "processed" / "quality" / "quality_report.json", "Silver quality"),
         _artifact_row(lineage_user_data_dir / "gold" / "master_table.parquet", "Gold master"),
         _artifact_row(lineage_output_dir / "analysis_results.json", "Output summary"),
@@ -472,14 +429,14 @@ def show_edge_arsenal_tab() -> None:
 
     if not isinstance(backtest, dict) or not backtest:
         available_profiles: list[str] = []
-        output_root = OUTPUT_DIR.parent
+        output_root = paths["output"].parent
         if output_root.exists():
             for child in output_root.iterdir():
                 if child.is_dir():
                     available_profiles.append(child.name)
 
         # Check whether the backtest returned a structured error dict (exception was captured).
-        _ar_path_diag = OUTPUT_DIR / "analysis_results.json"
+        _ar_path_diag = paths["output"] / "analysis_results.json"
         if _ar_path_diag.exists():
             try:
                 _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
@@ -512,15 +469,15 @@ def show_edge_arsenal_tab() -> None:
             st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
 
         st.caption(f"🔍 Searching in: `{output_root}`")
-        st.caption(f"🔍 Active OUTPUT_DIR: `{OUTPUT_DIR}`")
+        st.caption(f"🔍 Active OUTPUT_DIR: `{paths['output']}`")
         if available_profiles:
             st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
 
         # ── Deep diagnostics: show raw artifact contents so we can see exactly
         # what the pipeline wrote (governance block, empty, wrong structure, etc.)
         with st.expander("🔬 Raw artifact diagnostics (click to debug)", expanded=False):
-            ar_path = OUTPUT_DIR / "analysis_results.json"
-            bt_path = OUTPUT_DIR / "backtest_2020.json"
+            ar_path = paths["output"] / "analysis_results.json"
+            bt_path = paths["output"] / "backtest_2020.json"
             st.caption(f"`analysis_results.json` exists: **{ar_path.exists()}**")
             st.caption(f"`backtest_2020.json` exists: **{bt_path.exists()}**")
             if ar_path.exists():

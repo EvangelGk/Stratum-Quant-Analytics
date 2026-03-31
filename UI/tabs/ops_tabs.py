@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from UI.constants import OUTPUT_DIR, ROLE_PERMISSIONS, UI_SCHEDULE_PATH, USER_DATA_DIR
+from UI.constants import ROLE_PERMISSIONS, UI_SCHEDULE_PATH, get_active_paths
 from UI.helpers import load_session_history, read_json
 from UI.runtime import get_audit_report, run_and_cache_audit
 from UI.tabs.assistant_tab import render_inline_ai_section
@@ -128,12 +128,13 @@ def _render_pipeline_lineage() -> None:
     active_user = os.getenv("DATA_USER_ID", "default")
     st.caption(f"Active profile: {active_user}")
 
-    raw_catalog = USER_DATA_DIR / "raw" / "catalog.json"
-    silver_quality = USER_DATA_DIR / "processed" / "quality" / "quality_report.json"
-    gold_master = USER_DATA_DIR / "gold" / "master_table.parquet"
-    out_analysis = OUTPUT_DIR / "analysis_results.json"
-    out_backtest = OUTPUT_DIR / "backtest_2020.json"
-    out_audit = OUTPUT_DIR / "audit_report.json"
+    paths = get_active_paths()
+    raw_catalog = paths["raw"] / "catalog.json"
+    silver_quality = paths["processed"] / "quality" / "quality_report.json"
+    gold_master = paths["gold"] / "master_table.parquet"
+    out_analysis = paths["output"] / "analysis_results.json"
+    out_backtest = paths["output"] / "backtest_2020.json"
+    out_audit = paths["output"] / "audit_report.json"
 
     rows = [
         _artifact_facts(raw_catalog),
@@ -145,7 +146,8 @@ def _render_pipeline_lineage() -> None:
     ]
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    available_profiles = sorted([p.name for p in OUTPUT_DIR.parent.iterdir() if p.is_dir()]) if OUTPUT_DIR.parent.exists() else []
+    output_root = paths["output"].parent
+    available_profiles = sorted([p.name for p in output_root.iterdir() if p.is_dir()]) if output_root.exists() else []
     if available_profiles:
         st.caption("Detected output profiles: " + ", ".join(available_profiles))
 

@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from UI.constants import OUTPUT_DIR, PIPELINE_STAGES, ROLE_PERMISSIONS  # noqa: E402
+from UI.constants import PIPELINE_STAGES, ROLE_PERMISSIONS, get_active_paths, initialize_active_paths  # noqa: E402
 from UI.helpers import clear_file_caches, compute_artifact_signature  # noqa: E402
 from UI.rendering import (  # noqa: E402
     DIRECTIONS_MOD,
@@ -96,8 +96,22 @@ def _render_api_keys_status() -> None:
         st.caption(f"Missing: {', '.join(missing)}")
 
 
+def _paths() -> dict:
+    return get_active_paths()
+
+
+def _output_dir() -> Path:
+    out = _paths().get("output")
+    if isinstance(out, Path):
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+    fallback = PROJECT_ROOT / "output" / "default_local0"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def _approval_queue_path() -> Path:
-    return OUTPUT_DIR / ".optimizer" / "approval_queue.json"
+    return _output_dir() / ".optimizer" / "approval_queue.json"
 
 
 def _read_approval_queue() -> dict | None:
@@ -165,9 +179,7 @@ def _render_optimizer_approval_panel() -> None:
 
 def _render_pre_optimizer_lag_heatmap() -> None:
     """Render lag-correlation heatmap (1-20 days) before optimizer execution."""
-    import os as _os_hm
-    _hm_user = _os_hm.environ.get("DATA_USER_ID", "default").strip() or "default"
-    master_path = PROJECT_ROOT / "data" / "users" / _hm_user / "gold" / "master_table.parquet"
+    master_path = _paths()["gold"] / "master_table.parquet"
     if not master_path.exists():
         st.caption("No Gold master table found yet. Run Full Analysis first.")
         return
@@ -284,6 +296,34 @@ def _sync_artifact_freshness() -> None:
         st.rerun()
 
 
+def _handle_analyst_identity() -> None:
+    if "analyst_id" not in st.session_state:
+        initialize_active_paths()
+
+    current_id = str(st.session_state.get("analyst_id", "default"))
+    entered_id = st.text_input(
+        "Analyst ID",
+        value=current_id,
+        help="Data is isolated per session in data/users/{analyst_id}_{session_hash}/",
+    ).strip() or "default"
+
+    if entered_id != current_id:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        active_page = st.session_state.get("selected_page")
+        st.session_state.clear()
+        initialize_active_paths(entered_id)
+        if active_page:
+            st.session_state["selected_page"] = active_page
+        st.session_state["_artifacts_updated_message"] = (
+            f"Analyst switched to '{entered_id}'. Session state and caches reset."
+        )
+        st.rerun()
+
+    active = _paths()
+    st.caption(f"Active isolate: `{active.get('user_key', 'default_local0')}`")
+
+
 def _check_admin_pin(entered: str) -> bool:
     """Constant-time comparison of entered PIN against the stored secret.
 
@@ -298,6 +338,8 @@ def _check_admin_pin(entered: str) -> bool:
 
 def _render_sidebar() -> str:
     with st.sidebar:
+        _handle_analyst_identity()
+        st.markdown("---")
         # ── Role selector ────────────────────────────────────────────────
         role_selection = st.selectbox("Role", options=["Viewer", "Analyst", "Admin"], index=1)
 
@@ -475,7 +517,7 @@ def _render_sidebar() -> str:
             )
 
             # Show last optimizer report if available
-            _opt_report = OUTPUT_DIR / "optimizer_report.json"
+            _opt_report = _output_dir() / "optimizer_report.json"
             if _opt_report.exists():
                 with st.expander("Last optimizer report", expanded=False):
                     try:
@@ -517,6 +559,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     inject_styles()
+    initialize_active_paths(str(st.session_state.get("analyst_id", "default")))
 
     if hasattr(st, "fragment"):
 
@@ -660,7 +703,7 @@ def _load_backtest_payload_to_session() -> None:
     Called once per ``main()`` invocation before any tabs are rendered.
     """
     try:
-        artifact_path = OUTPUT_DIR / "analysis_results.json"
+        artifact_path = _output_dir() / "analysis_results.json"
 
         if not artifact_path.exists():
             return

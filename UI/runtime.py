@@ -15,13 +15,11 @@ from typing import Any, Dict, Optional
 import streamlit as st
 
 from UI.constants import (
-    AUDIT_REPORT_PATH,
     LOGS_DIR,
-    OUTPUT_DIR,
     ROOT,
     UI_SCHEDULE_PATH,
     UI_SNAPSHOT_PATH,
-    USER_DATA_DIR,
+    get_active_paths,
 )
 from UI.helpers import read_json
 
@@ -55,6 +53,26 @@ class PipelineProgressTrackingError(PipelineExecutionError):
     pass
 
 
+def _paths() -> dict:
+    return get_active_paths()
+
+
+def _output_dir() -> Path:
+    out = _paths()["output"]
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _user_data_dir() -> Path:
+    user_root = _paths()["user_root"]
+    user_root.mkdir(parents=True, exist_ok=True)
+    return user_root
+
+
+def _audit_report_path() -> Path:
+    return _output_dir() / "audit_report.json"
+
+
 def run_pipeline(
     mode: str = "actual",
     progress_bar: Any = None,
@@ -65,9 +83,9 @@ def run_pipeline(
     """
     # 0. Hard Reset: Delete old output files for the current user profile if not resuming.
     bootstrap_env_from_secrets(override=True)
+    os.environ["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     if not resume_from_checkpoint:
-        active_user_id = os.environ.get("DATA_USER_ID", "default")
-        active_output_dir = ROOT / "output" / active_user_id
+        active_output_dir = _output_dir()
         active_audit_report_path = active_output_dir / "audit_report.json"
 
         output_files_to_delete = [
@@ -104,6 +122,7 @@ def run_pipeline(
     # Ensure Streamlit secrets are reflected in os.environ before subprocess spawn
     # so DATA_USER_ID and governance knobs are visible to src/main.py.
     env = os.environ.copy()
+    env["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     env["ENVIRONMENT"] = mode
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
     # Force stochastic run to ensure new numbers are generated, per user request.
@@ -193,7 +212,7 @@ def run_pipeline(
 def show_pipeline_failure(raw_output: str) -> None:
     st.error("Pipeline did not complete. Here is what happened:")
 
-    q_report = read_json(USER_DATA_DIR / "processed" / "quality" / "quality_report.json")
+    q_report = read_json(_paths()["processed"] / "quality" / "quality_report.json")
     files_info = q_report.get("files", {}) if isinstance(q_report, dict) else {}
     summary_info = q_report.get("summary", {}) if isinstance(q_report, dict) else {}
     failed_entities = [(name, meta) for name, meta in files_info.items() if isinstance(meta, dict) and meta.get("status") == "failed"]
@@ -250,6 +269,7 @@ def _load_audit_class() -> Any:
 
 def run_and_cache_audit() -> dict[str, Any]:
     bootstrap_env_from_secrets(override=True)
+    os.environ["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     AuditorClass = _load_audit_class()
     if AuditorClass is None:
         result: dict[str, Any] = {"status": "ERROR", "error": "Auditor module could not be loaded."}
@@ -265,8 +285,8 @@ def run_and_cache_audit() -> dict[str, Any]:
     should_persist = result_score >= 20 and str(result.get("status", "")).upper() != "ERROR"
     try:
         if should_persist:
-            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            AUDIT_REPORT_PATH.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+            _output_dir().mkdir(parents=True, exist_ok=True)
+            _audit_report_path().write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     except OSError:
         pass
     return result
@@ -322,7 +342,7 @@ def _normalize_audit_report_payload(report: Any) -> dict[str, Any]:
 
 def get_audit_report() -> dict[str, Any]:
     session_report = _normalize_audit_report_payload(st.session_state.get("audit_report"))
-    disk_report = _normalize_audit_report_payload(read_json(AUDIT_REPORT_PATH))
+    disk_report = _normalize_audit_report_payload(read_json(_audit_report_path()))
 
     session_score = _audit_report_completeness(session_report)
     disk_score = _audit_report_completeness(disk_report)
@@ -338,7 +358,7 @@ def get_audit_report() -> dict[str, Any]:
 
     # Fallback: scan other output profiles and pick the most complete report.
     try:
-        output_root = OUTPUT_DIR.parent
+        output_root = _output_dir().parent
         best_report: dict[str, Any] = {}
         best_score = -1
         if output_root.exists():
@@ -412,8 +432,8 @@ def rerun_stress_test_only(
     gold = GoldLayer(config)
 
     # Mirror MedallionPipeline user-scoped paths so UI uses the same dataset.
-    gold.processed_path = USER_DATA_DIR / "processed"
-    gold.gold_path = USER_DATA_DIR / "gold"
+    gold.processed_path = _paths()["processed"]
+    gold.gold_path = _paths()["gold"]
     gold.governance_path = gold.gold_path / "governance"
     gold.governance_path.mkdir(parents=True, exist_ok=True)
     gold.initialize_data()
@@ -428,15 +448,15 @@ def rerun_stress_test_only(
         scenario_name=scenario_name or "geopolitical_conflict",
     )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    stress_file = OUTPUT_DIR / "stress_test.json"
+    _output_dir().mkdir(parents=True, exist_ok=True)
+    stress_file = _output_dir() / "stress_test.json"
     serializable_result = _to_serializable(result)
     stress_file.write_text(
         json.dumps({"value": serializable_result}, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
-    summary_file = OUTPUT_DIR / "analysis_results.json"
+    summary_file = _output_dir() / "analysis_results.json"
     if summary_file.exists():
         try:
             summary_payload: Dict[str, Any] = json.loads(summary_file.read_text(encoding="utf-8"))
@@ -513,8 +533,9 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
       from .bak; files that were successfully updated are kept as-is.
     """
     bootstrap_env_from_secrets(override=True)
-    active_user_id = os.environ.get("DATA_USER_ID", "default")
-    active_output_dir = ROOT / "output" / active_user_id
+    os.environ["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
+    active_user_id = str(_paths().get("user_key", "default_local0"))
+    active_output_dir = _output_dir()
     active_audit_report_path = active_output_dir / "audit_report.json"
 
     _artifacts_to_track = [
@@ -557,7 +578,7 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
 
     # Remove only the 'gold' entry from the checkpoint so Bronze/Silver stay skipped
     # but Gold is forced to re-run from scratch (not served from cache).
-    _cp_path = USER_DATA_DIR / "pipeline_checkpoint.json"
+    _cp_path = _user_data_dir() / "pipeline_checkpoint.json"
     if _cp_path.exists():
         try:
             _cp = json.loads(_cp_path.read_text(encoding="utf-8"))
@@ -571,6 +592,7 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
                 pass
 
     env = os.environ.copy()
+    env["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     env["ENVIRONMENT"] = "actual"
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # keep Bronze/Silver skipped; Gold key was removed above
     # Force stochastic run to ensure new numbers are generated, per user request.
@@ -743,6 +765,7 @@ def run_optimizer_background(
     file at output/.optimizer/approval_queue.json.
     """
     env = os.environ.copy()
+    env["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     env["OPTIMIZER_TARGET_SCORE"] = str(target_score)
     env["OPTIMIZER_MAX_ITERATIONS"] = str(max_iterations)
     cmd = [
@@ -820,8 +843,10 @@ def clear_all_run_history() -> dict[str, Any]:
         targets.append(LOGS_DIR / "application_catalog.log")
         targets.append(UI_SNAPSHOT_PATH)
         targets.append(UI_SCHEDULE_PATH)
-    if OUTPUT_DIR.exists():
-        for child in OUTPUT_DIR.glob("*"):
+    output_dir = _output_dir()
+    user_data_dir = _user_data_dir()
+    if output_dir.exists():
+        for child in output_dir.glob("*"):
             targets.append(child)
     for path in targets:
         if path.exists() and path.is_file():
@@ -838,11 +863,11 @@ def clear_all_run_history() -> dict[str, Any]:
         if exc_info and len(exc_info) >= 2 and isinstance(exc_info[1], PermissionError):
             skipped_locked.append(p)
 
-    if USER_DATA_DIR.exists():
-        shutil.rmtree(USER_DATA_DIR, ignore_errors=False, onerror=_on_rmtree_error)
+    if user_data_dir.exists():
+        shutil.rmtree(user_data_dir, ignore_errors=False, onerror=_on_rmtree_error)
         deleted_dirs += 1
-    if OUTPUT_DIR.exists():
-        shutil.rmtree(OUTPUT_DIR, ignore_errors=False, onerror=_on_rmtree_error)
+    if output_dir.exists():
+        shutil.rmtree(output_dir, ignore_errors=False, onerror=_on_rmtree_error)
         deleted_dirs += 1
 
     for key in [
