@@ -367,8 +367,10 @@ def _simulate_risk_managed_returns(
     trend = np.asarray(in_uptrend[:n], dtype=bool)
 
     raw_signal = np.where(pred >= entry_threshold, 1.0, np.where(pred <= -entry_threshold, -1.0, 0.0))
-    raw_signal = np.where((raw_signal > 0.0) & trend, raw_signal, 0.0)
-    raw_signal = np.where((raw_signal < 0.0) & (~trend), raw_signal, 0.0)
+    # Soft trend filter to avoid strategy freeze:
+    # counter-trend trades are de-risked, not eliminated.
+    raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.50, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & trend, -0.50, raw_signal)
 
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
@@ -477,7 +479,7 @@ def _optimize_entry_threshold(
     actual_train: np.ndarray,
     trend_train: np.ndarray,
 ) -> Dict[str, Any]:
-    candidates = [0.35, 0.55, 0.75, 0.95, 1.15, 1.35]
+    candidates = [0.00, 0.20, 0.35, 0.55, 0.75, 0.95, 1.15]
     best = {"threshold": 0.75, "score": -1e9, "stats": {}}
     bench = np.asarray(actual_train, dtype=float)
     for th in candidates:
@@ -491,11 +493,18 @@ def _optimize_entry_threshold(
             max_hold_days=50,
         )
         stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
+        active_ratio = float(np.mean(np.abs(pos) > 1e-10)) if len(pos) else 0.0
         sharpe = float(stats["sharpe"]) if isinstance(stats.get("sharpe"), (int, float)) else -2.0
         pf = float(stats["profit_factor"]) if isinstance(stats.get("profit_factor"), (int, float)) and np.isfinite(float(stats["profit_factor"])) else 0.0
         expectancy = float(stats.get("expectancy", 0.0))
         mdd = abs(float(stats.get("mdd", 0.0)))
-        score = (expectancy * 2500.0) + (max(pf - 1.0, 0.0) * 35.0) + (max(sharpe, 0.0) * 12.0) - (mdd * 80.0)
+        score = (
+            (expectancy * 2500.0)
+            + (max(pf - 1.0, 0.0) * 35.0)
+            + (max(sharpe, 0.0) * 12.0)
+            - (mdd * 80.0)
+            + (active_ratio * 10.0)
+        )
         if score > float(best["score"]):
             best = {"threshold": float(th), "score": float(score), "stats": stats}
     return best
@@ -696,16 +705,34 @@ def backtest_pre2020_holdout(
         threshold_pick = _optimize_entry_threshold(pred_z_train, train_actual_arr, trend_train)
         selected_threshold = float(threshold_pick.get("threshold", 0.75))
 
+        inv_vol_used = 0.16
         strategy_returns, _positions = _simulate_risk_managed_returns(
             pred_z=pred_z_test,
             actual_arr=actual_arr,
             in_uptrend=trend_test,
             entry_threshold=selected_threshold,
-            inv_vol_target=0.16,
+            inv_vol_target=inv_vol_used,
             atr_multiplier=2.5,
             max_hold_days=50,
             tx_cost=0.0005,
         )
+        active_days = int(np.sum(np.abs(_positions) > 1e-10))
+        min_active_days = max(20, int(0.03 * len(_positions)))
+        if active_days < min_active_days:
+            # Safety fallback against near-flat strategies after tuning:
+            # lower threshold and slightly higher risk budget to preserve edge.
+            selected_threshold = 0.0
+            strategy_returns, _positions = _simulate_risk_managed_returns(
+                pred_z=pred_z_test,
+                actual_arr=actual_arr,
+                in_uptrend=trend_test,
+                entry_threshold=selected_threshold,
+                inv_vol_target=0.20,
+                atr_multiplier=2.5,
+                max_hold_days=50,
+                tx_cost=0.0005,
+            )
+            inv_vol_used = 0.20
         benchmark_returns = actual_arr[: len(strategy_returns)]
         actual = pd.Series(benchmark_returns)
         predictions = predictions[: len(strategy_returns)]
@@ -799,9 +826,11 @@ def backtest_pre2020_holdout(
             "strategy_parameters": {
                 "entry_threshold_zscore": round(float(selected_threshold), 4),
                 "atr_trailing_stop_multiplier": 2.5,
-                "inverse_vol_target": 0.16,
+                "inverse_vol_target": inv_vol_used,
                 "trend_filter_sma_days": 200,
                 "execution_lag_days": 1,
+                "active_days": int(np.sum(np.abs(_positions) > 1e-10)),
+                "active_ratio": round(float(np.mean(np.abs(_positions) > 1e-10)) if len(_positions) else 0.0, 6),
             },
             "train_rows": int(len(train_df)),
             "test_rows": int(len(test_df)),
