@@ -5,7 +5,7 @@ from typing import Any
 
 import streamlit as st
 
-from UI.constants import GOLD_DIR, OUTPUT_DIR, PIPELINE_STAGES, PROCESSED_DIR, RAW_DIR
+from UI.constants import PIPELINE_STAGES, get_active_paths
 from UI.helpers import count_files
 
 
@@ -116,11 +116,12 @@ def inject_styles() -> None:
 def show_kpis() -> None:
     @st.cache_data(show_spinner=False, ttl=60)
     def _kpi_counts() -> dict[str, int]:
+        paths = get_active_paths()
         return {
-            "raw": count_files(RAW_DIR, "**/*.parquet"),
-            "processed": count_files(PROCESSED_DIR, "**/*.parquet"),
-            "gold_runs": count_files(GOLD_DIR / "governance", "governance_decision_*.json"),
-            "artifacts": count_files(OUTPUT_DIR, "**/*"),
+            "raw": count_files(paths["raw"], "**/*.parquet"),
+            "processed": count_files(paths["processed"], "**/*.parquet"),
+            "gold_runs": count_files(paths["gold"] / "governance", "governance_decision_*.json"),
+            "artifacts": count_files(paths["output"], "**/*"),
         }
 
     k = _kpi_counts()
@@ -135,7 +136,7 @@ def show_kpis() -> None:
     # Last Calculated timestamp — read directly from analysis_results.json (no cache)
     try:
         import json as _json
-        _summary = OUTPUT_DIR / "analysis_results.json"
+        _summary = get_active_paths()["output"] / "analysis_results.json"
         if _summary.exists():
             _ts = _json.loads(_summary.read_text(encoding="utf-8")).get("generated_at", "")
             if _ts:

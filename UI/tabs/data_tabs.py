@@ -9,11 +9,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from UI.constants import (
-    GOLD_DIR,
-    OUTPUT_DIR,
-    PROCESSED_DIR,
     PROJECT_ROOT,
-    RAW_DIR,
+    get_active_paths,
 )
 from UI.content import ANALYSIS_HELP, LAYER_HELP
 from UI.helpers import load_session_history
@@ -25,6 +22,10 @@ from UI.traffic_light import (
     score_model_risk,
     score_oos_r2,
 )
+
+
+def _paths() -> dict:
+    return get_active_paths()
 
 
 def _human_label(text: str) -> str:
@@ -146,7 +147,7 @@ def _coerce_optional_bool(value: object) -> bool | None:
 
 
 def _load_analysis_payload(name: str, summary_results: dict | None = None) -> object:
-    path = OUTPUT_DIR / f"{name}.json"
+    path = _paths()["output"] / f"{name}.json"
     if path.exists():
         return _unwrap_value_payload(_read_json_fast(path))
 
@@ -1078,7 +1079,7 @@ def _render_governance_consistency_panel(results: dict) -> None:
 
     # Prefer the live governance_decision_current_run.json (written each pipeline run)
     # over the potentially stale output/default/governance_gate.json artifact.
-    _live_gov_path = GOLD_DIR / "governance" / "governance_decision_current_run.json"
+    _live_gov_path = _paths()["gold"] / "governance" / "governance_decision_current_run.json"
     if _live_gov_path.exists():
         _live = _read_json_fast(_live_gov_path)
         if isinstance(_live, dict):
@@ -1197,7 +1198,7 @@ def show_data_tab() -> None:
         index=1,
     )
     info = LAYER_HELP[selected_layer]
-    layer_paths = {"raw": RAW_DIR, "processed": PROCESSED_DIR, "gold": GOLD_DIR}
+    layer_paths = {"raw": _paths()["raw"], "processed": _paths()["processed"], "gold": _paths()["gold"]}
 
     st.info(f"**{info['what']}**")
     with st.expander("What does this layer contain?", expanded=False):
@@ -1238,8 +1239,8 @@ def show_analytics_tab() -> None:
         if MAIN_MOD is not None:
             render_logger_message("Analysis summary", getattr(MAIN_MOD, "MAIN_OUTPUT_EXPLANATION", ""))
 
-    corr_path = OUTPUT_DIR / "correlation_matrix.csv"
-    summary_path = OUTPUT_DIR / "analysis_results.json"
+    corr_path = _paths()["output"] / "correlation_matrix.csv"
+    summary_path = _paths()["output"] / "analysis_results.json"
     st.markdown("### 🔗 Correlation Matrix")
     corr_help = ANALYSIS_HELP.get("correlation_matrix", {})
     if corr_help:
@@ -1283,8 +1284,8 @@ def show_analytics_tab() -> None:
 
     selected_file = artifacts.get(selected_analysis)
     if not selected_file and selected_analysis == "stress_test":
-        selected_file = str(OUTPUT_DIR / "stress_test.json")
-    full_path = OUTPUT_DIR / selected_file if selected_file and not Path(selected_file).is_absolute() else Path(selected_file)
+        selected_file = str(_paths()["output"] / "stress_test.json")
+    full_path = _paths()["output"] / selected_file if selected_file and not Path(selected_file).is_absolute() else Path(selected_file)
     help_entry = ANALYSIS_HELP.get(selected_analysis, {})
     if help_entry:
         h1, h2, h3 = st.columns(3)
@@ -1325,7 +1326,7 @@ def show_analytics_tab() -> None:
 
 def show_governance_tab() -> None:
     st.subheader("🛡️ Data Governance & Approvals")
-    gov_dir = GOLD_DIR / "governance"
+    gov_dir = _paths()["gold"] / "governance"
     files = sorted(gov_dir.glob("governance_decision_*.json"))
     if not files:
         st.warning("No governance decisions found. Run pipeline first.")
@@ -1403,10 +1404,11 @@ def show_logs_tab() -> None:
 
 def show_output_tab() -> None:
     st.subheader("📦 Output Results Folder")
-    if not OUTPUT_DIR.exists():
+    output_dir = _paths()["output"]
+    if not output_dir.exists():
         st.warning("Output directory not found. Run pipeline first.")
         return
-    output_files = sorted([f for f in OUTPUT_DIR.glob("*") if f.is_file()])
+    output_files = sorted([f for f in output_dir.glob("*") if f.is_file()])
     if not output_files:
         st.warning("No output files found. Run pipeline first.")
         return

@@ -9,7 +9,11 @@ from typing import Any
 
 import pandas as pd
 
-from .constants import GOLD_DIR, LOGS_DIR, OUTPUT_DIR, PROCESSED_DIR, UI_SNAPSHOT_PATH
+from .constants import LOGS_DIR, UI_SNAPSHOT_PATH, get_active_paths
+
+
+def _paths() -> dict[str, Any]:
+    return get_active_paths()
 
 
 def import_first(*module_names: str) -> Any:
@@ -45,16 +49,19 @@ def clear_file_caches() -> None:
 
 def _iter_watched_artifact_files() -> list[Path]:
     files: list[Path] = []
+    output_dir = _paths()["output"]
+    processed_dir = _paths()["processed"]
+    gold_dir = _paths()["gold"]
 
-    if OUTPUT_DIR.exists():
+    if output_dir.exists():
         for pattern in ("*.json", "*.csv", "*.parquet"):
-            files.extend([p for p in OUTPUT_DIR.glob(pattern) if p.is_file()])
+            files.extend([p for p in output_dir.glob(pattern) if p.is_file()])
 
-    quality_report = PROCESSED_DIR / "quality" / "quality_report.json"
+    quality_report = processed_dir / "quality" / "quality_report.json"
     if quality_report.exists():
         files.append(quality_report)
 
-    master_table = GOLD_DIR / "master_table.parquet"
+    master_table = gold_dir / "master_table.parquet"
     if master_table.exists():
         files.append(master_table)
 
@@ -111,9 +118,11 @@ def record_ui_snapshot() -> None:
     if not isinstance(snapshots, list):
         snapshots = []
 
-    output_files = sorted([f for f in OUTPUT_DIR.glob("*") if f.is_file()]) if OUTPUT_DIR.exists() else []
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
-    quality = read_json(PROCESSED_DIR / "quality" / "quality_report.json")
+    output_dir = _paths()["output"]
+    processed_dir = _paths()["processed"]
+    output_files = sorted([f for f in output_dir.glob("*") if f.is_file()]) if output_dir.exists() else []
+    summary = read_json(output_dir / "analysis_results.json")
+    quality = read_json(processed_dir / "quality" / "quality_report.json")
     latest_session = load_session_history(limit=1)
     latest = latest_session[-1] if latest_session else {}
 
@@ -132,7 +141,7 @@ def record_ui_snapshot() -> None:
 
 
 def compute_data_health() -> dict[str, Any]:
-    quality = read_json(PROCESSED_DIR / "quality" / "quality_report.json")
+    quality = read_json(_paths()["processed"] / "quality" / "quality_report.json")
     files = quality.get("files", {}) if isinstance(quality, dict) else {}
     summary = quality.get("summary", {}) if isinstance(quality, dict) else {}
 
@@ -231,11 +240,12 @@ def build_run_comparison() -> dict[str, Any]:
 
 
 def build_explainability_lines() -> list[str]:
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    output_dir = _paths()["output"]
+    summary = read_json(output_dir / "analysis_results.json")
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
     lines: list[str] = []
 
-    gov_path = OUTPUT_DIR / "governance_report.json"
+    gov_path = output_dir / "governance_report.json"
     gov = read_json(gov_path).get("value", {}) if gov_path.exists() else results.get("governance_report", {})
     if isinstance(gov, dict):
         score = gov.get("model_risk_score")
@@ -263,7 +273,7 @@ def build_executive_report_html() -> str:
     health = compute_data_health()
     diff = build_run_comparison()
     explain = build_explainability_lines()
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    summary = read_json(_paths()["output"] / "analysis_results.json")
     keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
 
@@ -369,7 +379,7 @@ def build_executive_report_html() -> str:
 def build_executive_report_text() -> str:
     health = compute_data_health()
     diff = build_run_comparison()
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    summary = read_json(_paths()["output"] / "analysis_results.json")
     keys = summary.get("result_keys", []) if isinstance(summary, dict) else []
     lines = [
         "STRATUM QUANT ANALYTICS - Human Report Snapshot",
@@ -392,7 +402,7 @@ def build_executive_report_text() -> str:
 
 
 def persist_human_report_files() -> dict[str, str]:
-    reports_dir = OUTPUT_DIR / "human_reports"
+    reports_dir = _paths()["output"] / "human_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -446,7 +456,7 @@ def build_smart_alerts() -> list[dict[str, str]]:
 
 
 def correlation_strength_from_output() -> float | None:
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    summary = read_json(_paths()["output"] / "analysis_results.json")
     corr = summary.get("results", {}).get("correlation_matrix", {})
     if not isinstance(corr, dict) or not isinstance(corr.get("data"), list):
         return None

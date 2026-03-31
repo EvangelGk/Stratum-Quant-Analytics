@@ -4,7 +4,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from UI.constants import OUTPUT_DIR, ROLE_PERMISSIONS
+from UI.constants import ROLE_PERMISSIONS, get_active_paths
 from UI.runtime import run_and_cache_audit, run_gold_analyses_only
 from UI.helpers import (
     build_executive_report_html,
@@ -115,7 +115,7 @@ def show_scenario_builder_tab() -> None:
     energy_shock = c2.slider("Energy shock (%)", -20.0, 20.0, 2.0, 0.5)
     rate_shock = c3.slider("Rates shock (%)", -5.0, 5.0, 0.5, 0.25)
 
-    summary = read_json(OUTPUT_DIR / "analysis_results.json")
+    summary = read_json(get_active_paths()["output"] / "analysis_results.json")
     results = summary.get("results", {}) if isinstance(summary, dict) else {}
     elasticity_val = results.get("elasticity")
 
