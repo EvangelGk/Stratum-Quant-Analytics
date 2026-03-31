@@ -166,8 +166,26 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
         return cleaned.strip("_") or "result"
 
     def _write_json(file_path: Path, payload: Any) -> None:
-        with file_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, default=str)
+        """Atomic JSON write: serialize to a .tmp sibling, then rename into place.
+
+        This guarantees the reader always sees either the previous complete file
+        or the new complete file — never a partially-written or empty file.
+        Path.replace() maps to MoveFileEx(REPLACE_EXISTING) on Windows and
+        rename(2) on POSIX, both of which are atomic at the filesystem level
+        as long as source and destination are on the same volume (they always
+        are here because .tmp sits next to the final file).
+        """
+        tmp = file_path.with_suffix(file_path.suffix + ".tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, default=str)
+            tmp.replace(file_path)   # atomic swap
+        except BaseException:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def _write_analysis_artifact(key: str, value: Any) -> str:
         safe_key = _safe_name(key)
@@ -449,3 +467,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from UI.constants import OUTPUT_DIR, USER_DATA_DIR
+
+_log = logging.getLogger(__name__)
 
 
 def _read_json(path: Path) -> dict:
@@ -217,7 +220,12 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
     if isinstance(out.get("strategy_returns"), list) and out["strategy_returns"]:
         try:
-            sret = np.asarray([float(x) for x in out["strategy_returns"]], dtype=float)
+            sret_raw = np.asarray([float(x) for x in out["strategy_returns"]], dtype=float)
+            # Sanitize BEFORE all metric computations: replace NaN/inf and clip
+            # extreme daily returns to ±15%.  This prevents a handful of outlier
+            # observations from skewing Sharpe, Profit Factor, or Expectancy —
+            # which then cascade into a 40-point swing in the composite score.
+            sret = _sanitize_returns(sret_raw)
 
             # Always recompute maximum_drawdown from strategy returns; the value
             # pre-stored in the artifact may have been computed incorrectly (e.g.
@@ -363,6 +371,25 @@ def show_edge_arsenal_tab() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+    # ── Last run status banner ────────────────────────────────────────────────
+    # Populated by run_gold_analyses_only() after every rerun attempt.
+    # Shows a persistent warning when the last run failed so the user knows
+    # they are looking at a previous (possibly stale) snapshot.
+    _run_status: dict = st.session_state.get("_gold_run_status", {})
+    if isinstance(_run_status, dict) and _run_status.get("status") == "failed":
+        _err_detail = _run_status.get("error", "Unknown error")
+        _fail_ts = _run_status.get("ts", "")
+        st.error(
+            f"**Last Gold Layer run failed** ({_fail_ts}) — showing previous snapshot.  \n"
+            f"Details: {_err_detail}",
+            icon="🚨",
+        )
+    elif isinstance(_run_status, dict) and _run_status.get("status") == "success":
+        st.success(
+            f"Gold Layer refreshed successfully at **{_run_status.get('ts', '')}**. Showing latest results.",
+            icon="✅",
+        )
 
     backtest, source_path = _discover_backtest_payload()
     backtest = _compute_missing_metrics(backtest)
@@ -519,25 +546,74 @@ def show_edge_arsenal_tab() -> None:
     #   Sharpe Ratio             → 0-20 pts (Sharpe=0.5→6pts, Sharpe=1.67→20pts)
     #   Information Ratio        → 0-10 pts (IR=1.0→4pts, IR=2.5→10pts)
     score = 0.0
-    if isinstance(expectancy, (int, float)) and expectancy > 0:
-        score += 25.0
+    _score_breakdown: dict[str, float] = {}
+    _exp_pts = 25.0 if (isinstance(expectancy, (int, float)) and expectancy > 0) else 0.0
+    score += _exp_pts
+    _score_breakdown["Expectancy"] = _exp_pts
+
+    _pf_pts = 0.0
     if isinstance(pf, (int, float)) and pf != float("inf"):
-        score += min(max((float(pf) - 1.0) * 30.0, 0.0), 25.0)
+        _pf_pts = min(max((float(pf) - 1.0) * 30.0, 0.0), 25.0)
+    score += _pf_pts
+    _score_breakdown["Profit Factor"] = _pf_pts
+
+    _cal_pts = 0.0
     if isinstance(calmar, (int, float)):
         # More realistic: Calmar=2.5 earns full 20pts (previously needed Calmar=20!)
-        score += min(max(float(calmar) * 8.0, 0.0), 20.0)
+        _cal_pts = min(max(float(calmar) * 8.0, 0.0), 20.0)
+    score += _cal_pts
+    _score_breakdown["Calmar"] = _cal_pts
+
+    _sh_pts = 0.0
     if isinstance(sharpe, (int, float)):
         # More realistic: Sharpe=1.67 earns full 20pts (previously needed Sharpe=5!)
-        score += min(max(float(sharpe) * 12.0, 0.0), 20.0)
+        _sh_pts = min(max(float(sharpe) * 12.0, 0.0), 20.0)
+    score += _sh_pts
+    _score_breakdown["Sharpe"] = _sh_pts
+
+    _ir_pts = 0.0
     if isinstance(ir, (int, float)):
         # More realistic: IR=2.5 earns full 10pts
-        score += min(max(float(ir) * 4.0, 0.0), 10.0)
+        _ir_pts = min(max(float(ir) * 4.0, 0.0), 10.0)
+    score += _ir_pts
+    _score_breakdown["IR"] = _ir_pts
+
     score = min(score, 100.0)
 
+    # ── Validation log: trace what drove the score ────────────────────────────
+    # Emit a structured log entry so developers can diagnose unexpected drops
+    # without having to re-run the pipeline.
+    _log.info(
+        "Edge Quality Score: %.1f/100 | breakdown=%s | raw_metrics={expectancy=%s, pf=%s, calmar=%s, sharpe=%s, ir=%s, mdd=%s}",
+        score,
+        _score_breakdown,
+        expectancy, pf, calmar, sharpe, ir, mdd,
+    )
+    if score < 50:
+        _low_contributors = [k for k, v in _score_breakdown.items() if v < 5.0]
+        _log.warning(
+            "Low Edge Quality Score (%.1f). Zero/near-zero contributors: %s. "
+            "Check for regime filter suppression, negative Calmar (ann_return<0), "
+            "or low Sharpe caused by high volatility in the 2020-2022 holdout window.",
+            score, _low_contributors,
+        )
+
+    # ── Sanity check: alert if score dropped >30pts vs last cached run ────────
+    _prev_score: float | None = st.session_state.get("_edge_score_prev")
+    st.session_state["_edge_score_prev"] = score
+    if _prev_score is not None and (score < _prev_score - 30.0):
+        _dropped_components = {k: v for k, v in _score_breakdown.items() if v < 3.0}
+        st.warning(
+            f"Score dropped **{_prev_score:.0f} → {score:.0f}** (−{_prev_score - score:.0f} pts) since last render. "
+            f"Near-zero components: **{', '.join(_dropped_components.keys()) or 'none'}**. "
+            f"Raw values → Expectancy: `{expectancy}`, PF: `{pf}`, Calmar: `{calmar}`, Sharpe: `{sharpe}`, IR: `{ir}`, MDD: `{mdd}`"
+        )
+
     _score_color = "🟢" if score >= 65 else ("🟡" if score >= 35 else "🔴")
+    _breakdown_str = " | ".join(f"{k}: {v:.0f}pt" for k, v in _score_breakdown.items())
     st.progress(
         score / 100.0,
-        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100 — composite of Expectancy, Profit Factor, Calmar (×8), Sharpe (×12) & IR",
+        text=f"{_score_color} Strategic Edge Quality Score: {score:.0f} / 100  [{_breakdown_str}]",
     )
 
     # ── Validated findings banner ─────────────────────────────────────────────
@@ -551,10 +627,57 @@ def show_edge_arsenal_tab() -> None:
     if isinstance(ir, (int, float)) and float(ir) >= 0.5:
         signals.append(f"Information Ratio {float(ir):.2f}")
 
+    # ── Moving average of score across last 5 renders ────────────────────────
+    # Smooths out single-run shocks so stakeholders see the trend, not noise.
+    _score_history: list[float] = list(st.session_state.get("_edge_score_history", []))
+    _score_history.append(score)
+    if len(_score_history) > 5:
+        _score_history = _score_history[-5:]
+    st.session_state["_edge_score_history"] = _score_history
+    _score_ma = float(np.mean(_score_history))
+
     if signals:
         st.success("**Validated edge signals:** " + " · ".join(signals))
     else:
         st.info("No exceptional threshold triggered in this run. Full diagnostics shown transparently below.")
+
+    if len(_score_history) >= 2:
+        _ma_color = "🟢" if _score_ma >= 65 else ("🟡" if _score_ma >= 35 else "🔴")
+        st.caption(
+            f"{_ma_color} 5-run moving avg score: **{_score_ma:.0f}/100**  "
+            f"(last {len(_score_history)} renders: {', '.join(f'{s:.0f}' for s in _score_history)})"
+        )
+
+    # ── Validation Log expander ───────────────────────────────────────────────
+    # Shows exactly which component drove the score, enabling root-cause analysis
+    # without re-running the full pipeline.
+    with st.expander("🔍 Score Validation Log", expanded=(score < 50)):
+        st.markdown("**Component breakdown this render:**")
+        for _comp, _pts in _score_breakdown.items():
+            _max_pts = {"Expectancy": 25, "Profit Factor": 25, "Calmar": 20, "Sharpe": 20, "IR": 10}[_comp]
+            _pct_of_max = (_pts / _max_pts) * 100 if _max_pts else 0
+            _icon = "✅" if _pct_of_max >= 80 else ("⚠️" if _pct_of_max >= 30 else "❌")
+            st.markdown(f"- {_icon} **{_comp}**: `{_pts:.1f}/{_max_pts}` pts ({_pct_of_max:.0f}% of max)")
+        st.markdown("**Raw metric values feeding the formula:**")
+        _raw_rows = [
+            ("Expectancy/trade", expectancy, "log-return units; >0 = edge"),
+            ("Profit Factor", pf, ">1.0 profitable; >1.5 strong"),
+            ("Calmar Ratio", calmar, "ann_return / |MDD|; >1.0 good"),
+            ("Sharpe Ratio", sharpe, "mean/vol × √252; >0.5 acceptable"),
+            ("Information Ratio", ir, "active_return/TE × √252"),
+            ("Max Drawdown", mdd, "peak-to-trough on equity curve"),
+        ]
+        for _lbl, _val, _hint in _raw_rows:
+            _disp = f"{_val:.6f}" if isinstance(_val, (int, float)) and _val is not None else "None"
+            st.caption(f"`{_lbl}` = **{_disp}**  ← {_hint}")
+        if score < 50:
+            st.warning(
+                "Score below 50 — likely causes: "
+                "(1) Calmar ≤ 0 if annualized return went negative; "
+                "(2) Sharpe ≤ 0 from high volatility / short position losses; "
+                "(3) Expectancy ≤ 0 from win-rate below loss-adjusted threshold. "
+                "Check logs (INFO level, logger 'UI.tabs.edge_tab') for full trace."
+            )
 
     # ── Statistical significance ──────────────────────────────────────────────
     corr = backtest.get("correlation_test", {}) if isinstance(backtest.get("correlation_test"), dict) else {}
