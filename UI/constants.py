@@ -1,8 +1,9 @@
 from pathlib import Path
 import os
 
-# Assuming UI is one level below project root (e.g., scenario-planner/UI)
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Project root is one level up from `scenario-planner/UI/`
+ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = ROOT  # Alias for any code that still uses the old name
 
 # Function to get the user ID, respecting DATA_USER_ID environment variable
 def _get_data_user_id() -> str:
@@ -10,11 +11,21 @@ def _get_data_user_id() -> str:
     # or be part of a different module loading order in UI context.
     return os.getenv("DATA_USER_ID", "default").strip() or "default"
 
+
 USER_ID = _get_data_user_id()
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
-PROCESSED_DIR = PROJECT_ROOT / "data" / "users" / USER_ID / "processed"
-GOLD_DIR = PROJECT_ROOT / "data" / "gold"
-OUTPUT_DIR = PROJECT_ROOT / "output" / USER_ID
+
+# Core data directories
+RAW_DIR = ROOT / "data" / "raw"
+USER_DATA_DIR = ROOT / "data" / "users" / USER_ID
+PROCESSED_DIR = USER_DATA_DIR / "processed"
+GOLD_DIR = USER_DATA_DIR / "gold"
+OUTPUT_DIR = ROOT / "output" / USER_ID
+LOGS_DIR = ROOT / "logs"
+
+# Specific file paths derived from directories
+AUDIT_REPORT_PATH = OUTPUT_DIR / "audit_report.json"
+UI_SNAPSHOT_PATH = LOGS_DIR / "ui_snapshot.json"
+UI_SCHEDULE_PATH = LOGS_DIR / "ui_schedule.json"
 
 ROLE_PERMISSIONS = {
     "Viewer": {"can_run": False, "can_download": True, "can_schedule": False},

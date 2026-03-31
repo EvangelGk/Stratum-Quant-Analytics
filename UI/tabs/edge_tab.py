@@ -11,7 +11,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from UI.constants import OUTPUT_DIR, USER_DATA_DIR
+from UI.constants import (
+    OUTPUT_DIR,
+    RAW_DIR,
+    USER_DATA_DIR,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -127,15 +131,21 @@ def _extract_backtest(candidate: dict) -> dict:
         if inner:
             return inner
 
+    _BACKTEST_KEYS = ("strategy_returns", "maximum_drawdown", "sharpe_ratio", "predictions", "actual")
+
     direct = candidate.get("backtest_2020")
     if isinstance(direct, dict):
-        return direct.get("value", direct) if isinstance(direct, dict) else {}
+        extracted = direct.get("value", direct)
+        if isinstance(extracted, dict) and any(k in extracted for k in _BACKTEST_KEYS):
+            return extracted
     # analysis_results structure
     results = candidate.get("results")
     if isinstance(results, dict):
         bt = results.get("backtest_2020")
         if isinstance(bt, dict):
-            return bt.get("value", bt)
+            extracted = bt.get("value", bt)
+            if isinstance(extracted, dict) and any(k in extracted for k in _BACKTEST_KEYS):
+                return extracted
     # single-artifact structure
     if isinstance(wrapped, dict):
         # May already be the backtest payload
@@ -452,7 +462,7 @@ def show_edge_arsenal_tab() -> None:
         # else: keep the constant path as a fallback if the structure is unexpected
 
     lineage_rows = [
-        _artifact_row(lineage_user_data_dir / "raw" / "catalog.json", "Bronze catalog"),
+        _artifact_row(RAW_DIR / "catalog.json", "Bronze catalog"),
         _artifact_row(lineage_user_data_dir / "processed" / "quality" / "quality_report.json", "Silver quality"),
         _artifact_row(lineage_user_data_dir / "gold" / "master_table.parquet", "Gold master"),
         _artifact_row(lineage_output_dir / "analysis_results.json", "Output summary"),
@@ -560,12 +570,18 @@ def show_edge_arsenal_tab() -> None:
     ir = backtest.get("information_ratio")
     mdd = backtest.get("maximum_drawdown")
 
-    # Check if metrics exist; if not, render partial view with fallback
+    # Check if metrics exist; if not, show specific missing-field alert
     has_metrics = any(v is not None for v in [expectancy, pf, calmar, sharpe, ir, mdd])
     if not has_metrics:
-        st.info(
-            "Backtest data exists but advanced edge metrics (Expectancy, Profit Factor, Calmar, etc.) "
-            "are not yet computed. Please re-run Full Analysis to generate these metrics."
+        missing = [name for name, v in [
+            ("expectancy_per_trade", expectancy), ("profit_factor", pf),
+            ("calmar_ratio", calmar), ("sharpe_ratio", sharpe),
+            ("information_ratio", ir), ("maximum_drawdown", mdd),
+        ] if v is None]
+        st.warning(
+            f"Backtest payload found but all edge metrics are missing: `{', '.join(missing)}`.  \n"
+            "This usually means the backtest artifact is a failed-status object.  \n"
+            "Re-run Full Analysis to generate a complete backtest result."
         )
         return
 
