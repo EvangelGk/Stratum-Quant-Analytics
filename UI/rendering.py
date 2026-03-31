@@ -5,8 +5,7 @@ from typing import Any
 
 import streamlit as st
 
-from UI.constants import GOLD_DIR, OUTPUT_DIR, PROCESSED_DIR, RAW_DIR
-from UI.content import PIPELINE_STAGES
+from UI.constants import GOLD_DIR, OUTPUT_DIR, PIPELINE_STAGES, PROCESSED_DIR, RAW_DIR
 from UI.helpers import count_files
 
 
