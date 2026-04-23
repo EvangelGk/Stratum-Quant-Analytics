@@ -304,7 +304,11 @@ def _handle_analyst_identity() -> None:
     entered_id = st.text_input(
         "Analyst ID",
         value=current_id,
-        help="Data is isolated per session in data/users/{analyst_id}_{session_hash}/",
+        help=(
+            "Data is isolated per analyst by default (data/users/{analyst_id}/). "
+            "Set UI_USER_PATH_MODE=session only if you explicitly want a fresh "
+            "session-hash profile each connection."
+        ),
     ).strip() or "default"
 
     if entered_id != current_id:
@@ -321,7 +325,7 @@ def _handle_analyst_identity() -> None:
         st.rerun()
 
     active = _paths()
-    st.caption(f"Active isolate: `{active.get('user_key', 'default_local0')}`")
+    st.caption(f"Active profile: {active.get('user_key', 'default')}")
 
 
 def _check_admin_pin(entered: str) -> bool:

@@ -41,10 +41,81 @@ def _get_session_hash() -> str:
     return "local0"
 
 
+def _profile_has_payload(user_key: str) -> bool:
+    """Return True when a user profile has meaningful gold/output artifacts."""
+    data_root = ROOT / "data" / "users" / user_key
+    out_root = ROOT / "output" / user_key
+    candidates = [
+        data_root / "gold" / "master_table.parquet",
+        out_root / "analysis_results.json",
+        out_root / "backtest_2020.json",
+    ]
+    return any(p.exists() and p.is_file() and p.stat().st_size > 0 for p in candidates)
+
+
+def _pick_latest_nonempty_profile(base_analyst_id: str) -> str | None:
+    """Find latest non-empty profile key among {analyst_id}_* folders."""
+    prefix = f"{base_analyst_id}_"
+    roots = [ROOT / "data" / "users", ROOT / "output"]
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for base in roots:
+        if not base.exists():
+            continue
+        for child in base.iterdir():
+            if not child.is_dir():
+                continue
+            key = child.name
+            if key.startswith(prefix) and key not in seen:
+                seen.add(key)
+                candidates.append(key)
+    if not candidates:
+        return None
+
+    ranked: list[tuple[float, str]] = []
+    for key in candidates:
+        if not _profile_has_payload(key):
+            continue
+        payload_paths = [
+            ROOT / "data" / "users" / key / "gold" / "master_table.parquet",
+            ROOT / "output" / key / "analysis_results.json",
+            ROOT / "output" / key / "backtest_2020.json",
+        ]
+        latest_mtime = max((p.stat().st_mtime for p in payload_paths if p.exists()), default=0.0)
+        ranked.append((latest_mtime, key))
+
+    if not ranked:
+        return None
+    ranked.sort(reverse=True)
+    return ranked[0][1]
+
+
+def _resolve_user_key(safe_analyst_id: str) -> str:
+    """Resolve the active profile key with stable-by-default behavior.
+
+    Modes:
+    - session: analyst_sessionhash (legacy behavior)
+    - sticky (default): analyst id, but if analyst has no payload yet and
+      previous session-scoped profiles exist with payloads, reuse the latest one.
+    """
+    mode = (os.getenv("UI_USER_PATH_MODE", "sticky") or "sticky").strip().lower()
+    if mode == "session":
+        return f"{safe_analyst_id}_{_get_session_hash()}"
+
+    stable_key = safe_analyst_id
+    if _profile_has_payload(stable_key):
+        return stable_key
+
+    latest_session_key = _pick_latest_nonempty_profile(safe_analyst_id)
+    if latest_session_key:
+        return latest_session_key
+    return stable_key
+
+
 def get_user_paths(analyst_id: str) -> Dict[str, Any]:
     safe_analyst_id = _sanitize_analyst_id(analyst_id)
     session_hash = _get_session_hash()
-    user_key = f"{safe_analyst_id}_{session_hash}"
+    user_key = _resolve_user_key(safe_analyst_id)
     user_root = ROOT / "data" / "users" / user_key
     output_root = ROOT / "output" / user_key
     return {
