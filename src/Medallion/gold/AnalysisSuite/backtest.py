@@ -349,15 +349,44 @@ def _trend_mask_from_log_returns(log_returns: pd.Series, dates: pd.DatetimeIndex
     return (test_px > test_sma).fillna(False).to_numpy(dtype=bool)
 
 
+def _dual_trend_masks_from_log_returns(
+    log_returns: pd.Series,
+    dates: pd.DatetimeIndex,
+    fast_sma: int = 20,
+    slow_sma: int = 200,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (uptrend_mask, downtrend_mask) using a dual-SMA Golden/Death Cross filter.
+
+    Uptrend  : price > fast_sma AND fast_sma > slow_sma  (both SMAs aligned up)
+    Downtrend: price < fast_sma AND fast_sma < slow_sma  (both SMAs aligned down)
+    Neutral  : neither condition — no directional trades taken.
+
+    The fast SMA (default 20-day) detects regime changes weeks before the slow
+    SMA (default 200-day) alone would, eliminating the 'stuck-long' zone that
+    causes the large drawdowns of a single-SMA filter during trend reversals.
+    """
+    lr = pd.to_numeric(log_returns, errors="coerce").fillna(0.0).clip(-0.15, 0.15)
+    px = pd.Series(np.exp(np.cumsum(lr.to_numpy(dtype=float))), index=lr.index)
+    sf = px.rolling(fast_sma, min_periods=fast_sma).mean()
+    ss = px.rolling(slow_sma, min_periods=slow_sma).mean()
+    up = ((px > sf) & (sf > ss)).astype(bool)
+    dn = ((px < sf) & (sf < ss)).astype(bool)
+    up_r = up.reindex(dates, method="pad").fillna(False).to_numpy(dtype=bool)
+    dn_r = dn.reindex(dates, method="pad").fillna(False).to_numpy(dtype=bool)
+    return up_r, dn_r
+
+
 def _simulate_risk_managed_returns(
     pred_z: np.ndarray,
     actual_arr: np.ndarray,
     in_uptrend: np.ndarray,
     entry_threshold: float,
-    inv_vol_target: float = 0.16,
-    atr_multiplier: float = 2.5,
+    inv_vol_target: float = 0.20,
+    atr_multiplier: float = 2.0,
     max_hold_days: int = 50,
     tx_cost: float = 0.0005,
+    vol_scale_cap: float = 1.50,
+    downtrend_arr: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     n = int(min(len(pred_z), len(actual_arr), len(in_uptrend)))
     if n <= 0:
@@ -365,19 +394,21 @@ def _simulate_risk_managed_returns(
     pred = np.asarray(pred_z[:n], dtype=float)
     actual = np.asarray(actual_arr[:n], dtype=float)
     trend = np.asarray(in_uptrend[:n], dtype=bool)
+    # Dual SMA: explicit downtrend mask from the death-cross zone.
+    # When None, fall back to single-SMA behaviour (~trend = downtrend).
+    dn = np.asarray(downtrend_arr[:n], dtype=bool) if downtrend_arr is not None else (~trend)
 
     raw_signal = np.where(pred >= entry_threshold, 1.0, np.where(pred <= -entry_threshold, -1.0, 0.0))
-    # Hard trend filter: eliminate counter-trend trades entirely.
-    # Long signals below SMA-200 and short signals above SMA-200 are zeroed out.
-    # Only trades where signal direction matches the 200-day trend are taken.
-    # The vol-scale ceiling is raised to 1.35 on these trend-aligned trades so
-    # the reduced trade count does not deflate returns.
+    # Dual-SMA Golden/Death Cross filter:
+    #   Longs only in confirmed uptrend (price>SMA20, SMA20>SMA200).
+    #   Shorts only in confirmed downtrend (price<SMA20, SMA20<SMA200).
+    #   Neutral zone (SMAs diverged) → flat on both sides.
     raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.0, raw_signal)
-    raw_signal = np.where((raw_signal < 0.0) & trend, 0.0, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & (~dn), 0.0, raw_signal)
 
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
-    vol_scale = (inv_vol_target / ann_vol).clip(lower=0.10, upper=1.35).to_numpy(dtype=float)
+    vol_scale = (inv_vol_target / ann_vol).clip(lower=0.10, upper=vol_scale_cap).to_numpy(dtype=float)
     desired_pos = raw_signal * vol_scale
 
     exec_pos = np.roll(desired_pos, 1)
@@ -481,6 +512,7 @@ def _optimize_entry_threshold(
     pred_z_train: np.ndarray,
     actual_train: np.ndarray,
     trend_train: np.ndarray,
+    downtrend_train: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     # Finer grid in the 0.35–0.75 zone where macro-lag strategies tend to peak.
     candidates = [0.00, 0.20, 0.35, 0.45, 0.55, 0.65, 0.75, 0.95, 1.15]
@@ -495,6 +527,7 @@ def _optimize_entry_threshold(
     pred_z_val = pred_z_train[val_split:]
     actual_val = actual_train[val_split:]
     trend_val = trend_train[val_split:]
+    dn_val = downtrend_train[val_split:] if downtrend_train is not None else None
 
     for th in candidates:
         strat_ret, positions = _simulate_risk_managed_returns(
@@ -502,9 +535,11 @@ def _optimize_entry_threshold(
             actual_arr=actual_train,
             in_uptrend=trend_train,
             entry_threshold=float(th),
-            inv_vol_target=0.16,
-            atr_multiplier=2.5,
+            inv_vol_target=0.20,
+            atr_multiplier=2.0,
             max_hold_days=50,
+            vol_scale_cap=1.50,
+            downtrend_arr=downtrend_train,
         )
         train_stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
 
@@ -513,9 +548,11 @@ def _optimize_entry_threshold(
             actual_arr=actual_val,
             in_uptrend=trend_val,
             entry_threshold=float(th),
-            inv_vol_target=0.16,
-            atr_multiplier=2.5,
+            inv_vol_target=0.20,
+            atr_multiplier=2.0,
             max_hold_days=50,
+            vol_scale_cap=1.50,
+            downtrend_arr=dn_val,
         )
         val_stats = _compute_basic_stats(val_ret, actual_val[: len(val_ret)])
 
@@ -587,12 +624,19 @@ def _walk_forward_validation(
         actual_test = np.nan_to_num(np.asarray(orig_log_returns.reindex(test_dates), dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
         actual_train = np.clip(actual_train, -0.15, 0.15)
         actual_test = np.clip(actual_test, -0.15, 0.15)
-        trend_train = _trend_mask_from_log_returns(orig_log_returns, train_dates)
-        trend_test = _trend_mask_from_log_returns(orig_log_returns, test_dates)
+        trend_train, dn_train = _dual_trend_masks_from_log_returns(orig_log_returns, train_dates)
+        trend_test, dn_test = _dual_trend_masks_from_log_returns(orig_log_returns, test_dates)
 
-        tuned = _optimize_entry_threshold(pred_z_train, actual_train, trend_train)
+        tuned = _optimize_entry_threshold(pred_z_train, actual_train, trend_train, downtrend_train=dn_train)
         th = float(tuned.get("threshold", 0.75))
-        strategy_test, _ = _simulate_risk_managed_returns(pred_z_test, actual_test, trend_test, entry_threshold=th)
+        strategy_test, _ = _simulate_risk_managed_returns(
+            pred_z_test, actual_test, trend_test,
+            entry_threshold=th,
+            inv_vol_target=0.20,
+            atr_multiplier=2.0,
+            vol_scale_cap=1.50,
+            downtrend_arr=dn_test,
+        )
         stats = _compute_basic_stats(strategy_test, actual_test[: len(strategy_test)])
         corr_r, corr_p = None, None
         if len(actual_test) >= 3:
@@ -732,27 +776,30 @@ def backtest_pre2020_holdout(
         pred_z_train = (train_predictions - pred_mu) / pred_std
         pred_z_test = (predictions - pred_mu) / pred_std
 
-        trend_train = _trend_mask_from_log_returns(_orig["log_return"], _train_dates)
-        trend_test = _trend_mask_from_log_returns(_orig["log_return"], _test_dates)
-        threshold_pick = _optimize_entry_threshold(pred_z_train, train_actual_arr, trend_train)
+        trend_train, dn_train = _dual_trend_masks_from_log_returns(_orig["log_return"], _train_dates)
+        trend_test, dn_test = _dual_trend_masks_from_log_returns(_orig["log_return"], _test_dates)
+        threshold_pick = _optimize_entry_threshold(
+            pred_z_train, train_actual_arr, trend_train, downtrend_train=dn_train
+        )
         selected_threshold = float(threshold_pick.get("threshold", 0.75))
 
-        inv_vol_used = 0.16
+        inv_vol_used = 0.20
         strategy_returns, _positions = _simulate_risk_managed_returns(
             pred_z=pred_z_test,
             actual_arr=actual_arr,
             in_uptrend=trend_test,
             entry_threshold=selected_threshold,
             inv_vol_target=inv_vol_used,
-            atr_multiplier=2.5,
+            atr_multiplier=2.0,
             max_hold_days=50,
             tx_cost=0.0005,
+            vol_scale_cap=1.50,
+            downtrend_arr=dn_test,
         )
         active_days = int(np.sum(np.abs(_positions) > 1e-10))
         min_active_days = max(20, int(0.03 * len(_positions)))
         if active_days < min_active_days:
-            # Safety fallback against near-flat strategies after tuning:
-            # lower threshold and slightly higher risk budget to preserve edge.
+            # Safety fallback: lower threshold to preserve edge when too few active days.
             selected_threshold = 0.0
             strategy_returns, _positions = _simulate_risk_managed_returns(
                 pred_z=pred_z_test,
@@ -760,9 +807,11 @@ def backtest_pre2020_holdout(
                 in_uptrend=trend_test,
                 entry_threshold=selected_threshold,
                 inv_vol_target=0.20,
-                atr_multiplier=2.5,
+                atr_multiplier=2.0,
                 max_hold_days=50,
                 tx_cost=0.0005,
+                vol_scale_cap=1.50,
+                downtrend_arr=dn_test,
             )
             inv_vol_used = 0.20
         benchmark_returns = actual_arr[: len(strategy_returns)]
@@ -857,9 +906,10 @@ def backtest_pre2020_holdout(
             "features": list(features),
             "strategy_parameters": {
                 "entry_threshold_zscore": round(float(selected_threshold), 4),
-                "atr_trailing_stop_multiplier": 2.5,
+                "atr_trailing_stop_multiplier": 2.0,
                 "inverse_vol_target": inv_vol_used,
-                "trend_filter_sma_days": 200,
+                "trend_filter": "dual_sma_20_200",
+                "vol_scale_cap": 1.50,
                 "execution_lag_days": 1,
                 "active_days": int(np.sum(np.abs(_positions) > 1e-10)),
                 "active_ratio": round(float(np.mean(np.abs(_positions) > 1e-10)) if len(_positions) else 0.0, 6),
