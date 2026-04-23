@@ -309,59 +309,111 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
 
 def _discover_backtest_payload() -> tuple[dict, Path | None]:
-    """Discover backtest payload only inside the active session output directory."""
-    output_dir = _paths()["output"]
-    if not output_dir.is_dir():
+    """Discover backtest payload, first in the active session directory, then
+    falling back to any other output profile (most recently modified wins)."""
+
+    def _search_in_dir(output_dir: Path) -> tuple[dict, Path | None]:
+        if not output_dir.is_dir():
+            return {}, None
+        candidates: list[tuple[float, Path]] = []
+        for filename in ("analysis_results.json", "backtest_2020.json"):
+            p = output_dir / filename
+            if p.is_file():
+                try:
+                    candidates.append((p.stat().st_mtime, p))
+                except OSError:
+                    continue
+        for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
+            payload = _read_json(path)
+            bt = _extract_backtest(payload)
+            if bt:
+                return bt, path
+
+            if path.name == "analysis_results.json" and isinstance(payload, dict):
+                artifacts = payload.get("artifacts")
+                if isinstance(artifacts, dict):
+                    bt_path_raw = artifacts.get("backtest_2020")
+                    if isinstance(bt_path_raw, str) and bt_path_raw.strip():
+                        bt_path = Path(bt_path_raw)
+                        if not bt_path.is_absolute():
+                            bt_path = path.parent / bt_path
+                        if bt_path.is_file():
+                            inner_payload = _read_json(bt_path)
+                            bt = _extract_backtest(inner_payload)
+                            if bt:
+                                return bt, bt_path
         return {}, None
-    candidates: list[tuple[float, Path]] = []
-    for filename in ("analysis_results.json", "backtest_2020.json"):
-        p = output_dir / filename
-        if p.is_file():
-            try:
-                candidates.append((p.stat().st_mtime, p))
-            except OSError:
-                continue
-    for _, path in sorted(candidates, key=lambda x: x[0], reverse=True):
-        payload = _read_json(path)
-        bt = _extract_backtest(payload)
-        if bt:
-            return bt, path
 
-        if path.name == "analysis_results.json" and isinstance(payload, dict):
-            artifacts = payload.get("artifacts")
-            if isinstance(artifacts, dict):
-                bt_path_raw = artifacts.get("backtest_2020")
-                if isinstance(bt_path_raw, str) and bt_path_raw.strip():
-                    bt_path = Path(bt_path_raw)
-                    if not bt_path.is_absolute():
-                        bt_path = path.parent / bt_path
+    # 1. Try active session directory first.
+    active_output_dir = _paths()["output"]
+    bt, src = _search_in_dir(active_output_dir)
+    if bt:
+        return bt, src
 
-                    if bt_path.is_file():
-                        inner_payload = _read_json(bt_path)
-                        bt = _extract_backtest(inner_payload)
-                        if bt:
-                            return bt, bt_path
+    # 2. Fallback: scan all sibling output profiles, newest artifact wins.
+    output_root = active_output_dir.parent
+    try:
+        profile_candidates: list[tuple[float, Path]] = []
+        if output_root.exists():
+            for child in output_root.iterdir():
+                if not child.is_dir() or child == active_output_dir:
+                    continue
+                for filename in ("analysis_results.json", "backtest_2020.json"):
+                    p = child / filename
+                    if p.is_file():
+                        try:
+                            profile_candidates.append((p.stat().st_mtime, child))
+                            break
+                        except OSError:
+                            pass
+        for _, profile_dir in sorted(profile_candidates, key=lambda x: x[0], reverse=True):
+            bt, src = _search_in_dir(profile_dir)
+            if bt:
+                return bt, src
+    except OSError:
+        pass
+
     return {}, None
 
 
 def _check_governance_block() -> str | None:
-    """Return governance block reason from the active session artifacts only."""
-    path = _paths()["output"] / "analysis_results.json"
-    if path.is_file():
-        payload = _read_json(path)
-        if not isinstance(payload, dict):
-            return None
-        results = payload.get("results", {})
-        if isinstance(results, dict):
-            bt_val = results.get("backtest_2020")
-            if isinstance(bt_val, str) and bt_val.startswith("blocked_by_governance_gate"):
-                return bt_val
-    p2 = _paths()["output"] / "backtest_2020.json"
-    if p2.is_file():
-        inner = _read_json(p2)
-        wrapped = inner.get("value") if isinstance(inner, dict) else None
-        if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
-            return wrapped
+    """Return governance block reason, checking active session then all profiles."""
+
+    def _check_dir(d: Path) -> str | None:
+        path = d / "analysis_results.json"
+        if path.is_file():
+            payload = _read_json(path)
+            if isinstance(payload, dict):
+                results = payload.get("results", {})
+                if isinstance(results, dict):
+                    bt_val = results.get("backtest_2020")
+                    if isinstance(bt_val, str) and bt_val.startswith("blocked_by_governance_gate"):
+                        return bt_val
+        p2 = d / "backtest_2020.json"
+        if p2.is_file():
+            inner = _read_json(p2)
+            wrapped = inner.get("value") if isinstance(inner, dict) else None
+            if isinstance(wrapped, str) and wrapped.startswith("blocked_by_governance_gate"):
+                return wrapped
+        return None
+
+    active_output_dir = _paths()["output"]
+    result = _check_dir(active_output_dir)
+    if result:
+        return result
+
+    # Fallback: scan other profiles.
+    output_root = active_output_dir.parent
+    try:
+        if output_root.exists():
+            for child in output_root.iterdir():
+                if not child.is_dir() or child == active_output_dir:
+                    continue
+                result = _check_dir(child)
+                if result:
+                    return result
+    except OSError:
+        pass
     return None
 
 
@@ -436,18 +488,30 @@ def show_edge_arsenal_tab() -> None:
                     available_profiles.append(child.name)
 
         # Check whether the backtest returned a structured error dict (exception was captured).
-        _ar_path_diag = paths["output"] / "analysis_results.json"
-        if _ar_path_diag.exists():
-            try:
-                _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
-                _bt_diag = (_raw_diag.get("results") or {}).get("backtest_2020")
-                if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "failed":
-                    st.error(
-                        f"**Backtest failed with exception** ({_bt_diag.get('error_type', '?')}):  \n"
-                        f"`{_bt_diag.get('error', 'unknown error')}`"
-                    )
-            except Exception:
-                pass
+        # Scan all profiles so we report errors from any previous run.
+        _diag_dirs: list[Path] = [paths["output"]]
+        try:
+            _output_root_diag = paths["output"].parent
+            if _output_root_diag.exists():
+                for _child in _output_root_diag.iterdir():
+                    if _child.is_dir() and _child != paths["output"]:
+                        _diag_dirs.append(_child)
+        except OSError:
+            pass
+        for _diag_dir in _diag_dirs:
+            _ar_path_diag = _diag_dir / "analysis_results.json"
+            if _ar_path_diag.exists():
+                try:
+                    _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
+                    _bt_diag = (_raw_diag.get("results") or {}).get("backtest_2020")
+                    if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "failed":
+                        st.error(
+                            f"**Backtest failed with exception** ({_bt_diag.get('error_type', '?')}):  \n"
+                            f"`{_bt_diag.get('error', 'unknown error')}`"
+                        )
+                        break
+                except Exception:
+                    pass
 
         # Check whether the governance gate specifically blocked the backtest.
         gov_block = _check_governance_block()
@@ -476,38 +540,52 @@ def show_edge_arsenal_tab() -> None:
         # ── Deep diagnostics: show raw artifact contents so we can see exactly
         # what the pipeline wrote (governance block, empty, wrong structure, etc.)
         with st.expander("🔬 Raw artifact diagnostics (click to debug)", expanded=False):
-            ar_path = paths["output"] / "analysis_results.json"
-            bt_path = paths["output"] / "backtest_2020.json"
-            st.caption(f"`analysis_results.json` exists: **{ar_path.exists()}**")
-            st.caption(f"`backtest_2020.json` exists: **{bt_path.exists()}**")
-            if ar_path.exists():
-                try:
-                    raw = json.loads(ar_path.read_text(encoding="utf-8", errors="ignore"))
-                    result_keys = raw.get("result_keys") or list((raw.get("results") or {}).keys())
-                    st.caption(f"result_keys: `{result_keys}`")
-                    bt_raw = (raw.get("results") or {}).get("backtest_2020")
-                    st.caption(f"backtest_2020 value type: `{type(bt_raw).__name__}`")
-                    if isinstance(bt_raw, str):
-                        st.caption(f"backtest_2020 value: `{bt_raw[:200]}`")
-                    elif isinstance(bt_raw, dict):
-                        st.caption(f"backtest_2020 keys: `{list(bt_raw.keys())[:10]}`")
-                        if bt_raw.get("status") == "failed":
-                            st.error(f"**Backtest error** ({bt_raw.get('error_type', '?')}): {bt_raw.get('error', '?')}")
-                    generated_at = raw.get("generated_at")
-                    st.caption(f"generated_at: `{generated_at}`")
-                except Exception as _e:
-                    st.caption(f"Could not parse analysis_results.json: `{_e}`")
-            if bt_path.exists():
-                try:
-                    raw2 = json.loads(bt_path.read_text(encoding="utf-8", errors="ignore"))
-                    inner = raw2.get("value")
-                    st.caption(f"backtest_2020.json → value type: `{type(inner).__name__}`")
-                    if isinstance(inner, str):
-                        st.caption(f"value: `{inner[:200]}`")
-                    elif isinstance(inner, dict):
-                        st.caption(f"value keys: `{list(inner.keys())[:10]}`")
-                except Exception as _e:
-                    st.caption(f"Could not parse backtest_2020.json: `{_e}`")
+            # Show diagnostics for each detected profile, not just the active one.
+            diag_profiles: list[Path] = [paths["output"]]
+            try:
+                output_root_diag = paths["output"].parent
+                if output_root_diag.exists():
+                    for child in sorted(output_root_diag.iterdir()):
+                        if child.is_dir() and child != paths["output"]:
+                            diag_profiles.append(child)
+            except OSError:
+                pass
+
+            for diag_dir in diag_profiles:
+                label = f"Profile: `{diag_dir.name}`" + (" *(active)*" if diag_dir == paths["output"] else "")
+                st.markdown(f"**{label}**")
+                ar_path = diag_dir / "analysis_results.json"
+                bt_path = diag_dir / "backtest_2020.json"
+                st.caption(f"`analysis_results.json` exists: **{ar_path.exists()}**")
+                st.caption(f"`backtest_2020.json` exists: **{bt_path.exists()}**")
+                if ar_path.exists():
+                    try:
+                        raw = json.loads(ar_path.read_text(encoding="utf-8", errors="ignore"))
+                        result_keys = raw.get("result_keys") or list((raw.get("results") or {}).keys())
+                        st.caption(f"result_keys: `{result_keys}`")
+                        bt_raw = (raw.get("results") or {}).get("backtest_2020")
+                        st.caption(f"backtest_2020 value type: `{type(bt_raw).__name__}`")
+                        if isinstance(bt_raw, str):
+                            st.caption(f"backtest_2020 value: `{bt_raw[:200]}`")
+                        elif isinstance(bt_raw, dict):
+                            st.caption(f"backtest_2020 keys: `{list(bt_raw.keys())[:10]}`")
+                            if bt_raw.get("status") == "failed":
+                                st.error(f"**Backtest error** ({bt_raw.get('error_type', '?')}): {bt_raw.get('error', '?')}")
+                        generated_at = raw.get("generated_at")
+                        st.caption(f"generated_at: `{generated_at}`")
+                    except Exception as _e:
+                        st.caption(f"Could not parse analysis_results.json: `{_e}`")
+                if bt_path.exists():
+                    try:
+                        raw2 = json.loads(bt_path.read_text(encoding="utf-8", errors="ignore"))
+                        inner = raw2.get("value")
+                        st.caption(f"backtest_2020.json → value type: `{type(inner).__name__}`")
+                        if isinstance(inner, str):
+                            st.caption(f"value: `{inner[:200]}`")
+                        elif isinstance(inner, dict):
+                            st.caption(f"value keys: `{list(inner.keys())[:10]}`")
+                    except Exception as _e:
+                        st.caption(f"Could not parse backtest_2020.json: `{_e}`")
         return
 
     if source_path is not None:
