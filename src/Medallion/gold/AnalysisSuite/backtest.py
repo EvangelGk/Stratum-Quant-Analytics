@@ -367,14 +367,17 @@ def _simulate_risk_managed_returns(
     trend = np.asarray(in_uptrend[:n], dtype=bool)
 
     raw_signal = np.where(pred >= entry_threshold, 1.0, np.where(pred <= -entry_threshold, -1.0, 0.0))
-    # Soft trend filter to avoid strategy freeze:
-    # counter-trend trades are de-risked, not eliminated.
-    raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.50, raw_signal)
-    raw_signal = np.where((raw_signal < 0.0) & trend, -0.50, raw_signal)
+    # Hard trend filter: eliminate counter-trend trades entirely.
+    # Long signals below SMA-200 and short signals above SMA-200 are zeroed out.
+    # Only trades where signal direction matches the 200-day trend are taken.
+    # The vol-scale ceiling is raised to 1.35 on these trend-aligned trades so
+    # the reduced trade count does not deflate returns.
+    raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.0, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & trend, 0.0, raw_signal)
 
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
-    vol_scale = (inv_vol_target / ann_vol).clip(lower=0.10, upper=1.00).to_numpy(dtype=float)
+    vol_scale = (inv_vol_target / ann_vol).clip(lower=0.10, upper=1.35).to_numpy(dtype=float)
     desired_pos = raw_signal * vol_scale
 
     exec_pos = np.roll(desired_pos, 1)
@@ -479,9 +482,20 @@ def _optimize_entry_threshold(
     actual_train: np.ndarray,
     trend_train: np.ndarray,
 ) -> Dict[str, Any]:
-    candidates = [0.00, 0.20, 0.35, 0.55, 0.75, 0.95, 1.15]
-    best = {"threshold": 0.75, "score": -1e9, "stats": {}}
+    # Finer grid in the 0.35–0.75 zone where macro-lag strategies tend to peak.
+    candidates = [0.00, 0.20, 0.35, 0.45, 0.55, 0.65, 0.75, 0.95, 1.15]
+    best = {"threshold": 0.55, "score": -1e9, "stats": {}}
     bench = np.asarray(actual_train, dtype=float)
+
+    # Temporal validation fold: last 25% of training data.
+    # Chronologically closest to the 2020+ test period, so threshold selection
+    # generalises better and is stable against minor FRED data revisions.
+    n_train = len(pred_z_train)
+    val_split = max(100, int(n_train * 0.75))
+    pred_z_val = pred_z_train[val_split:]
+    actual_val = actual_train[val_split:]
+    trend_val = trend_train[val_split:]
+
     for th in candidates:
         strat_ret, positions = _simulate_risk_managed_returns(
             pred_z=pred_z_train,
@@ -492,21 +506,39 @@ def _optimize_entry_threshold(
             atr_multiplier=2.5,
             max_hold_days=50,
         )
-        stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
+        train_stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
+
+        val_ret, _ = _simulate_risk_managed_returns(
+            pred_z=pred_z_val,
+            actual_arr=actual_val,
+            in_uptrend=trend_val,
+            entry_threshold=float(th),
+            inv_vol_target=0.16,
+            atr_multiplier=2.5,
+            max_hold_days=50,
+        )
+        val_stats = _compute_basic_stats(val_ret, actual_val[: len(val_ret)])
+
         active_ratio = float(np.mean(np.abs(positions) > 1e-10)) if len(positions) else 0.0
-        sharpe = float(stats["sharpe"]) if isinstance(stats.get("sharpe"), (int, float)) else -2.0
-        pf = float(stats["profit_factor"]) if isinstance(stats.get("profit_factor"), (int, float)) and np.isfinite(float(stats["profit_factor"])) else 0.0
-        expectancy = float(stats.get("expectancy", 0.0))
-        mdd = abs(float(stats.get("mdd", 0.0)))
+        train_sharpe = float(train_stats.get("sharpe") or -2.0) if isinstance(train_stats.get("sharpe"), (int, float)) else -2.0
+        val_sharpe = float(val_stats.get("sharpe") or -2.0) if isinstance(val_stats.get("sharpe"), (int, float)) else -2.0
+        val_pf_raw = val_stats.get("profit_factor")
+        val_pf = float(val_pf_raw) if isinstance(val_pf_raw, (int, float)) and np.isfinite(float(val_pf_raw)) else 0.0
+        val_mdd = abs(float(val_stats.get("mdd", 0.0)))
+        val_expectancy = float(val_stats.get("expectancy", 0.0))
+
+        # 70% validation fold + 30% full training: stable against daily FRED
+        # revisions while preserving long-run signal quality.
+        combined_sharpe = max(val_sharpe, -2.0) * 0.7 + max(train_sharpe, -2.0) * 0.3
         score = (
-            (expectancy * 2500.0)
-            + (max(pf - 1.0, 0.0) * 35.0)
-            + (max(sharpe, 0.0) * 12.0)
-            - (mdd * 80.0)
-            + (active_ratio * 10.0)
+            (val_expectancy * 2500.0)
+            + (max(val_pf - 1.0, 0.0) * 35.0)
+            + (max(combined_sharpe, 0.0) * 25.0)
+            - (val_mdd * 40.0)
+            + (active_ratio * 15.0)
         )
         if score > float(best["score"]):
-            best = {"threshold": float(th), "score": float(score), "stats": stats}
+            best = {"threshold": float(th), "score": float(score), "stats": train_stats}
     return best
 
 

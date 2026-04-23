@@ -125,9 +125,9 @@ def run_pipeline(
     env["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     env["ENVIRONMENT"] = mode
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1" if resume_from_checkpoint else "0"
-    # Force stochastic run to ensure new numbers are generated, per user request.
-    if not resume_from_checkpoint:
-        env["ENFORCE_REPRODUCIBILITY"] = "0"
+    # Keep ENFORCE_REPRODUCIBILITY at its configured value (default True / seed=42).
+    # Forcing it to 0 causes metrics to drift between runs with no code changes.
+    env.setdefault("ENFORCE_REPRODUCIBILITY", "1")
     cmd = [sys.executable, "src/main.py"]
     estimated_seconds = 720 if mode == "actual" else 240
     stages = [
@@ -595,8 +595,8 @@ def run_gold_analyses_only(progress_bar: Any = None) -> tuple[bool, str]:
     env["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
     env["ENVIRONMENT"] = "actual"
     env["PIPELINE_RESUME_FROM_CHECKPOINT"] = "1"  # keep Bronze/Silver skipped; Gold key was removed above
-    # Force stochastic run to ensure new numbers are generated, per user request.
-    env["ENFORCE_REPRODUCIBILITY"] = "0"
+    # Keep ENFORCE_REPRODUCIBILITY at its configured value (default True / seed=42).
+    env.setdefault("ENFORCE_REPRODUCIBILITY", "1")
     cmd = [sys.executable, "src/main.py"]
     estimated_seconds = 300
     stages = [

@@ -381,7 +381,14 @@ Apply these changes automatically to the project files? (YES/NO)"""
         """Parse <<<OLD>>>/<<<NEW>>> blocks from Llama output and apply to disk.
 
         Returns list of applied change descriptions.
+
+        SAFETY GATE: Writes to disk only when the environment variable
+        OPTIMIZER_CODE_MUTATIONS_ENABLED=1 is explicitly set.  In all other
+        cases the changes are validated (syntax check, old-code lookup) and
+        logged to the change log, but the files on disk are NOT modified.
+        This prevents the optimizer from silently changing source code.
         """
+        mutations_enabled = os.getenv("OPTIMIZER_CODE_MUTATIONS_ENABLED", "0").strip() == "1"
         applied: List[str] = []
         backups: Dict[Path, str] = {}
         total_changed_chars = 0
@@ -439,15 +446,26 @@ Apply these changes automatically to the project files? (YES/NO)"""
 
                 if full_path not in backups:
                     backups[full_path] = original
+
+                if not mutations_enabled:
+                    # Dry-run: validate but do NOT write.  Record what WOULD have changed.
+                    self._log_mutation_to_changelog(rel_path, old_code, new_code, dry_run=True)
+                    applied.append(
+                        f"[DRY-RUN] {rel_path}: change validated but NOT written "
+                        f"(set OPTIMIZER_CODE_MUTATIONS_ENABLED=1 to apply)"
+                    )
+                    continue
+
                 full_path.write_text(updated, encoding="utf-8")
+                self._log_mutation_to_changelog(rel_path, old_code, new_code, dry_run=False)
                 if full_path not in changed_files:
                     changed_files.append(full_path)
                 total_changed_chars += delta_size
                 applied.append(f"[APPLIED] {rel_path}: replaced {len(old_code)} chars")
 
-        # Optional mandatory smoke-test command (if configured).
+        # Optional mandatory smoke-test command (if configured, only when mutations were applied).
         test_cmd = os.getenv("LLAMA_MANDATORY_TEST_CMD", "").strip()
-        if test_cmd and backups:
+        if test_cmd and backups and mutations_enabled:
             try:
                 proc = subprocess.run(
                     test_cmd,
@@ -472,6 +490,36 @@ Apply these changes automatically to the project files? (YES/NO)"""
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _log_mutation_to_changelog(
+        self,
+        rel_path: str,
+        old_code: str,
+        new_code: str,
+        dry_run: bool,
+    ) -> None:
+        """Append a dated entry to output/.optimizer/change_log.jsonl.
+
+        Written for both actual mutations and dry-run previews so you always
+        have a complete record of what the optimizer proposed or applied.
+        """
+        try:
+            changelog_dir = self._src.parent / "output" / ".optimizer"
+            changelog_dir.mkdir(parents=True, exist_ok=True)
+            changelog_path = changelog_dir / "change_log.jsonl"
+            entry = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "dry_run": dry_run,
+                "file": rel_path,
+                "removed_chars": len(old_code),
+                "added_chars": len(new_code),
+                "old_snippet": old_code[:300],
+                "new_snippet": new_code[:300],
+            }
+            with changelog_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # changelog is best-effort; never block the optimizer
 
     def _format_metrics(self, diagnostics: Dict[str, Any]) -> str:
         lines = [f"Integrity Score: {diagnostics.get('score', 0.0)}/100"]
@@ -957,9 +1005,6 @@ class AutomatedOptimizationLoop:
                 gate._send_telegram(
                     "⚠️ <b>STRATUM QUANT ANALYTICS — Regression Gate FAILED</b>\n"
                     f"Issue: {html.escape(issue_type or 'N/A')}\n\n"
-                    "Η λύση πέρασε το syntax check αλλά απέτυχε στο Financial Validation.\n"
-                    "Τα αρχεία επαναφέρθηκαν στην προηγούμενη κατάσταση.\n\n"
-                    "Αποτυχίες:\n" + "\n".join(f"  • {html.escape(f)}" for f in failures)
                     "The solution passed the syntax check but failed Financial Validation.\n"
                     "Files have been reverted to their previous state.\n\n"
                     "Failures:\n" + "\n".join(f"  • {html.escape(f)}" for f in failures)
@@ -1039,7 +1084,29 @@ class AutomatedOptimizationLoop:
         return cfg
 
     def _apply_pipeline_outlier_relaxation(self, delta: float = 0.5) -> None:
-        """Relax Silver z-score outlier thresholds by replacing immutable contracts."""
+        """Relax Silver z-score outlier thresholds by replacing immutable contracts.
+
+        SAFETY GATE: Only mutates in-memory module state when
+        OPTIMIZER_CODE_MUTATIONS_ENABLED=1.  Always records the relaxation in
+        the change log so there is an audit trail even in dry-run mode.
+        """
+        mutations_enabled = os.getenv("OPTIMIZER_CODE_MUTATIONS_ENABLED", "0").strip() == "1"
+
+        self._log_mutation_to_changelog(
+            rel_path="<in-memory> silver_contracts.SOURCE_CONTRACTS",
+            old_code=f"outlier_z_threshold (current, step {self.zscore_relax_steps})",
+            new_code=f"outlier_z_threshold + {delta} (relaxation delta)",
+            dry_run=not mutations_enabled,
+        )
+
+        if not mutations_enabled:
+            logger.warning(
+                "[OPTIMIZER] _apply_pipeline_outlier_relaxation skipped "
+                "(OPTIMIZER_CODE_MUTATIONS_ENABLED != 1). Set that env var to allow "
+                "in-memory Silver contract mutations."
+            )
+            return
+
         self.zscore_relax_steps += 1
         for source, src_contract in list(silver_contracts.SOURCE_CONTRACTS.items()):
             base = src_contract.default_series_contract
