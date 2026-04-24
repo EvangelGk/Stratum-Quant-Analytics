@@ -22,6 +22,7 @@ from UI.constants import (
     get_active_paths,
 )
 from UI.helpers import read_json
+from pathing import output_path_diagnostics
 
 # Ensure project root and src/ are on sys.path before importing secret_store.
 _ROOT_PATH = str(ROOT)
@@ -84,6 +85,9 @@ def run_pipeline(
     # 0. Hard Reset: Delete old output files for the current user profile if not resuming.
     bootstrap_env_from_secrets(override=True)
     os.environ["DATA_USER_ID"] = str(_paths().get("user_key", "default_local0"))
+    search_line, active_output_line = output_path_diagnostics(_output_dir())
+    st.caption(search_line)
+    st.caption(active_output_line)
     if not resume_from_checkpoint:
         active_output_dir = _output_dir()
         active_audit_report_path = active_output_dir / "audit_report.json"
@@ -157,6 +161,8 @@ def run_pipeline(
 
         try:
             with log_path.open("w", encoding="utf-8", errors="ignore") as log_file:
+                log_file.write(f"{search_line}\n\n{active_output_line}\n")
+                log_file.flush()
                 proc = subprocess.Popen(
                     cmd,
                     cwd=ROOT,

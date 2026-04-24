@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from UI.constants import get_active_paths
+from pathing import output_path_diagnostics
 
 _log = logging.getLogger(__name__)
 
@@ -595,8 +596,9 @@ def show_edge_arsenal_tab() -> None:
         else:
             st.warning("No backtest payload found in the active output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
 
-        st.caption(f"🔍 Searching in: `{output_root}`")
-        st.caption(f"🔍 Active OUTPUT_DIR: `{paths['output']}`")
+        search_line, active_output_line = output_path_diagnostics(paths["output"])
+        st.caption(search_line)
+        st.caption(active_output_line)
         env_uid = (os.getenv("DATA_USER_ID") or "").strip()
         if env_uid:
             st.caption(f"🔍 DATA_USER_ID (env): `{env_uid}`")

@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
+from pathing import build_output_dir, build_user_data_dir
+
 # Project root is one level up from `scenario-planner/UI/`
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT  # Alias for any code that still uses the old name
@@ -116,8 +118,8 @@ def get_user_paths(analyst_id: str) -> Dict[str, Any]:
     safe_analyst_id = _sanitize_analyst_id(analyst_id)
     session_hash = _get_session_hash()
     user_key = _resolve_user_key(safe_analyst_id)
-    user_root = ROOT / "data" / "users" / user_key
-    output_root = ROOT / "output" / user_key
+    user_root = build_user_data_dir(ROOT, user_key)
+    output_root = build_output_dir(ROOT, user_key)
     return {
         "analyst_id": safe_analyst_id,
         "session_hash": session_hash,

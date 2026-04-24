@@ -39,6 +39,7 @@ from logger.Messages.MainMess import (
     QUICK_START,
 )
 from Medallion import MedallionPipeline
+from pathing import build_output_dir, output_path_diagnostics, sanitize_profile_key
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -156,8 +157,8 @@ def _to_serializable(value: Any) -> Any:
 
 def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str, str]:
     """Write analysis artifacts into output/ for easy user discovery."""
-    safe_user = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(user_id)) or "default"
-    output_dir = PROJECT_ROOT / "output" / safe_user
+    safe_user = sanitize_profile_key(user_id)
+    output_dir = build_output_dir(PROJECT_ROOT, safe_user)
     output_dir.mkdir(parents=True, exist_ok=True)
     created: Dict[str, str] = {}
 
@@ -357,6 +358,10 @@ def main() -> None:
             {"phase": "pre_pipeline"},
             "Run contract initialized",
         )
+        active_output_dir = build_output_dir(PROJECT_ROOT, getattr(config, "data_user_id", "default"))
+        for diagnostic_line in output_path_diagnostics(active_output_dir):
+            logger.info(diagnostic_line)
+            print(diagnostic_line)
         print(MAIN_START.format(mode=config.mode.value.upper()))
 
         # Data fetching notification

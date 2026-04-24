@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import UI.app as app
 from UI.tabs import edge_tab
+from pathing import build_output_dir, output_path_diagnostics
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -75,3 +76,12 @@ def test_discover_backtest_payload_can_cross_profiles_when_explicitly_enabled(mo
     assert isinstance(payload, dict)
     assert payload.get("strategy_returns")
     assert source == expected_path
+
+
+def test_output_path_diagnostics_match_active_output_dir(tmp_path):
+    active_output_dir = build_output_dir(tmp_path, "default")
+
+    search_line, active_output_line = output_path_diagnostics(active_output_dir)
+
+    assert search_line == f"Searching in: {tmp_path / 'output'}"
+    assert active_output_line == f"🔍 Active OUTPUT_DIR: {active_output_dir}"

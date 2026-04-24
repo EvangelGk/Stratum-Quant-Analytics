@@ -36,6 +36,7 @@ def test_run_all_analyses_with_stubbed_functions(monkeypatch):
     monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m, **kwargs: {"coefficients": {}})
 
     gold = gold_module.GoldLayer(DummyConfig())
+    gold.initialize_data()
     results = gold.run_all_analyses(
         ticker="A",
         macro_factor="inflation",
@@ -104,6 +105,7 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
     monkeypatch.setattr(gold_module.concurrent.futures, "ThreadPoolExecutor", DummyExecutor)
 
     gold = gold_module.GoldLayer(DummyConfig())
+    gold.initialize_data()
     results = gold.run_all_analyses_parallel(
         ticker="A",
         macro_factor="inflation",
@@ -180,6 +182,7 @@ def test_run_all_analyses_default_uses_dynamic_factor_universe(monkeypatch):
     cfg.auto_ml_enabled = True
 
     gold = gold_module.GoldLayer(cfg)
+    gold.initialize_data()
     _ = gold.run_all_analyses(ticker="A", factors=None)
 
     assert captured["factors"]
