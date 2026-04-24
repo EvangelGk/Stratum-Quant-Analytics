@@ -713,10 +713,11 @@ class GoldLayer:
             "advisory_reasons": advisory_reasons,
         }
         gate["passed"] = len(reasons) == 0 or not hard_fail
-        if advisory_reasons and gate.get("severity") == "pass":
-            gate["severity"] = "warn"
-        if reasons and gate.get("severity") == "pass":
+        # Hard-fail reasons take precedence over advisory warnings when setting severity.
+        if reasons:
             gate["severity"] = "warn" if not hard_fail else "fail"
+        elif advisory_reasons and gate.get("severity") == "pass":
+            gate["severity"] = "warn"
         return gate
 
     def _resolve_governance_profile(self, ticker: Optional[str] = None) -> Dict[str, Any]:

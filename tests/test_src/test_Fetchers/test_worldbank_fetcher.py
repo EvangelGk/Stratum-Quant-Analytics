@@ -41,4 +41,4 @@ def test_worldbank_fetcher_transforms_data(monkeypatch):
     assert "economy" in df.columns
     assert "Date" in df.columns
     assert "Value" in df.columns
-    assert df["Date"].dtype == int
+    assert pd.api.types.is_datetime64_any_dtype(df["Date"])

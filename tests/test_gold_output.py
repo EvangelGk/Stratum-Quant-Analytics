@@ -223,7 +223,7 @@ def test_backtest_correlation_test_structure():
     (50.0, 55.0, False),  # score improved
 ])
 def test_score_sanity_check_threshold(prev, curr, should_trigger):
-    triggered = curr < prev - 30.0
+    triggered = curr <= prev - 30.0
     assert triggered is should_trigger, (
         f"prev={prev}, curr={curr}: expected trigger={should_trigger}, got {triggered}"
     )

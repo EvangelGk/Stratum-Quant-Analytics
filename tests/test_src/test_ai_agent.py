@@ -302,7 +302,7 @@ def test_answer_question_failure_on_llm_error(agent: ScenarioAIAgent):
         result = agent.answer_question("Ερώτηση;")
 
     assert result["success"] is False
-    assert "LLMTimeoutError" in result["answer"]
+    assert "temporarily unavailable" in result["answer"]
 
 
 def test_answer_question_includes_page_hint(agent: ScenarioAIAgent):
@@ -345,7 +345,7 @@ def test_quick_insight_failure_returns_error_dict(agent: ScenarioAIAgent):
         result = agent.quick_insight("Health", {})
 
     assert result["success"] is False
-    assert "LLMConnectionError" in result["insight"]
+    assert "temporarily unavailable" in result["insight"]
 
 
 # ── create_pipeline_brief() ───────────────────────────────────────────────────

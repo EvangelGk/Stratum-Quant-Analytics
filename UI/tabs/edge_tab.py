@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -309,10 +310,41 @@ def _compute_missing_metrics(backtest: dict) -> dict:
 
 
 def _discover_backtest_payload() -> tuple[dict, Path | None]:
-    """Discover backtest payload, first in the active session directory, then
-    falling back to any other output profile (most recently modified wins)."""
+    """Discover backtest payload from the active output profile.
 
-    def _search_in_dir(output_dir: Path) -> tuple[dict, Path | None]:
+    Cross-profile fallback is disabled by default because it can mask
+    DATA_USER_ID/profile routing issues. It can be explicitly re-enabled with
+    EDGE_TAB_ALLOW_CROSS_PROFILE_FALLBACK=1 for diagnostics.
+    """
+
+    def _resolve_artifact_path(raw_path: str, anchor_dir: Path, output_root: Path) -> Path | None:
+        if not raw_path.strip():
+            return None
+        p = Path(raw_path)
+        candidates: list[Path] = []
+        if p.is_absolute():
+            candidates.append(p)
+        else:
+            candidates.append(anchor_dir / p)
+            candidates.append(output_root / p)
+            candidates.append(output_root / p.name)
+        for c in candidates:
+            if c.is_file():
+                return c
+        # Last resort: recursive lookup by filename inside output root.
+        try:
+            hits = sorted(
+                [x for x in output_root.rglob(p.name) if x.is_file()],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True,
+            )
+            if hits:
+                return hits[0]
+        except OSError:
+            pass
+        return None
+
+    def _search_in_dir(output_dir: Path, output_root: Path) -> tuple[dict, Path | None]:
         if not output_dir.is_dir():
             return {}, None
         candidates: list[tuple[float, Path]] = []
@@ -334,10 +366,8 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
                 if isinstance(artifacts, dict):
                     bt_path_raw = artifacts.get("backtest_2020")
                     if isinstance(bt_path_raw, str) and bt_path_raw.strip():
-                        bt_path = Path(bt_path_raw)
-                        if not bt_path.is_absolute():
-                            bt_path = path.parent / bt_path
-                        if bt_path.is_file():
+                        bt_path = _resolve_artifact_path(bt_path_raw, path.parent, output_root)
+                        if bt_path is not None:
                             inner_payload = _read_json(bt_path)
                             bt = _extract_backtest(inner_payload)
                             if bt:
@@ -346,12 +376,16 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
 
     # 1. Try active session directory first.
     active_output_dir = _paths()["output"]
-    bt, src = _search_in_dir(active_output_dir)
+    output_root = active_output_dir.parent
+    bt, src = _search_in_dir(active_output_dir, output_root)
     if bt:
         return bt, src
 
-    # 2. Fallback: scan all sibling output profiles, newest artifact wins.
-    output_root = active_output_dir.parent
+    allow_cross_profile = (os.getenv("EDGE_TAB_ALLOW_CROSS_PROFILE_FALLBACK", "0").strip() == "1")
+    if not allow_cross_profile:
+        return {}, None
+
+    # 2. Optional fallback: scan all sibling output profiles, newest artifact wins.
     try:
         profile_candidates: list[tuple[float, Path]] = []
         if output_root.exists():
@@ -367,7 +401,29 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
                         except OSError:
                             pass
         for _, profile_dir in sorted(profile_candidates, key=lambda x: x[0], reverse=True):
-            bt, src = _search_in_dir(profile_dir)
+            bt, src = _search_in_dir(profile_dir, output_root)
+            if bt:
+                return bt, src
+
+        # 3. Deep fallback: recurse all descendants of output root.
+        recursive_dirs: list[tuple[float, Path]] = []
+        for p in output_root.rglob("*"):
+            if not p.is_dir():
+                continue
+            for filename in ("analysis_results.json", "backtest_2020.json"):
+                f = p / filename
+                if f.is_file():
+                    try:
+                        recursive_dirs.append((f.stat().st_mtime, p))
+                        break
+                    except OSError:
+                        pass
+        seen: set[Path] = set()
+        for _, d in sorted(recursive_dirs, key=lambda x: x[0], reverse=True):
+            if d in seen:
+                continue
+            seen.add(d)
+            bt, src = _search_in_dir(d, output_root)
             if bt:
                 return bt, src
     except OSError:
@@ -377,7 +433,10 @@ def _discover_backtest_payload() -> tuple[dict, Path | None]:
 
 
 def _check_governance_block() -> str | None:
-    """Return governance block reason, checking active session then all profiles."""
+    """Return governance block reason from the active profile by default.
+
+    Set EDGE_TAB_ALLOW_CROSS_PROFILE_FALLBACK=1 to also scan sibling profiles.
+    """
 
     def _check_dir(d: Path) -> str | None:
         path = d / "analysis_results.json"
@@ -402,7 +461,11 @@ def _check_governance_block() -> str | None:
     if result:
         return result
 
-    # Fallback: scan other profiles.
+    allow_cross_profile = (os.getenv("EDGE_TAB_ALLOW_CROSS_PROFILE_FALLBACK", "0").strip() == "1")
+    if not allow_cross_profile:
+        return None
+
+    # Optional fallback: scan other profiles.
     output_root = active_output_dir.parent
     try:
         if output_root.exists():
@@ -530,10 +593,19 @@ def show_edge_arsenal_tab() -> None:
                 "or re-run Full Analysis after adjusting tickers/macro factors."
             )
         else:
-            st.warning("No backtest payload found in any output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
+            st.warning("No backtest payload found in the active output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
 
         st.caption(f"🔍 Searching in: `{output_root}`")
         st.caption(f"🔍 Active OUTPUT_DIR: `{paths['output']}`")
+        env_uid = (os.getenv("DATA_USER_ID") or "").strip()
+        if env_uid:
+            st.caption(f"🔍 DATA_USER_ID (env): `{env_uid}`")
+            active_uid = str(paths.get("user_key", "")).strip()
+            if active_uid and env_uid != active_uid:
+                st.error(
+                    "Profile mismatch detected: DATA_USER_ID env does not match active UI profile. "
+                    "Set both to the same value and rerun Full Analysis."
+                )
         if available_profiles:
             st.caption("Detected output profiles: " + ", ".join(sorted(available_profiles)))
 

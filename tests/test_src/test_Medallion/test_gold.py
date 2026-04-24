@@ -28,12 +28,12 @@ def test_run_all_analyses_with_stubbed_functions(monkeypatch):
     )
 
     # Patch analysis functions to avoid heavy computation
-    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df: "corr")
-    monkeypatch.setattr(gold_module, "elasticity", lambda df, a, b: 0.5)
-    monkeypatch.setattr(gold_module, "lag_analysis", lambda df, a, b: {"lag_1": 0.1})
+    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df, **kwargs: "corr")
+    monkeypatch.setattr(gold_module, "elasticity", lambda df, a, b, **kwargs: 0.5)
+    monkeypatch.setattr(gold_module, "lag_analysis", lambda df, a, b, **kwargs: {"lag_1": 0.1})
     monkeypatch.setattr(gold_module, "monte_carlo", lambda df, t, **kwargs: "mc")
-    monkeypatch.setattr(gold_module, "stress_test", lambda df, m: {"shock": "ok"})
-    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
+    monkeypatch.setattr(gold_module, "stress_test", lambda df, m, **kwargs: {"shock": "ok"})
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m, **kwargs: {"coefficients": {}})
 
     gold = gold_module.GoldLayer(DummyConfig())
     results = gold.run_all_analyses(
@@ -74,11 +74,11 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
     def dummy_fn(*args, **kwargs):
         return "ok"
 
-    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df: "corr")
-    monkeypatch.setattr(gold_module, "lag_analysis", lambda df, f, lags: {"lag_1": 0.0})
-    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda df, t, f, m: {"coefficients": {}})
-    monkeypatch.setattr(gold_module, "forecasting", lambda df, t, steps: pd.Series([0.0] * steps))
-    monkeypatch.setattr(gold_module, "auto_ml_regression", lambda df, t, f: {"best_model": "X"})
+    monkeypatch.setattr(gold_module, "correl_mtrx", lambda *args, **kwargs: "corr")
+    monkeypatch.setattr(gold_module, "lag_analysis", lambda *args, **kwargs: {"lag_1": 0.0})
+    monkeypatch.setattr(gold_module, "sensitivity_reg", lambda *args, **kwargs: {"coefficients": {}})
+    monkeypatch.setattr(gold_module, "forecasting", lambda *args, **kwargs: pd.Series([0.0] * 10))
+    monkeypatch.setattr(gold_module, "auto_ml_regression", lambda *args, **kwargs: {"best_model": "X"})
 
     # Stub the executor to avoid multiprocessing overhead
     class DummyFuture:
@@ -120,19 +120,23 @@ def test_run_all_analyses_parallel_uses_executor(monkeypatch):
 
 
 def test_run_all_analyses_default_uses_dynamic_factor_universe(monkeypatch):
+    import numpy as _np
+    _n = 50
+    _dates = pd.date_range("2020-01-01", periods=_n, freq="B")
+    _rng = _np.random.default_rng(42)
     monkeypatch.setattr(
         gold_module.GoldLayer,
         "_load_or_create_master_table",
         lambda self: pd.DataFrame(
             {
-                "ticker": ["A", "A", "A", "A"],
-                "date": pd.to_datetime(["2020-01-01", "2020-02-01", "2020-03-01", "2020-04-01"]),
-                "log_return": [0.01, 0.02, -0.01, 0.03],
-                "close": [100.0, 101.0, 99.5, 103.0],
-                "volume": [1_000_000, 1_100_000, 900_000, 1_200_000],
-                "inflation": [0.01, 0.012, 0.011, 0.013],
-                "energy_index": [0.2, 0.21, 0.19, 0.22],
-                "vix_index": [18.0, 19.5, 21.0, 17.0],
+                "ticker": ["A"] * _n,
+                "date": _dates,
+                "log_return": _rng.normal(0.01, 0.02, _n).tolist(),
+                "close": (100.0 * _np.cumprod(1 + _rng.normal(0.0005, 0.01, _n))).tolist(),
+                "volume": (1_000_000 + _rng.integers(-100_000, 100_000, _n)).tolist(),
+                "inflation": _np.linspace(0.01, 0.013, _n).tolist(),
+                "energy_index": _np.linspace(0.2, 0.22, _n).tolist(),
+                "vix_index": (18.0 + _rng.normal(0, 1, _n)).tolist(),
             }
         ),
     )
@@ -162,7 +166,7 @@ def test_run_all_analyses_default_uses_dynamic_factor_universe(monkeypatch):
 
     captured: dict[str, list[str]] = {"factors": []}
 
-    def _capture_sensitivity(df, t, f, m, ticker=None, macro_lag_days=0):
+    def _capture_sensitivity(df, t, f, m, ticker=None, macro_lag_days=0, **kwargs):
         captured["factors"] = list(f)
         return {"coefficients": {}}
 
@@ -222,7 +226,7 @@ def test_governance_hard_fail_blocks_advanced_analyses(monkeypatch):
             },
         },
     )
-    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df: "corr")
+    monkeypatch.setattr(gold_module, "correl_mtrx", lambda df, **kwargs: "corr")
 
     cfg = DummyConfig()
     cfg.governance_hard_fail = True

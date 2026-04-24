@@ -7,8 +7,9 @@ def test_load_from_env_missing_key(monkeypatch):
     # Ensure dotenv does not reload any stored API keys
     monkeypatch.setattr("src.Fetchers.ProjectConfig.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
-    with pytest.raises(ValueError):
-        ProjectConfig.load_from_env()
+    # FRED key is optional — load_from_env should succeed with key=None
+    cfg = ProjectConfig.load_from_env()
+    assert cfg.fred_api_key is None
 
 
 def test_default_macro_map_includes_vix(monkeypatch):
@@ -33,7 +34,7 @@ def test_load_from_env_success(monkeypatch):
     cfg = ProjectConfig.load_from_env()
     assert cfg.fred_api_key == "dummy"
     assert cfg.mode == RunMode.ACTUAL
-    assert cfg.start_date == "2016-01-01"
+    assert cfg.start_date == "2014-01-01"
     assert cfg.end_date == "2026-12-31"
     assert cfg.max_workers > 0
     assert cfg.data_user_id == "user_alpha"

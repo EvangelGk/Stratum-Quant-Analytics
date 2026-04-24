@@ -1,7 +1,7 @@
 import pytest
 
 import src.Fetchers.Factory as factory_module
-from src.exceptions.FetchersExceptions import MissingAPIKeyError
+from exceptions.FetchersExceptions import MissingAPIKeyError
 
 
 def test_data_factory_get_fetcher_unknown(monkeypatch):

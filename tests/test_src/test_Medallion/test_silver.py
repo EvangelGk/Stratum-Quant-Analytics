@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from src.exceptions.MedallionExceptions import (
+from exceptions.MedallionExceptions import (
     CatalogNotFoundError,
     ComplianceViolationError,
 )
@@ -30,7 +30,7 @@ def test_standardize_and_impute_and_audit_columns(silver_layer):
 
     # Test _impute: should fill missing values and compute imputed count
     df2 = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-02-01"]), "value": [None, 2.0]})
-    imputed_df, imputed_count, outliers, max_col_null_pct = silver_layer._impute(df2.copy(), "fred")
+    imputed_df, imputed_count, outliers, max_col_null_pct, _ = silver_layer._impute(df2.copy(), "fred", "inflation")
     assert imputed_count >= 1
     assert outliers >= 0
     assert isinstance(max_col_null_pct, float)
@@ -92,7 +92,7 @@ def test_dynamic_threshold_uses_history(silver_layer):
         )
         + "\n"
     )
-    threshold = silver_layer._resolve_dynamic_null_threshold("fred")
+    threshold = silver_layer._resolve_dynamic_null_threshold("fred", "inflation")
     assert threshold >= silver_layer.config.silver_base_null_threshold
 
 

@@ -7,7 +7,7 @@ def test_yfinance_fetcher_wraps_errors_and_caches(monkeypatch):
     # Patch the yfinance download function to return a simple DataFrame
     class DummyYF:
         @staticmethod
-        def download(ticker, start=None, end=None, interval=None):
+        def download(ticker, start=None, end=None, interval=None, **kwargs):
             df = pd.DataFrame(
                 {
                     "Open": [1.0],

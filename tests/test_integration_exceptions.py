@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from src.exceptions.MedallionExceptions import (
+from exceptions.MedallionExceptions import (
     ComplianceViolationError,
     SchemaMismatchError,
 )
@@ -36,7 +36,7 @@ def test_silver_preflight_raises_schema_mismatch_on_drift(tmp_path):
     layer.raw_path.mkdir(parents=True, exist_ok=True)
     layer.processed_path.mkdir(parents=True, exist_ok=True)
 
-    drifted = pd.DataFrame({"Date": ["2020-01-01"], "unexpected": [1.0]})
+    drifted = pd.DataFrame({"Date": ["2020-01-0" + str(i + 1) for i in range(15)], "unexpected": [float(i) for i in range(15)]})
     with pytest.raises(SchemaMismatchError):
         layer._preflight_contract_checks(drifted, "fred", "inflation", {"rows": 20, "path": "x"})
 

@@ -555,6 +555,19 @@ def _render_sidebar() -> str:
     return role
 
 
+def _initialize_paths_for_main() -> None:
+    """Initialize active profile paths for app startup.
+
+    If analyst_id is already set in session state, preserve it. Otherwise, let
+    initialize_active_paths() resolve from DATA_USER_ID/default policy.
+    """
+    _session_analyst = st.session_state.get("analyst_id")
+    if isinstance(_session_analyst, str) and _session_analyst.strip():
+        initialize_active_paths(_session_analyst)
+    else:
+        initialize_active_paths()
+
+
 def main() -> None:
     st.set_page_config(
         page_title=" Welcome to STRATUM QUANT ANALYTICS!",
@@ -563,7 +576,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     inject_styles()
-    initialize_active_paths(str(st.session_state.get("analyst_id", "default")))
+    _initialize_paths_for_main()
 
     if hasattr(st, "fragment"):
 

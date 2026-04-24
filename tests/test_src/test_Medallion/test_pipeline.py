@@ -1,7 +1,7 @@
 import pytest
 
 import src.Medallion as medallion_module
-from src.exceptions.MedallionExceptions import ParallelExecutionError
+from exceptions.MedallionExceptions import ParallelExecutionError
 from src.Medallion import MedallionPipeline
 
 # DummyConfig is provided by the shared dummy_config fixture in tests/conftest.py.

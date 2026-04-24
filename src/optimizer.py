@@ -6,6 +6,7 @@ import html
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -890,6 +891,317 @@ class AutomatedOptimizationLoop:
         except Exception as exc:
             return False, str(exc)
 
+    def _scan_system_health(self) -> Dict[str, Any]:
+        """Scan pipeline/UI/metrics/freshness/path health for the active profile."""
+        issues: List[str] = []
+        proposals: List[str] = []
+        checks: Dict[str, Any] = {}
+
+        user = self.safe_user
+        root = self.project_root
+        output_dir = root / "output" / user
+        data_user_dir = root / "data" / "users" / user
+        checks["profile"] = user
+        checks["output_dir"] = str(output_dir)
+        checks["data_user_dir"] = str(data_user_dir)
+
+        if not output_dir.exists():
+            issues.append(f"PATH_MISSING: output profile directory missing: {output_dir}")
+            proposals.append("Create output/<DATA_USER_ID> and run full pipeline once to initialize artifacts.")
+        if not data_user_dir.exists():
+            issues.append(f"PATH_MISSING: data profile directory missing: {data_user_dir}")
+            proposals.append("Create data/users/<DATA_USER_ID> via UI initialize paths before pipeline run.")
+
+        env_uid = (os.getenv("DATA_USER_ID") or "").strip()
+        if env_uid and env_uid != user:
+            issues.append(f"PROFILE_MISMATCH: DATA_USER_ID env={env_uid} active={user}")
+            proposals.append("Align DATA_USER_ID with active profile and restart optimizer/UI session.")
+
+        ui_tabs = [
+            "UI/tabs/analysis_tabs.py",
+            "UI/tabs/assistant_tab.py",
+            "UI/tabs/data_tabs.py",
+            "UI/tabs/edge_tab.py",
+            "UI/tabs/ops_tabs.py",
+        ]
+        missing_tabs = [p for p in ui_tabs if not (root / p).exists()]
+        checks["missing_ui_tabs"] = missing_tabs
+        if missing_tabs:
+            issues.append("UI_TABS_MISSING: " + ", ".join(missing_tabs))
+            proposals.append("Restore missing UI tab modules to keep dashboard navigation healthy.")
+
+        freshness_threshold_hours = int(os.getenv("OPTIMIZER_ARTIFACT_STALE_HOURS", "72") or "72")
+        required_outputs = ["analysis_results.json", "backtest_2020.json", "audit_report.json"]
+        freshness: Dict[str, Any] = {}
+        for filename in required_outputs:
+            path = output_dir / filename
+            if not path.exists():
+                issues.append(f"ARTIFACT_MISSING:{filename}")
+                proposals.append(f"Regenerate {filename} with a full analysis run for profile {user}.")
+                continue
+            try:
+                mtime = datetime.utcfromtimestamp(path.stat().st_mtime)
+                age_h = (datetime.utcnow() - mtime).total_seconds() / 3600.0
+                freshness[filename] = round(age_h, 2)
+                if age_h > float(freshness_threshold_hours):
+                    issues.append(f"STALE_ARTIFACT:{filename}:age_hours={age_h:.1f}")
+                    proposals.append(f"Refresh stale artifact {filename} (>{freshness_threshold_hours}h old).")
+            except OSError:
+                issues.append(f"ARTIFACT_STAT_ERROR:{filename}")
+        checks["artifact_age_hours"] = freshness
+
+        bt_path = output_dir / "backtest_2020.json"
+        if bt_path.exists():
+            try:
+                payload = json.loads(bt_path.read_text(encoding="utf-8", errors="ignore"))
+                inner = payload.get("value") if isinstance(payload, dict) else None
+                bt = inner if isinstance(inner, dict) else (payload if isinstance(payload, dict) else {})
+                required_bt_keys = ["strategy_returns", "maximum_drawdown", "sharpe_ratio"]
+                missing_bt = [k for k in required_bt_keys if k not in bt]
+                checks["backtest_missing_keys"] = missing_bt
+                if missing_bt:
+                    issues.append("BACKTEST_PAYLOAD_INCOMPLETE:" + ",".join(missing_bt))
+                    proposals.append("Fix backtest payload serialization to always include core KPI keys.")
+            except (OSError, ValueError) as exc:
+                issues.append(f"BACKTEST_PARSE_ERROR:{exc}")
+
+        return {
+            "issues": issues,
+            "proposals": proposals,
+            "checks": checks,
+            "issue_count": len(issues),
+            "healthy": len(issues) == 0,
+        }
+
+    def _run_system_validation_suite(self) -> tuple[bool, str]:
+        """Run fast validation checks for optimizer-selected code fixes."""
+        compile_targets = [
+            self.project_root / "src" / "optimizer.py",
+            self.project_root / "src" / "main.py",
+            self.project_root / "UI" / "app.py",
+            self.project_root / "UI" / "tabs" / "edge_tab.py",
+            self.project_root / "UI" / "runtime.py",
+        ]
+        existing_targets = [str(p) for p in compile_targets if p.exists()]
+        if existing_targets:
+            ok, out = self._run_cmd([sys.executable, "-m", "py_compile", *existing_targets], timeout=120)
+            if not ok:
+                return False, f"py_compile failed: {out[:300]}"
+
+        test_csv = (os.getenv("OPTIMIZER_VALIDATION_TESTS") or "").strip()
+        if test_csv:
+            requested_tests = [t.strip() for t in test_csv.split(",") if t.strip()]
+        else:
+            requested_tests = [
+                "tests/test_gold_output.py",
+                "tests/test_projectconfig.py",
+            ]
+        existing_tests = [t for t in requested_tests if (self.project_root / t).exists()]
+        if not existing_tests:
+            return True, "Validation passed (no configured test files found)."
+
+        ok, out = self._run_cmd([sys.executable, "-m", "pytest", "-q", *existing_tests], timeout=300)
+        if not ok:
+            return False, f"pytest failed: {out[:400]}"
+        return True, "Validation passed (py_compile + pytest)."
+
+    def _run_backtest_metrics_snapshot(self) -> Dict[str, float]:
+        """Collect compact backtest metrics for candidate ranking."""
+        import importlib
+
+        master_path = self.project_root / "data" / "gold" / "master_table.parquet"
+        if not master_path.exists():
+            return {}
+        try:
+            src_str = str(self.project_root / "src")
+            if src_str not in sys.path:
+                sys.path.insert(0, src_str)
+            import Medallion.gold.AnalysisSuite.backtest as _bt
+            import pandas as _pd
+
+            importlib.reload(_bt)
+            df = _pd.read_parquet(master_path)
+            pcol = "adj_close" if "adj_close" in df.columns else "close"
+            if pcol not in df.columns:
+                return {}
+            if "ticker" in df.columns:
+                tickers = df["ticker"].dropna().unique().tolist()
+                if tickers:
+                    df = df[df["ticker"] == tickers[0]]
+            if "date" in df.columns:
+                df = df.sort_values("date")
+                prices = df.set_index("date")[pcol].dropna()
+            else:
+                prices = df[pcol].dropna()
+            prices = _pd.to_numeric(prices, errors="coerce").dropna()
+            if len(prices) < 210:
+                return {}
+            bt = _bt.run_strategy_backtest(prices=prices, rolling_window=20, z_threshold=1.5)
+            m = bt.get("metrics", {}) if isinstance(bt, dict) else {}
+            return {
+                "sharpe": float(m.get("sharpe_ratio", 0.0) or 0.0),
+                "calmar": float(m.get("calmar_ratio", 0.0) or 0.0),
+                "mdd": float(m.get("max_drawdown", 0.0) or 0.0),
+            }
+        except Exception:
+            return {}
+
+    def _evaluate_llm_candidate(self, analysis: str, label: str) -> Dict[str, Any]:
+        """Apply candidate patch, run tests/regression, score it, then rollback."""
+        before = self._run_backtest_metrics_snapshot()
+        applied = self._llama.apply_code_changes(analysis)
+        has_real_changes = any("[APPLIED]" in item for item in applied)
+        after = self._run_backtest_metrics_snapshot()
+        gate_ok, gate_report = self._run_regression_gate(issue_type=f"system_scan_{label}")
+        val_ok, val_report = self._run_system_validation_suite()
+
+        # Candidate evaluation is sandboxed; restore working tree immediately.
+        self._run_cmd(["git", "checkout", "HEAD", "--", "."], timeout=60)
+
+        if not has_real_changes:
+            return {
+                "label": label,
+                "passed": False,
+                "score": -1e9,
+                "reason": "no_real_changes",
+                "gate_report": gate_report,
+                "validation_report": val_report,
+            }
+
+        b_sh = float(before.get("sharpe", 0.0) if before else 0.0)
+        a_sh = float(after.get("sharpe", 0.0) if after else 0.0)
+        b_ca = float(before.get("calmar", 0.0) if before else 0.0)
+        a_ca = float(after.get("calmar", 0.0) if after else 0.0)
+        b_mdd = abs(float(before.get("mdd", 0.0) if before else 0.0))
+        a_mdd = abs(float(after.get("mdd", 0.0) if after else 0.0))
+
+        eval_score = (a_sh - b_sh) * 5.0 + (a_ca - b_ca) * 3.0 + (b_mdd - a_mdd) * 10.0
+        passed = bool(gate_ok and val_ok)
+        return {
+            "label": label,
+            "passed": passed,
+            "score": float(eval_score),
+            "reason": "ok" if passed else "failed_validation",
+            "gate_report": gate_report,
+            "validation_report": val_report,
+        }
+
+    def _run_llm_assisted_system_subsystem(self) -> Dict[str, Any]:
+        """LLM-assisted subsystem that scans surfaces and proposes best-tested fixes."""
+        scan = self._scan_system_health()
+        if scan.get("healthy", False):
+            return {"ran": True, "changed": False, "status": "healthy", "scan": scan}
+
+        max_candidates = int(os.getenv("OPTIMIZER_SYSTEM_SCAN_MAX_CANDIDATES", "2") or "2")
+        candidate_reports: List[Dict[str, Any]] = []
+        candidate_payloads: List[Dict[str, Any]] = []
+        for idx in range(1, max(1, max_candidates) + 1):
+            prompt = (
+                "SYSTEM_SCAN detected profile/path/UI/metric issues. "
+                f"Attempt {idx}/{max_candidates}. Produce robust code fixes for PIPELINE_ROBUSTNESS."
+            )
+            llm = self._llama.analyze_problem(
+                problem_description=prompt,
+                diagnostics={
+                    "scan_issues": scan.get("issues", []),
+                    "scan_proposals": scan.get("proposals", []),
+                    "scan_checks": scan.get("checks", {}),
+                },
+                issue_type="PIPELINE_ROBUSTNESS",
+            )
+            if not llm.get("success") or not llm.get("has_code_changes"):
+                candidate_reports.append({
+                    "label": f"candidate_{idx}",
+                    "passed": False,
+                    "score": -1e9,
+                    "reason": "llm_no_code_changes",
+                })
+                continue
+
+            analysis = str(llm.get("analysis", ""))
+            eval_report = self._evaluate_llm_candidate(analysis, label=f"candidate_{idx}")
+            candidate_reports.append(eval_report)
+            candidate_payloads.append({
+                "label": f"candidate_{idx}",
+                "analysis": analysis,
+                "eval": eval_report,
+            })
+
+        passing = [c for c in candidate_payloads if c.get("eval", {}).get("passed")]
+        if not passing:
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "no_passing_candidate",
+                "scan": scan,
+                "candidates": candidate_reports,
+            }
+
+        best = sorted(passing, key=lambda c: float(c.get("eval", {}).get("score", -1e9)), reverse=True)[0]
+        best_label = str(best.get("label", "candidate"))
+        best_analysis = str(best.get("analysis", ""))
+
+        gate = self._ensure_approval_gateway()
+        approved = gate.request(
+            action_id="system_scan_best_tested_fix",
+            description=(
+                "[QUANTOS] System Health Subsystem found issues and selected best-tested LLM fix "
+                f"({best_label})."
+            ),
+            details={
+                "issue_type": "PIPELINE_ROBUSTNESS",
+                "scan": scan,
+                "tested_candidates": candidate_reports,
+                "best_candidate": best.get("eval", {}),
+                "llama_analysis": best_analysis,
+            },
+        )
+        if not approved:
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "rejected_by_owner",
+                "scan": scan,
+                "candidates": candidate_reports,
+            }
+
+        applied = self._llama.apply_code_changes(best_analysis)
+        if any("[ROLLED_BACK]" in item for item in applied):
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "smoke_failed",
+                "scan": scan,
+                "candidates": candidate_reports,
+                "applied": applied,
+            }
+
+        gate_ok, gate_report = self._run_regression_gate(issue_type="system_scan_best_tested_fix")
+        val_ok, val_report = self._run_system_validation_suite()
+        if not (gate_ok and val_ok):
+            self._run_cmd(["git", "checkout", "HEAD", "--", "."], timeout=60)
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "post_apply_validation_failed",
+                "gate_report": gate_report,
+                "validation_report": val_report,
+                "scan": scan,
+                "candidates": candidate_reports,
+            }
+
+        ver_msg = self._bump_version()
+        git_status = self._auto_commit_and_push("system_scan_best_tested_fix")
+        return {
+            "ran": True,
+            "changed": True,
+            "status": "applied",
+            "version": ver_msg,
+            "git": git_status,
+            "scan": scan,
+            "candidates": candidate_reports,
+        }
+
     def _auto_commit_and_push(self, reason: str) -> str:
         """Best-effort git add/commit/push after approved code changes.
 
@@ -1185,9 +1497,187 @@ class AutomatedOptimizationLoop:
                 worst = max(worst, clipped / final_rows)
         return worst
 
+    def _get_backtest_payload(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        raw = results.get("backtest_2020")
+        if not isinstance(raw, dict):
+            raw = results.get("backtest")
+        if not isinstance(raw, dict):
+            return {}
+        value = raw.get("value")
+        if isinstance(value, dict):
+            return value
+        return raw
+
+    def _edge_thresholds(self) -> Dict[str, float]:
+        return {
+            "edge_score": float(os.getenv("OPTIMIZER_MIN_EDGE_SCORE", "85")),
+            "sharpe_ratio": float(os.getenv("OPTIMIZER_EXCEPTIONAL_SHARPE", "0.60")),
+            "calmar_ratio": float(os.getenv("OPTIMIZER_EXCEPTIONAL_CALMAR", "0.60")),
+            "information_ratio": float(os.getenv("OPTIMIZER_EXCEPTIONAL_INFORMATION_RATIO", "0.50")),
+            "profit_factor": float(os.getenv("OPTIMIZER_EXCEPTIONAL_PROFIT_FACTOR", "1.20")),
+        }
+
+    def _compute_edge_score(self, backtest: Dict[str, Any]) -> Dict[str, Any]:
+        expectancy = backtest.get("expectancy_per_trade")
+        pf = backtest.get("profit_factor")
+        calmar = backtest.get("calmar_ratio")
+        sharpe = backtest.get("sharpe_ratio")
+        ir = backtest.get("information_ratio")
+
+        score = 0.0
+        breakdown: Dict[str, float] = {}
+
+        exp_pts = 25.0 if isinstance(expectancy, (int, float)) and float(expectancy) > 0 else 0.0
+        score += exp_pts
+        breakdown["expectancy"] = exp_pts
+
+        pf_pts = 0.0
+        if isinstance(pf, (int, float)) and float(pf) != float("inf"):
+            pf_pts = min(max((float(pf) - 1.0) / 0.20 * 25.0, 0.0), 25.0)
+        score += pf_pts
+        breakdown["profit_factor"] = pf_pts
+
+        cal_pts = 0.0
+        if isinstance(calmar, (int, float)):
+            cal_pts = min(max(float(calmar) / 0.60 * 20.0, 0.0), 20.0)
+        score += cal_pts
+        breakdown["calmar"] = cal_pts
+
+        sh_pts = 0.0
+        if isinstance(sharpe, (int, float)):
+            sh_pts = min(max(float(sharpe) / 0.60 * 20.0, 0.0), 20.0)
+        score += sh_pts
+        breakdown["sharpe"] = sh_pts
+
+        ir_pts = 0.0
+        if isinstance(ir, (int, float)):
+            ir_pts = min(max(float(ir) / 0.50 * 10.0, 0.0), 10.0)
+        score += ir_pts
+        breakdown["information_ratio"] = ir_pts
+
+        rob_pts = 0.0
+        robustness = backtest.get("robustness_check") if isinstance(backtest.get("robustness_check"), dict) else {}
+        wf_payload = backtest.get("walk_forward_validation") if isinstance(backtest.get("walk_forward_validation"), dict) else {}
+        if robustness.get("pearson_positive") is True:
+            rob_pts += 4.0
+        if robustness.get("p_value_lt_0_05") is True:
+            rob_pts += 3.0
+        wf_pos_ratio = wf_payload.get("positive_pearson_ratio")
+        if isinstance(wf_pos_ratio, (int, float)):
+            rob_pts += min(max(float(wf_pos_ratio), 0.0), 1.0) * 3.0
+        score += rob_pts
+        breakdown["robustness"] = rob_pts
+
+        return {
+            "edge_score": round(min(score, 100.0), 2),
+            "breakdown": breakdown,
+            "metrics": {
+                "sharpe_ratio": sharpe,
+                "calmar_ratio": calmar,
+                "information_ratio": ir,
+                "profit_factor": pf,
+                "expectancy_per_trade": expectancy,
+                "maximum_drawdown": backtest.get("maximum_drawdown"),
+            },
+        }
+
+    def _evaluate_edge_quality(self, backtest: Dict[str, Any]) -> Dict[str, Any]:
+        scored = self._compute_edge_score(backtest)
+        metrics = scored["metrics"]
+        thresholds = self._edge_thresholds()
+        failures: List[str] = []
+
+        if float(scored.get("edge_score", 0.0)) < thresholds["edge_score"]:
+            failures.append(
+                f"edge_score<{thresholds['edge_score']:.1f} (got {float(scored.get('edge_score', 0.0)):.2f})"
+            )
+
+        for k in ["sharpe_ratio", "calmar_ratio", "information_ratio", "profit_factor"]:
+            v = metrics.get(k)
+            if not isinstance(v, (int, float)):
+                failures.append(f"{k}=missing")
+                continue
+            if float(v) < thresholds[k]:
+                failures.append(f"{k}<{thresholds[k]:.2f} (got {float(v):.4f})")
+
+        return {
+            "ok": len(failures) == 0,
+            "failures": failures,
+            "thresholds": thresholds,
+            **scored,
+        }
+
+    def _check_user_paths_health(self) -> Dict[str, Any]:
+        user_gold = self.project_root / "data" / "users" / self.safe_user / "gold"
+        user_output = self.project_root / "output" / self.safe_user
+        checks = {
+            "gold_master": user_gold / "master_table.parquet",
+            "output_backtest": user_output / "backtest_2020.json",
+            "output_summary": user_output / "analysis_results.json",
+        }
+        issues: List[str] = []
+        details: Dict[str, Any] = {}
+        for key, p in checks.items():
+            exists = p.exists() and p.is_file()
+            size = int(p.stat().st_size) if exists else 0
+            details[key] = {"path": str(p), "exists": bool(exists), "size": size}
+            if not exists:
+                issues.append(f"{key}:missing")
+            elif size <= 0:
+                issues.append(f"{key}:empty")
+        return {"ok": len(issues) == 0, "issues": issues, "details": details}
+
+    def _extract_patch_rel_paths(self, analysis: str) -> List[str]:
+        rel_paths: List[str] = []
+        blocks = re.split(r"FILE:\\s*", analysis)
+        for block in blocks[1:]:
+            lines = block.strip().splitlines()
+            if not lines:
+                continue
+            rel = lines[0].strip()
+            if rel and rel not in rel_paths:
+                rel_paths.append(rel)
+        return rel_paths
+
+    def _snapshot_files(self, rel_paths: List[str]) -> Dict[Path, str]:
+        snap: Dict[Path, str] = {}
+        for rel in rel_paths:
+            p = self.project_root / "src" / rel
+            if p.exists() and p.is_file():
+                snap[p] = p.read_text(encoding="utf-8")
+        return snap
+
+    def _restore_file_snapshots(self, snapshots: Dict[Path, str]) -> None:
+        for p, txt in snapshots.items():
+            try:
+                p.write_text(txt, encoding="utf-8")
+            except Exception:
+                pass
+
+    def _format_metrics_for_plain_text(self, edge_eval: Dict[str, Any]) -> str:
+        m = edge_eval.get("metrics", {}) if isinstance(edge_eval, dict) else {}
+        return (
+            f"edge_score={float(edge_eval.get('edge_score', 0.0)):.2f}, "
+            f"sharpe={float(m.get('sharpe_ratio', 0.0) or 0.0):.4f}, "
+            f"calmar={float(m.get('calmar_ratio', 0.0) or 0.0):.4f}, "
+            f"information_ratio={float(m.get('information_ratio', 0.0) or 0.0):.4f}, "
+            f"profit_factor={float(m.get('profit_factor', 0.0) or 0.0):.4f}"
+        )
+
     def _diagnose(self, results: Dict[str, Any], quality: Dict[str, Any]) -> Dict[str, Any]:
         inconsistencies: List[str] = []
         score = 100.0
+
+        path_health = self._check_user_paths_health()
+        if not path_health.get("ok"):
+            inconsistencies.append(f"PIPELINE_PATHS:{path_health.get('issues', [])}")
+            score -= min(18.0, 6.0 * len(path_health.get("issues", [])))
+
+        backtest_payload = self._get_backtest_payload(results)
+        edge_eval = self._evaluate_edge_quality(backtest_payload if isinstance(backtest_payload, dict) else {})
+        if not edge_eval.get("ok"):
+            inconsistencies.append(f"EDGE_QUALITY:{edge_eval.get('failures', [])}")
+            score -= min(35.0, 4.5 * len(edge_eval.get("failures", [])))
 
         summary = quality.get("summary", {}) if isinstance(quality, dict) else {}
         missing_sources = summary.get("missing_sources", []) if isinstance(summary, dict) else []
@@ -1356,6 +1846,8 @@ class AutomatedOptimizationLoop:
             "coverage_info": coverage_info,
             "shap_info": shap_info,
             "coeff_ci_info": coeff_ci_info,
+            "path_health": path_health,
+            "edge_eval": edge_eval,
         }
 
     def _apply_fetcher_adjustment(self, config: ProjectConfig) -> str:
@@ -2053,10 +2545,17 @@ class AutomatedOptimizationLoop:
         iteration: int,
         diag: Dict[str, Any],
         issue_type: str,
+        baseline_results: Optional[Dict[str, Any]] = None,
     ) -> tuple[bool, str]:
-        """Use Llama to analyze serious problems (with real source code) and request approval.
+        """Use Llama to analyze serious problems, test patch quality, then request approval.
 
-        If approved → auto-applies the code changes from Llama's output.
+        Workflow:
+        1) Generate patch proposal from AI.
+        2) Apply in working tree with file snapshots.
+        3) Run regression gate + full pipeline + exceptional-metrics gate.
+        4) Send plain-text before/after summary to Telegram approval queue.
+        5) Keep changes only if owner approves; else restore snapshots.
+
         Returns (approved, adjustment_description).
         """
         serious_issues = [
@@ -2152,10 +2651,623 @@ class AutomatedOptimizationLoop:
             # Still include the full Llama analysis so the owner can review what was proposed
             return False, (f"[QUANTOS] {issue_type} REJECTED by owner — skipped.\nAI proposed the following (not applied):\n{analysis[:1200]}")
 
+    # ------------------------------------------------------------------
+    # Test-Suite Health Subsystem
+    # ------------------------------------------------------------------
+
+    def _run_pytest_and_capture_failures(
+        self,
+        test_paths: Optional[List[str]] = None,
+        timeout: int = 300,
+    ) -> Dict[str, Any]:
+        """Run pytest against the project test suite and return structured failures.
+
+        Returns:
+            {
+                "passed": bool,
+                "total": int,
+                "failed_count": int,
+                "failures": [{"test": str, "error": str}, ...],
+                "raw_output": str,
+            }
+        """
+        if test_paths is None:
+            # Discover test files relative to project root
+            candidates = [
+                "tests/test_gold_output.py",
+                "tests/test_projectconfig.py",
+                "tests/test_exceptions.py",
+                "tests/test_integration_exceptions.py",
+                "tests/test_ui_profile_routing.py",
+                "tests/test_optimizer_system_subsystem.py",
+            ]
+            test_paths = [t for t in candidates if (self.project_root / t).exists()]
+
+        if not test_paths:
+            return {
+                "passed": True,
+                "total": 0,
+                "failed_count": 0,
+                "failures": [],
+                "raw_output": "No test files found.",
+            }
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--tb=short",
+            "--no-header",
+            *test_paths,
+        ]
+        ok, raw = self._run_cmd(cmd, timeout=timeout)
+
+        # Parse structured failures from short traceback output
+        failures: List[Dict[str, str]] = []
+        current_test: Optional[str] = None
+        error_lines: List[str] = []
+        for line in raw.splitlines():
+            # pytest --tb=short marks failed tests as "FAILED test_file.py::TestName"
+            if line.startswith("FAILED "):
+                if current_test and error_lines:
+                    failures.append({"test": current_test, "error": "\n".join(error_lines).strip()})
+                current_test = line[len("FAILED "):].split(" - ")[0].strip()
+                error_lines = []
+            elif line.startswith("ERROR "):
+                if current_test and error_lines:
+                    failures.append({"test": current_test, "error": "\n".join(error_lines).strip()})
+                current_test = line[len("ERROR "):].split(" - ")[0].strip()
+                error_lines = []
+            elif current_test is not None:
+                error_lines.append(line)
+
+        if current_test and error_lines:
+            failures.append({"test": current_test, "error": "\n".join(error_lines).strip()})
+
+        # Deduplicate by test name; also extract inline error messages
+        seen: set = set()
+        clean_failures: List[Dict[str, str]] = []
+        for f in failures:
+            name = f.get("test", "")
+            if name not in seen:
+                seen.add(name)
+                clean_failures.append(f)
+
+        # Try to parse total counts from summary line "X passed, Y failed"
+        total = 0
+        failed_count = len(clean_failures)
+        for line in reversed(raw.splitlines()):
+            m = re.search(r"(\d+)\s+passed", line)
+            if m:
+                total = int(m.group(1)) + failed_count
+                break
+
+        return {
+            "passed": ok,
+            "total": total,
+            "failed_count": failed_count,
+            "failures": clean_failures,
+            "raw_output": raw[:4000],
+        }
+
+    def _fix_test_failure_with_llm_candidates(
+        self,
+        failure: Dict[str, str],
+        n_candidates: int = 3,
+    ) -> Dict[str, Any]:
+        """Generate N LLM candidate fixes for a test failure and return the best-tested one.
+
+        Each candidate is:
+          1) Generated via LLM with the failure message as context.
+          2) Applied to a working-tree file snapshot.
+          3) Tested by re-running the failing test file.
+          4) Rolled back (snapshot restore) after evaluation.
+
+        Returns best candidate dict or {"no_fix": True} if none pass.
+        """
+        test_name = failure.get("test", "unknown")
+        error_msg = failure.get("error", "")
+
+        # Map test file → relevant src files to include in context
+        test_file = test_name.split("::")[0].strip() if "::" in test_name else test_name.strip()
+
+        # Read failing test source for context (max 80 lines)
+        test_src = ""
+        test_path = self.project_root / test_file
+        if test_path.exists():
+            try:
+                lines = test_path.read_text(encoding="utf-8").splitlines()
+                test_src = "\n".join(lines[:80])
+            except Exception:
+                pass
+
+        candidates: List[Dict[str, Any]] = []
+        for attempt in range(1, n_candidates + 1):
+            prompt = (
+                f"{self._llama.SYSTEM_PROMPT}\n\n"
+                f"TASK: Fix a failing pytest test.\n\n"
+                f"FAILING TEST: {test_name}\n\n"
+                f"ERROR OUTPUT:\n{error_msg[:2000]}\n\n"
+                f"TEST SOURCE (first 80 lines):\n{test_src}\n\n"
+                f"Attempt {attempt}/{n_candidates}. "
+                "Produce a targeted code fix for the PRODUCTION source code (not the test itself) "
+                "that will make this test pass. Use the <<<OLD>>>/<<<NEW>>>/<<<END>>> format. "
+                "If the test itself has a bug, fix the TEST file instead."
+            )
+
+            raw_analysis = self._llama._call_llama(prompt)
+            has_changes = "<<<OLD>>>" in raw_analysis and "<<<NEW>>>" in raw_analysis
+
+            if not has_changes:
+                candidates.append({
+                    "attempt": attempt,
+                    "passed_test": False,
+                    "score": -1e9,
+                    "reason": "no_code_changes",
+                    "analysis": raw_analysis,
+                })
+                continue
+
+            # Snapshot affected files before applying
+            rel_paths = self._extract_patch_rel_paths(raw_analysis)
+            snapshots = self._snapshot_files(rel_paths)
+            # Also snapshot relative to project root for test files
+            for rp in rel_paths:
+                p = self.project_root / rp
+                if p.exists() and p.is_file() and p not in snapshots:
+                    snapshots[p] = p.read_text(encoding="utf-8")
+
+            applied = self._llama.apply_code_changes(raw_analysis)
+            has_real = any("[APPLIED]" in a for a in applied)
+
+            if not has_real:
+                self._restore_file_snapshots(snapshots)
+                candidates.append({
+                    "attempt": attempt,
+                    "passed_test": False,
+                    "score": -1e9,
+                    "reason": "apply_failed: " + "; ".join(applied[:3]),
+                    "analysis": raw_analysis,
+                })
+                continue
+
+            # Re-run the specific failing test file only
+            rerun_ok, rerun_out = self._run_cmd(
+                [sys.executable, "-m", "pytest", "-q", "--tb=short", "--no-header", test_file],
+                timeout=120,
+            )
+            # Restore snapshot regardless of result (candidates are sandboxed)
+            self._restore_file_snapshots(snapshots)
+
+            test_passed = bool(rerun_ok and "failed" not in rerun_out.lower())
+            score = 1.0 if test_passed else -1.0
+
+            candidates.append({
+                "attempt": attempt,
+                "passed_test": test_passed,
+                "score": score,
+                "reason": "test_pass" if test_passed else "test_still_failing",
+                "analysis": raw_analysis,
+                "applied": applied,
+            })
+
+            if test_passed:
+                break  # Found a working fix; no need for more candidates
+
+        passing = [c for c in candidates if c.get("passed_test")]
+        if not passing:
+            return {"no_fix": True, "test": test_name, "candidates": candidates}
+
+        best = sorted(passing, key=lambda c: float(c.get("score", -1e9)), reverse=True)[0]
+        return {"no_fix": False, "test": test_name, "best": best, "candidates": candidates}
+
+    def _run_test_suite_subsystem(self) -> Dict[str, Any]:
+        """Full test-suite health subsystem.
+
+        Workflow:
+          1. Run the complete pytest suite and capture structured failures.
+          2. For each failure, ask the LLM for N candidate fixes, test each one, pick best.
+          3. Collect best-fix analyses for all failures into a single patch set.
+          4. Send Telegram HITL summary + ask for approval to apply all verified fixes.
+          5. Apply on approval; rollback on rejection or gate failure.
+
+        Controlled by env var OPTIMIZER_TEST_SUITE_SCAN_ENABLED (default: 1).
+        """
+        enabled = (
+            os.getenv("OPTIMIZER_TEST_SUITE_SCAN_ENABLED", "1").strip().lower()
+            not in {"0", "false", "no"}
+        )
+        if not enabled:
+            return {"ran": False, "status": "disabled"}
+
+        print("\n[QUANTOS] Test-Suite Subsystem: running full pytest suite…")
+        suite_result = self._run_pytest_and_capture_failures()
+        total = suite_result.get("total", 0)
+        failed_count = suite_result.get("failed_count", 0)
+        failures = suite_result.get("failures", [])
+
+        print(
+            f"[QUANTOS] Test suite: total={total}, failed={failed_count}"
+        )
+
+        if not failures:
+            status = "all_tests_passing" if suite_result.get("passed") else "no_failures_parsed"
+            return {
+                "ran": True,
+                "changed": False,
+                "status": status,
+                "total": total,
+                "failed_count": 0,
+            }
+
+        # Cap the number of failures we attempt to fix to avoid runaway LLM usage
+        max_fix_attempts = int(
+            os.getenv("OPTIMIZER_TEST_FIX_MAX_FAILURES", "5") or "5"
+        )
+        n_candidates = int(
+            os.getenv("OPTIMIZER_TEST_FIX_CANDIDATES", "3") or "3"
+        )
+        failures_to_fix = failures[:max_fix_attempts]
+
+        fix_results: List[Dict[str, Any]] = []
+        verified_analyses: List[str] = []
+        for failure in failures_to_fix:
+            print(
+                f"[QUANTOS] Attempting LLM fix for: {failure.get('test', '?')}"
+            )
+            fix = self._fix_test_failure_with_llm_candidates(
+                failure=failure, n_candidates=n_candidates
+            )
+            fix_results.append(fix)
+            if not fix.get("no_fix") and fix.get("best"):
+                best_analysis = fix["best"].get("analysis", "")
+                if best_analysis:
+                    verified_analyses.append(best_analysis)
+
+        fixable = [f for f in fix_results if not f.get("no_fix")]
+        unfixable = [f for f in fix_results if f.get("no_fix")]
+
+        print(
+            f"[QUANTOS] Test fixes: {len(fixable)} fixable, {len(unfixable)} unfixable out of {len(failures_to_fix)} attempted."
+        )
+
+        if not fixable:
+            # Still notify owner about persistent failures
+            gate = self._ensure_approval_gateway()
+            gate._send_telegram(
+                "\U0001f9ea <b>Test-Suite Subsystem: failures found but LLM could not auto-fix</b>\n"
+                f"Total failures: {failed_count}  |  Attempted: {len(failures_to_fix)}\n"
+                "Unfixable tests:\n"
+                + "\n".join(
+                    f"  \u2022 {html.escape(str(f.get('test', '?')))}"
+                    for f in unfixable[:8]
+                )
+                + f"\n\n<pre>{html.escape(suite_result.get('raw_output', '')[:600])}</pre>"
+            )
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "no_auto_fixable_failures",
+                "failed_count": failed_count,
+                "fix_results": fix_results,
+            }
+
+        # Build HITL summary for Telegram approval
+        fix_summary_lines = [
+            f"\u2705 {html.escape(str(f.get('test', '?')))}"
+            for f in fixable
+        ]
+        unfixable_lines = [
+            f"\u274c {html.escape(str(f.get('test', '?')))}"
+            for f in unfixable
+        ]
+        summary_text = (
+            "\U0001f9ea <b>Test-Suite Subsystem: AI-Verified Fixes Ready</b>\n"
+            f"Suite: {total} total | {failed_count} failed | {len(fixable)} auto-fixed | {len(unfixable)} unfixable\n\n"
+            "<b>Verified fixes:</b>\n" + "\n".join(fix_summary_lines)
+            + ("\n\n<b>Still failing (manual fix needed):</b>\n" + "\n".join(unfixable_lines) if unfixable_lines else "")
+        )
+
+        gate = self._ensure_approval_gateway()
+        approved = gate.request(
+            action_id="test_suite_subsystem_fixes",
+            description=(
+                f"[QUANTOS] Test-Suite Subsystem: {len(fixable)} AI-verified fixes ready for {failed_count} failing tests."
+            ),
+            details={
+                "total_tests": total,
+                "failed_count": failed_count,
+                "fixable": len(fixable),
+                "unfixable": len(unfixable),
+                "fix_results": [
+                    {
+                        "test": str(f.get("test", "?")),
+                        "best_attempt": (
+                            f.get("best", {}).get("attempt") if f.get("best") else None
+                        ),
+                        "passed_test": (
+                            f.get("best", {}).get("passed_test") if f.get("best") else False
+                        ),
+                    }
+                    for f in fixable
+                ],
+                "telegram_summary": summary_text,
+            },
+        )
+
+        if not approved:
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "rejected_by_owner",
+                "failed_count": failed_count,
+                "fix_results": fix_results,
+            }
+
+        # Apply all verified analyses; collect applied results
+        all_applied: List[str] = []
+        for analysis in verified_analyses:
+            applied = self._llama.apply_code_changes(analysis)
+            all_applied.extend(applied)
+
+        # Re-run full suite to confirm fixes held
+        recheck = self._run_pytest_and_capture_failures()
+        recheck_failures = recheck.get("failed_count", 0)
+        recheck_passed = recheck.get("passed", False)
+
+        if not recheck_passed and recheck_failures >= failed_count:
+            # Fixes made things worse or had no effect — rollback
+            self._run_cmd(["git", "checkout", "HEAD", "--", "."], timeout=60)
+            return {
+                "ran": True,
+                "changed": False,
+                "status": "recheck_failed_rolled_back",
+                "original_failures": failed_count,
+                "recheck_failures": recheck_failures,
+                "fix_results": fix_results,
+            }
+
+        ver_msg = self._bump_version()
+        git_status = self._auto_commit_and_push("test_suite_subsystem_fixes")
+        gate._send_telegram(
+            "\u2705 <b>Test-Suite Subsystem: Fixes Applied</b>\n"
+            f"Before: {failed_count} failures  |  After: {recheck_failures} failures\n"
+            f"{html.escape(ver_msg)}\n{html.escape(git_status)}"
+        )
+        return {
+            "ran": True,
+            "changed": True,
+            "status": "applied",
+            "original_failures": failed_count,
+            "remaining_failures": recheck_failures,
+            "applied": all_applied,
+            "version": ver_msg,
+            "git": git_status,
+        }
+
+    # ------------------------------------------------------------------
+    # Extended System Health Scan
+    # ------------------------------------------------------------------
+
+    def _scan_pipeline_stages(self) -> Dict[str, Any]:
+        """Inspect each pipeline stage artifact for existence, freshness, and schema."""
+        user = self.safe_user
+        root = self.project_root
+        issues: List[str] = []
+        details: Dict[str, Any] = {}
+        threshold_h = int(os.getenv("OPTIMIZER_ARTIFACT_STALE_HOURS", "72") or "72")
+
+        stage_checks = [
+            # (stage_label, path_relative_to_root)
+            ("bronze_raw", f"data/users/{user}/raw"),
+            ("silver_processed", f"data/users/{user}/processed"),
+            ("gold_master", f"data/users/{user}/gold/master_table.parquet"),
+            ("gold_quality", f"data/users/{user}/processed/quality/quality_report.json"),
+            ("output_analysis", f"output/{user}/analysis_results.json"),
+            ("output_backtest", f"output/{user}/backtest_2020.json"),
+            ("output_governance", f"output/{user}/governance_report.json"),
+            ("output_monte_carlo", f"output/{user}/monte_carlo.json"),
+            ("output_sensitivity", f"output/{user}/sensitivity_regression.json"),
+            ("output_elasticity", f"output/{user}/elasticity.json"),
+            ("output_forecasting", f"output/{user}/forecasting.json"),
+            ("output_feature_decay", f"output/{user}/feature_decay.json"),
+            ("output_stress_test", f"output/{user}/stress_test.json"),
+            ("output_audit", f"output/{user}/audit_report.json"),
+        ]
+
+        for label, rel in stage_checks:
+            p = root / rel
+            exists = p.exists()
+            size = int(p.stat().st_size) if exists and p.is_file() else (0 if not exists else -1)
+            age_h: Optional[float] = None
+            if exists and p.is_file():
+                try:
+                    mtime = datetime.utcfromtimestamp(p.stat().st_mtime)
+                    age_h = round((datetime.utcnow() - mtime).total_seconds() / 3600.0, 2)
+                except OSError:
+                    pass
+
+            details[label] = {
+                "path": str(p),
+                "exists": bool(exists),
+                "size": size,
+                "age_hours": age_h,
+            }
+
+            if not exists:
+                issues.append(f"STAGE_MISSING:{label}")
+            elif p.is_file() and size == 0:
+                issues.append(f"STAGE_EMPTY:{label}")
+            elif age_h is not None and age_h > threshold_h:
+                issues.append(f"STAGE_STALE:{label}:age_hours={age_h:.1f}")
+
+        return {"stage_issues": issues, "stage_details": details}
+
+    def _scan_source_modules(self) -> Dict[str, Any]:
+        """Check that key source modules are present and compile without errors."""
+        root = self.project_root
+        modules = [
+            "src/optimizer.py",
+            "src/main.py",
+            "src/ai_agent.py",
+            "src/scheduler.py",
+            "src/secret_store.py",
+            "UI/app.py",
+            "UI/constants.py",
+            "UI/runtime.py",
+            "UI/tabs/edge_tab.py",
+            "UI/tabs/analysis_tabs.py",
+            "UI/tabs/data_tabs.py",
+            "UI/tabs/ops_tabs.py",
+            "UI/tabs/assistant_tab.py",
+            "Fetchers/Factory.py",
+            "Fetchers/ProjectConfig.py",
+            "Fetchers/FredFetcher.py",
+            "Fetchers/YFinanceFetcher.py",
+            "Fetchers/WorldBankFetcher.py",
+            "Medallion/MedallionPipeline.py",
+            "Medallion/bronze.py",
+            "Medallion/gold/GoldLayer.py",
+            "Medallion/silver/silver.py",
+        ]
+        missing: List[str] = []
+        syntax_errors: List[str] = []
+        for rel in modules:
+            p = root / rel
+            if not p.exists():
+                missing.append(rel)
+                continue
+            try:
+                src_text = p.read_text(encoding="utf-8", errors="ignore")
+                compile(src_text, str(p), "exec")
+            except SyntaxError as e:
+                syntax_errors.append(f"{rel}:{e.lineno}:{e.msg}")
+
+        issues: List[str] = []
+        if missing:
+            issues.append("MODULE_MISSING:" + ",".join(missing[:6]))
+        if syntax_errors:
+            issues.append("SYNTAX_ERROR:" + ";".join(syntax_errors[:4]))
+
+        return {"module_issues": issues, "missing_modules": missing, "syntax_errors": syntax_errors}
+
+    def _scan_metrics_completeness(self) -> Dict[str, Any]:
+        """Parse output JSON artifacts and check for required keys / null values."""
+        user = self.safe_user
+        root = self.project_root
+        issues: List[str] = []
+
+        required_keys = {
+            "backtest_2020.json": [
+                "strategy_returns",
+                "maximum_drawdown",
+                "sharpe_ratio",
+                "calmar_ratio",
+                "information_ratio",
+                "profit_factor",
+                "expectancy_per_trade",
+            ],
+            "analysis_results.json": [
+                "backtest_2020",
+                "governance_report",
+                "sensitivity_regression",
+                "elasticity",
+            ],
+            "governance_report.json": [
+                "out_of_sample",
+                "split",
+                "leakage_flags",
+            ],
+        }
+
+        for filename, keys in required_keys.items():
+            path = root / "output" / user / filename
+            if not path.exists():
+                continue  # already caught by stage scan
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+                # Unwrap {value: {...}} pattern
+                if isinstance(payload, dict) and "value" in payload:
+                    payload = payload["value"]
+                if not isinstance(payload, dict):
+                    issues.append(f"METRICS_NOT_DICT:{filename}")
+                    continue
+                missing_keys = [k for k in keys if k not in payload]
+                null_keys = [k for k in keys if k in payload and payload[k] is None]
+                if missing_keys:
+                    issues.append(f"METRICS_MISSING_KEYS:{filename}:{','.join(missing_keys[:4])}")
+                if null_keys:
+                    issues.append(f"METRICS_NULL_VALUES:{filename}:{','.join(null_keys[:4])}")
+            except (ValueError, OSError):
+                issues.append(f"METRICS_PARSE_ERROR:{filename}")
+
+        return {"metrics_issues": issues}
+
+    def _extended_scan_system_health(self) -> Dict[str, Any]:
+        """Comprehensive health scan: pipeline stages + source modules + metrics completeness
+        combined with the base _scan_system_health() profile/UI/freshness checks."""
+        base = self._scan_system_health()
+        stages = self._scan_pipeline_stages()
+        modules = self._scan_source_modules()
+        metrics = self._scan_metrics_completeness()
+
+        all_issues = (
+            list(base.get("issues", []))
+            + stages.get("stage_issues", [])
+            + modules.get("module_issues", [])
+            + metrics.get("metrics_issues", [])
+        )
+
+        return {
+            "issues": all_issues,
+            "proposals": list(base.get("proposals", [])),
+            "checks": {
+                **base.get("checks", {}),
+                "stage_details": stages.get("stage_details", {}),
+                "missing_modules": modules.get("missing_modules", []),
+                "syntax_errors": modules.get("syntax_errors", []),
+            },
+            "issue_count": len(all_issues),
+            "healthy": len(all_issues) == 0,
+        }
+
     def run(self) -> Dict[str, Any]:
         final_results: Dict[str, Any] = {}
         final_diag: Dict[str, Any] = {"score": 0.0, "inconsistencies": []}
         gate = self._ensure_approval_gateway()
+
+        # ── 1. Extended System Health Subsystem ──────────────────────────────────
+        # Scans pipeline stages, UI tabs, source modules, metrics completeness,
+        # artifact freshness, and file paths. For each issue batch, generates
+        # N LLM candidate fixes, tests them, and proposes the best-tested fix
+        # via the Telegram HITL approval channel.
+        if (os.getenv("OPTIMIZER_SYSTEM_SCAN_ENABLED", "1").strip().lower() not in {"0", "false", "no"}):
+            try:
+                print("\n[QUANTOS] Extended System Health Scan: pipeline stages, UI, modules, metrics, freshness…")
+                # Use the extended scan (replaces the old basic scan inside the subsystem)
+                _orig_scan = self._scan_system_health
+                self._scan_system_health = self._extended_scan_system_health  # type: ignore[method-assign]
+                system_scan_report = self._run_llm_assisted_system_subsystem()
+                self._scan_system_health = _orig_scan  # type: ignore[method-assign]
+                status = system_scan_report.get("status", "?")
+                issue_count = system_scan_report.get("scan", {}).get("issue_count", "?")
+                print(f"[QUANTOS] System subsystem: status={status}, issues_found={issue_count}")
+            except Exception as exc:
+                print(f"[QUANTOS] System subsystem skipped due to error: {exc}")
+
+        # ── 2. Test-Suite Health Subsystem ────────────────────────────────────
+        # Runs the full pytest suite, finds failures, generates LLM candidate
+        # fixes for each failure, tests candidates, and applies the best-tested
+        # set after Telegram HITL approval.
+        try:
+            test_suite_report = self._run_test_suite_subsystem()
+            ts_status = test_suite_report.get("status", "disabled")
+            ts_changed = test_suite_report.get("changed", False)
+            ts_remaining = test_suite_report.get("remaining_failures", test_suite_report.get("failed_count", 0))
+            print(f"[QUANTOS] Test-suite subsystem: status={ts_status}, changed={ts_changed}, remaining_failures={ts_remaining}")
+        except Exception as exc:
+            print(f"[QUANTOS] Test-suite subsystem skipped due to error: {exc}")
 
         # ── Autonomous Llama bug scan (runs once before the optimization loop) ──
         print("\n[QUANTOS] Pre-run: Scanning project source files for latent bugs...")

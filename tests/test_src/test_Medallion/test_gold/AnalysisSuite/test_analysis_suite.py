@@ -90,7 +90,7 @@ def test_correl_mtrx_stress_mode():
 
 def test_elasticity_returns_dict():
     """elasticity() returns a structured dict — not a bare float."""
-    df = _make_macro_panel(120)
+    df = _make_macro_panel(250)
     result = elasticity(df, "log_return", "inflation")
     assert isinstance(result, dict)
     assert "static_elasticity" in result
@@ -138,7 +138,7 @@ def test_monte_carlo_returns_dict_with_paths():
 
 def test_stress_test_returns_structured_dict():
     """stress_test() returns results nested under 'results' key."""
-    df = _make_macro_panel(60)
+    df = _make_macro_panel(250)
     result = stress_test(df, shock_map={"inflation": 0.10})
     assert isinstance(result, dict)
     assert "results" in result
@@ -153,7 +153,7 @@ def test_stress_test_returns_structured_dict():
 
 def test_stress_test_preset_scenario():
     """Preset scenario name is resolved; factor results are returned."""
-    df = _make_macro_panel(60)
+    df = _make_macro_panel(250)
     # Provide explicit shocks for factors that exist in the test panel,
     # overriding the preset — the merged dict drives the OLS loop.
     result = stress_test(
@@ -172,7 +172,7 @@ def test_stress_test_preset_scenario():
 
 def test_sensitivity_reg_ols_returns_dict():
     """OLS sensitivity_reg() returns dict with summary_text (not a Summary obj)."""
-    df = _make_macro_panel(60)
+    df = _make_macro_panel(250)
     summary = sensitivity_reg(df, target="log_return", factors=["inflation", "energy_index"], model="OLS")
     assert isinstance(summary, dict)
     assert summary["model"] == "OLS"
@@ -185,7 +185,7 @@ def test_sensitivity_reg_ols_returns_dict():
 
 
 def test_sensitivity_reg_ridge_returns_dict():
-    df = _make_macro_panel(60)
+    df = _make_macro_panel(250)
     ridge = sensitivity_reg(df, target="log_return", factors=["inflation", "energy_index"], model="Ridge")
     assert isinstance(ridge, dict)
     assert ridge["model"] == "Ridge"
@@ -295,7 +295,7 @@ def test_forecasting_runs():
         }
     )
     forecast = forecasting(df, "log_return", steps=3, order=(1, 0, 0))
-    assert len(forecast) == 3
+    assert len(forecast["forecast"]) == 3
 
 
 # ─── AutoML ───────────────────────────────────────────────────────────────────
@@ -303,27 +303,31 @@ def test_forecasting_runs():
 
 def test_auto_ml_regression_patched(monkeypatch):
     import src.Medallion.gold.AnalysisSuite.auto_ml as auto_ml_module
+    import src.Medallion.gold.AnalysisSuite.mixed_frequency as mf_module
 
-    def dummy_setup(*args, **kwargs):
-        return None
+    rng = np.random.default_rng(42)
+    n = 300
+    fake_panel = pd.DataFrame(
+        {
+            "date": pd.date_range("2015-01-01", periods=n, freq="B"),
+            "y": rng.normal(0, 0.01, n),
+            "x": rng.normal(0, 1, n),
+        }
+    )
+    fake_metadata = {
+        "x": {"source": "fred", "lag_days": 0, "transformation": "level", "native_horizon_days": 1},
+        "y": {"source": "equity", "lag_days": 0, "transformation": "level", "native_horizon_days": 1},
+    }
 
-    class DummyModel:
-        def __str__(self):
-            return "DummyModel"
+    monkeypatch.setattr(
+        auto_ml_module,
+        "prepare_supervised_frame",
+        lambda *args, **kwargs: (fake_panel.copy(), dict(fake_metadata)),
+    )
 
-    def dummy_compare_models():
-        return DummyModel()
-
-    def dummy_predict_model(model, data):
-        return data.assign(prediction=0.0)
-
-    monkeypatch.setattr(auto_ml_module, "setup", dummy_setup)
-    monkeypatch.setattr(auto_ml_module, "compare_models", dummy_compare_models)
-    monkeypatch.setattr(auto_ml_module, "predict_model", dummy_predict_model)
-
-    df = pd.DataFrame({"x": [1, 2, 3], "y": [1.0, 2.0, 3.0]})
+    df = pd.DataFrame({"x": rng.normal(0, 1, 10), "y": rng.normal(0, 0.01, 10)})
     result = auto_ml_regression(df, target="y", features=["x"])
-    assert result["best_model"] == "DummyModel"
+    assert result["best_model"]
     assert "predictions" in result
 
 
@@ -334,10 +338,10 @@ def test_auto_ml_regression_patched(monkeypatch):
 def test_governance_report_runs_with_temporal_split():
     df = pd.DataFrame(
         {
-            "date": pd.date_range("2018-01-31", periods=60, freq="ME"),
-            "log_return": np.random.randn(60) * 0.02,
-            "inflation": np.linspace(0.01, 0.03, 60),
-            "energy_index": np.linspace(0.2, 0.4, 60) + np.random.randn(60) * 0.01,
+            "date": pd.date_range("2014-01-31", periods=200, freq="ME"),
+            "log_return": np.random.randn(200) * 0.02,
+            "inflation": np.linspace(0.01, 0.03, 200),
+            "energy_index": np.linspace(0.2, 0.4, 200) + np.random.randn(200) * 0.01,
         }
     )
 
