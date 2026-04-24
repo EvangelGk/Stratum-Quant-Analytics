@@ -48,6 +48,40 @@ def _select_top_features(
     return [f for _, f in scores[:max_k]]
 
 
+def _prune_by_vif(
+    features: List[str],
+    X_train: pd.DataFrame,
+    max_vif: float = 5.0,
+) -> List[str]:
+    """Iteratively remove the highest-VIF feature until all VIF ≤ max_vif.
+
+    Uses OLS R² via numpy lstsq — no external dependency.
+    Stops early if fewer than (n_features + 5) rows remain, to avoid
+    rank-deficient fits on small training windows.
+    """
+    remaining = list(features)
+    while len(remaining) > 1:
+        X_sub = X_train[remaining].dropna().values.astype(float)
+        if X_sub.shape[0] < X_sub.shape[1] + 5:
+            break
+        vifs: Dict[str, float] = {}
+        for i, f in enumerate(remaining):
+            y = X_sub[:, i]
+            X_rest = np.delete(X_sub, i, axis=1)
+            A = np.column_stack([np.ones(len(y)), X_rest])
+            coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+            y_hat = A @ coef
+            ss_res = float(np.sum((y - y_hat) ** 2))
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            r2 = max(0.0, 1.0 - ss_res / max(ss_tot, 1e-12))
+            vifs[f] = 1.0 / max(1.0 - r2, 1e-6)
+        worst_f = max(vifs, key=lambda k: vifs[k])
+        if vifs[worst_f] <= max_vif:
+            break
+        remaining.remove(worst_f)
+    return remaining
+
+
 def _make_model(n_samples: int) -> RidgeCV:
     """RidgeCV with TimeSeriesSplit: always produces non-zero predictions.
 
@@ -776,9 +810,33 @@ def backtest_pre2020_holdout(
 ) -> Dict[str, Any]:
     """Train before 2020 and evaluate on 2020-2022 holdout window."""
     try:
-        features = features or ["inflation", "energy_index"]
+        features = list(features) if features else ["inflation", "energy_index"]
+
+        # ── Inject 60-day momentum feature (Problem 4 fix) ───────────────────
+        # return_60d = trailing 60-day cumulative log-return.
+        # Named "return_60d" so is_return_like() returns True and
+        # stationary_transform keeps the value as-is (no further differencing).
+        # This gives Ridge a stock-specific momentum signal that macro features
+        # alone cannot capture.
+        _df_aug = df.copy()
+        if "log_return" in _df_aug.columns:
+            _df_aug[date_col] = pd.to_datetime(_df_aug[date_col], errors="coerce")
+            if "ticker" in _df_aug.columns:
+                _df_aug["return_60d"] = (
+                    _df_aug.sort_values([date_col])
+                    .groupby("ticker", group_keys=False)["log_return"]
+                    .transform(lambda s: s.rolling(60, min_periods=30).sum())
+                )
+            else:
+                _df_aug = _df_aug.sort_values(date_col)
+                _df_aug["return_60d"] = _df_aug["log_return"].rolling(60, min_periods=30).sum()
+            if "return_60d" not in features:
+                features = features + ["return_60d"]
+        else:
+            _df_aug = df
+
         panel, metadata = prepare_supervised_frame(
-            df=df,
+            df=_df_aug,
             target=target,
             features=features,
             date_col=date_col,
@@ -815,7 +873,11 @@ def backtest_pre2020_holdout(
             test_df = panel.iloc[split_idx:].copy()
             _split_mode = "70_30_fallback"
 
-        _sel = _select_top_features(train_df[features], train_df[target].to_numpy(), features)
+        # cap at 7 (down from 10) to limit overfitting on the small pre-2020 window.
+        _sel = _select_top_features(train_df[features], train_df[target].to_numpy(), features, max_k=7)
+        # VIF pruning: iteratively remove the highest-VIF feature until all ≤ 5.0.
+        # Addresses multicollinearity (Problem 3) and factor concentration (Problem 2).
+        _sel = _prune_by_vif(_sel, train_df, max_vif=5.0)
         try:
             model = _make_model(len(train_df))
             model.fit(train_df[_sel], train_df[target])
@@ -826,7 +888,7 @@ def backtest_pre2020_holdout(
         train_predictions = model.predict(train_df[_sel])
 
         _orig = (
-            df[[date_col, "log_return"]]
+            _df_aug[[date_col, "log_return"]]
             .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
             .dropna(subset=[date_col, "log_return"])
             .set_index(date_col)
@@ -911,9 +973,9 @@ def backtest_pre2020_holdout(
         _price_forecasts: List[Dict[str, Any]] = []
         _n_pred = len(predictions)
         _forecast_dates = _test_dates[:_n_pred]
-        if "close" in df.columns:
+        if "close" in _df_aug.columns:
             _close_orig = (
-                df[[date_col, "close"]]
+                _df_aug[[date_col, "close"]]
                 .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
                 .dropna(subset=[date_col, "close"])
                 .set_index(date_col)

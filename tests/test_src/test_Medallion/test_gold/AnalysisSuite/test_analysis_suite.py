@@ -16,8 +16,11 @@ import pytest
 from src.Medallion.gold.AnalysisSuite.auto_ml import auto_ml_regression
 from src.Medallion.gold.AnalysisSuite.backtest import (
     _make_model,
+    _prune_by_vif,
     _select_top_features,
     _simulate_risk_managed_returns,
+    backtest_pre2020_holdout,
+    portfolio_backtest,
 )
 from src.Medallion.gold.AnalysisSuite.correl_mtrx import correl_mtrx
 from src.Medallion.gold.AnalysisSuite.elasticity import elasticity
@@ -540,3 +543,179 @@ def test_ridgecv_strongest_coef_on_signal_feature():
     assert abs(coefs["signal"]) > max(abs(coefs["noise1"]), abs(coefs["noise2"]), abs(coefs["noise3"])), (
         "RidgeCV must assign the largest coefficient to the predictive feature."
     )
+
+
+# ─── VIF pruning ─────────────────────────────────────────────────────────────
+
+
+def test_prune_by_vif_removes_collinear_feature():
+    """_prune_by_vif must remove a near-duplicate feature with VIF >> 5."""
+    rng = np.random.default_rng(7)
+    n = 200
+    base = rng.normal(0, 1, n)
+    X = pd.DataFrame({
+        "f1": base,
+        "f2": base + rng.normal(0, 0.05, n),  # near-perfect collinear with f1
+        "f3": rng.normal(0, 1, n),             # independent
+    })
+    pruned = _prune_by_vif(["f1", "f2", "f3"], X, max_vif=5.0)
+    # f1 and f2 are near-identical — one must be removed
+    assert not ({"f1", "f2"} <= set(pruned)), "Both collinear features must not survive VIF pruning"
+    assert "f3" in pruned, "Independent feature must survive VIF pruning"
+
+
+def test_prune_by_vif_keeps_independent_features():
+    """When all features are independent, _prune_by_vif must return them unchanged."""
+    rng = np.random.default_rng(9)
+    n = 200
+    X = pd.DataFrame({
+        "a": rng.normal(0, 1, n),
+        "b": rng.normal(0, 1, n),
+        "c": rng.normal(0, 1, n),
+    })
+    pruned = _prune_by_vif(["a", "b", "c"], X, max_vif=5.0)
+    assert set(pruned) == {"a", "b", "c"}
+
+
+def test_prune_by_vif_single_feature_unchanged():
+    """A single-element list must pass through _prune_by_vif untouched."""
+    rng = np.random.default_rng(11)
+    n = 50
+    X = pd.DataFrame({"x": rng.normal(0, 1, n)})
+    assert _prune_by_vif(["x"], X, max_vif=5.0) == ["x"]
+
+
+# ─── backtest_pre2020_holdout ─────────────────────────────────────────────────
+
+
+def _make_backtest_panel(n: int = 500, ticker: str = "TEST") -> pd.DataFrame:
+    """Synthetic daily panel long enough for the pre-2020 holdout split."""
+    rng = np.random.default_rng(42)
+    dates = pd.date_range("2016-01-01", periods=n, freq="B")
+    log_ret = rng.normal(0.0003, 0.012, n)
+    inflation = np.linspace(0.01, 0.04, n) + rng.normal(0, 0.002, n)
+    energy = np.linspace(0.20, 0.50, n) + rng.normal(0, 0.02, n)
+    close = 100.0 * np.exp(np.cumsum(log_ret))
+    return pd.DataFrame({
+        "date": dates,
+        "ticker": [ticker] * n,
+        "log_return": log_ret,
+        "close": close,
+        "inflation": inflation,
+        "energy_index": energy,
+    })
+
+
+def test_backtest_pre2020_holdout_required_keys():
+    """backtest_pre2020_holdout must return all required top-level keys."""
+    df = _make_backtest_panel(n=600)
+    result = backtest_pre2020_holdout(df, target="log_return", features=["inflation", "energy_index"])
+    for key in ("sharpe_ratio", "maximum_drawdown", "annualized_return",
+                "strategy_returns", "benchmark_returns", "test_dates",
+                "price_forecasts_21d", "features"):
+        assert key in result, f"Missing key: {key}"
+
+
+def test_backtest_pre2020_holdout_momentum_injected():
+    """return_60d momentum feature must appear in selected features when log_return is present."""
+    df = _make_backtest_panel(n=600)
+    result = backtest_pre2020_holdout(df, target="log_return", features=["inflation", "energy_index"])
+    # features_input includes return_60d added internally
+    assert "return_60d" in result.get("features_input", []), (
+        "return_60d must be injected automatically when log_return column is present"
+    )
+
+
+def test_backtest_pre2020_holdout_returns_21d_price_forecasts():
+    """price_forecasts_21d must be a list of dicts with the required forecast keys."""
+    df = _make_backtest_panel(n=600)
+    result = backtest_pre2020_holdout(df, target="log_return", features=["inflation", "energy_index"])
+    forecasts = result.get("price_forecasts_21d", [])
+    assert isinstance(forecasts, list)
+    if forecasts:
+        first = forecasts[0]
+        for k in ("date", "current_close", "predicted_21d_log_return", "predicted_close_21d"):
+            assert k in first, f"Missing forecast key: {k}"
+        assert first["predicted_close_21d"] > 0
+
+
+def test_backtest_pre2020_holdout_dates_align_returns():
+    """test_dates length must match strategy_returns length."""
+    df = _make_backtest_panel(n=600)
+    result = backtest_pre2020_holdout(df, target="log_return", features=["inflation", "energy_index"])
+    assert len(result["test_dates"]) == len(result["strategy_returns"])
+
+
+# ─── portfolio_backtest ───────────────────────────────────────────────────────
+
+
+def _make_portfolio_panel(tickers=("A", "B"), n: int = 500) -> pd.DataFrame:
+    """Multi-ticker synthetic panel for portfolio_backtest tests."""
+    frames = []
+    for i, t in enumerate(tickers):
+        rng = np.random.default_rng(i * 17)
+        dates = pd.date_range("2016-01-01", periods=n, freq="B")
+        log_ret = rng.normal(0.0003, 0.012, n)
+        close = 100.0 * np.exp(np.cumsum(log_ret))
+        inflation = np.linspace(0.01, 0.04, n) + rng.normal(0, 0.002, n)
+        energy = np.linspace(0.20, 0.50, n) + rng.normal(0, 0.02, n)
+        frames.append(pd.DataFrame({
+            "date": dates,
+            "ticker": [t] * n,
+            "log_return": log_ret,
+            "close": close,
+            "inflation": inflation,
+            "energy_index": energy,
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_portfolio_backtest_required_top_level_keys():
+    """portfolio_backtest must return mode, tickers_succeeded, weights, portfolio, per_ticker."""
+    df = _make_portfolio_panel()
+    result = portfolio_backtest(df, features=["inflation", "energy_index"], mode="both")
+    for key in ("mode", "tickers_attempted", "tickers_succeeded", "failed_tickers", "weights"):
+        assert key in result, f"Missing key: {key}"
+    assert result["mode"] == "both"
+
+
+def test_portfolio_backtest_portfolio_metrics_present():
+    """portfolio dict must contain sharpe_ratio, maximum_drawdown, strategy_returns, dates."""
+    df = _make_portfolio_panel()
+    result = portfolio_backtest(df, features=["inflation", "energy_index"], mode="both")
+    port = result.get("portfolio")
+    assert isinstance(port, dict), "portfolio must be a dict"
+    for key in ("sharpe_ratio", "maximum_drawdown", "annualized_return",
+                "strategy_returns", "benchmark_returns", "dates", "ticker_summary"):
+        assert key in port, f"Missing portfolio key: {key}"
+
+
+def test_portfolio_backtest_weights_sum_to_one():
+    """Normalised weights must sum to 1.0 (within floating-point tolerance)."""
+    df = _make_portfolio_panel()
+    result = portfolio_backtest(df, features=["inflation", "energy_index"], mode="both")
+    total = sum(result["weights"].values())
+    assert abs(total - 1.0) < 1e-6, f"Weights sum to {total}, expected 1.0"
+
+
+def test_portfolio_backtest_per_ticker_keys():
+    """per_ticker must contain one entry per attempted ticker."""
+    df = _make_portfolio_panel(tickers=("X", "Y"))
+    result = portfolio_backtest(df, features=["inflation", "energy_index"], mode="both")
+    per = result.get("per_ticker", {})
+    assert "X" in per and "Y" in per
+
+
+def test_portfolio_backtest_individual_mode_no_portfolio():
+    """mode='individual' must not include a 'portfolio' key."""
+    df = _make_portfolio_panel()
+    result = portfolio_backtest(df, features=["inflation", "energy_index"], mode="individual")
+    assert "portfolio" not in result or result.get("portfolio") is None
+
+
+def test_portfolio_backtest_no_ticker_column_raises():
+    """portfolio_backtest must raise an error when 'ticker' column is absent."""
+    df = _make_backtest_panel()  # single-ticker df
+    df = df.drop(columns=["ticker"])
+    with pytest.raises(Exception):
+        portfolio_backtest(df, features=["inflation", "energy_index"])
