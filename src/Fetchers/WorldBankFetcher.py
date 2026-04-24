@@ -43,6 +43,19 @@ class WorldBankFetcher(BaseFetcher):
             # Do not cache empty payloads; missing/late series should be retried
             # on the next run instead of being suppressed for the full TTL.
             return df
+        # Guard: if every value in the Value column is NaN the API returned year
+        # stubs with no actual data (e.g. a deprecated aggregate or a temporarily
+        # unavailable series).  Treat this the same as an empty result so Bronze
+        # skips the entity and Silver never sees a 100%-null parquet.
+        value_col = next((c for c in ("Value", "value") if c in df.columns), None)
+        if value_col is not None and df[value_col].isna().all():
+            warnings.warn(
+                f"World Bank API returned all-NaN values for indicator {indicator!r} / "
+                f"{country!r} — treating as empty to prevent downstream Silver failure.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return pd.DataFrame(columns=df.columns)
         self._set_cached(key, df, expire=self.CACHE_TTL_SECONDS)
         return df
 

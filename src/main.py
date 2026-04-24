@@ -39,6 +39,12 @@ from logger.Messages.MainMess import (
     QUICK_START,
 )
 from Medallion import MedallionPipeline
+
+# Ensure the project root (parent of src/) is on sys.path so pathing.py is
+# importable when main.py is executed directly (e.g. `python src/main.py`).
+_PROJECT_ROOT_FOR_IMPORT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT_FOR_IMPORT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_FOR_IMPORT))
 from pathing import build_output_dir, output_path_diagnostics, sanitize_profile_key
 
 # Setup logging
