@@ -123,6 +123,15 @@ def _render_hero_style() -> None:
     )
 
 
+def _is_portfolio_backtest(d: dict) -> bool:
+    """Return True for portfolio_backtest() output (has nested portfolio + per_ticker)."""
+    return (
+        isinstance(d, dict)
+        and isinstance(d.get("portfolio"), dict)
+        and isinstance(d.get("per_ticker"), dict)
+    )
+
+
 def _extract_backtest(candidate: dict) -> dict:
     if not isinstance(candidate, dict) or not candidate:
         return {}
@@ -138,23 +147,33 @@ def _extract_backtest(candidate: dict) -> dict:
     direct = candidate.get("backtest_2020")
     if isinstance(direct, dict):
         extracted = direct.get("value", direct)
-        if isinstance(extracted, dict) and any(k in extracted for k in _BACKTEST_KEYS):
-            return extracted
+        if isinstance(extracted, dict):
+            # Portfolio structure nested inside backtest_2020
+            if _is_portfolio_backtest(extracted):
+                return extracted
+            if any(k in extracted for k in _BACKTEST_KEYS):
+                return extracted
     # analysis_results structure
     results = candidate.get("results")
     if isinstance(results, dict):
         bt = results.get("backtest_2020")
         if isinstance(bt, dict):
             extracted = bt.get("value", bt)
-            if isinstance(extracted, dict) and any(k in extracted for k in _BACKTEST_KEYS):
-                return extracted
+            if isinstance(extracted, dict):
+                if _is_portfolio_backtest(extracted):
+                    return extracted
+                if any(k in extracted for k in _BACKTEST_KEYS):
+                    return extracted
     # single-artifact structure
     if isinstance(wrapped, dict):
-        # May already be the backtest payload
-        if any(k in wrapped for k in ("strategy_returns", "maximum_drawdown", "sharpe_ratio", "predictions", "actual")):
+        if _is_portfolio_backtest(wrapped):
             return wrapped
-    # direct payload
-    if any(k in candidate for k in ("strategy_returns", "maximum_drawdown", "sharpe_ratio", "predictions", "actual")):
+        if any(k in wrapped for k in _BACKTEST_KEYS):
+            return wrapped
+    # direct portfolio or single-ticker payload
+    if _is_portfolio_backtest(candidate):
+        return candidate
+    if any(k in candidate for k in _BACKTEST_KEYS):
         return candidate
     return {}
 
@@ -208,6 +227,27 @@ def _infer_periods_per_year(backtest: dict) -> int:
 def _compute_missing_metrics(backtest: dict) -> dict:
     if not isinstance(backtest, dict):
         return {}
+
+    # ── Portfolio structure: hoist portfolio-level fields to the top so all
+    # downstream rendering code (KPIs, charts, score) works without changes.
+    if _is_portfolio_backtest(backtest):
+        out = dict(backtest)
+        portfolio = out["portfolio"]
+        _hoist = [
+            "sharpe_ratio", "sortino_ratio", "maximum_drawdown", "calmar_ratio",
+            "information_ratio", "annualized_return", "strategy_returns",
+            "benchmark_returns", "rolling_sharpe_30d", "profit_factor",
+            "tracking_error", "dates",
+        ]
+        for _k in _hoist:
+            if _k in portfolio:
+                out.setdefault(_k, portfolio[_k])
+        # Build expectancy from per-win/loss stats stored in portfolio
+        wp = float(portfolio.get("win_probability", 0.0))
+        aw = float(portfolio.get("average_win", 0.0))
+        al = float(portfolio.get("average_loss", 0.0))
+        out.setdefault("expectancy_per_trade", float(wp * aw - (1.0 - wp) * abs(al)))
+        return out
 
     out = dict(backtest)
     preds = out.get("predictions")
@@ -481,6 +521,174 @@ def _check_governance_block() -> str | None:
     return None
 
 
+def _show_portfolio_composition(backtest: dict) -> None:
+    """Render portfolio composition table and 21-day price forecasts."""
+    portfolio = backtest.get("portfolio", {})
+    ticker_summary = portfolio.get("ticker_summary", {})
+    failed = backtest.get("failed_tickers", [])
+
+    if not ticker_summary:
+        return
+
+    st.markdown("#### Portfolio Composition & 21-Day Price Forecasts")
+
+    if failed:
+        st.warning(f"Backtests failed for: `{', '.join(failed)}` — excluded from portfolio.")
+
+    rows = []
+    for ticker, info in sorted(ticker_summary.items()):
+        lf = info.get("latest_price_forecast") or {}
+        sharpe_v = info.get("sharpe_ratio")
+        ann_v = info.get("annualized_return")
+        mdd_v = info.get("maximum_drawdown")
+        cal_v = info.get("calmar_ratio")
+        ir_v = info.get("information_ratio")
+        current_close = lf.get("current_close")
+        pred_close = lf.get("predicted_close_21d")
+        pred_ret = lf.get("predicted_21d_log_return")
+        rows.append({
+            "Ticker": ticker,
+            "Weight": f"{(info.get('weight') or 0) * 100:.1f}%",
+            "Sharpe": f"{sharpe_v:.2f}" if isinstance(sharpe_v, (int, float)) else "—",
+            "Ann.Return": _fmt_pct(float(ann_v)) if isinstance(ann_v, (int, float)) else "—",
+            "Max DD": _fmt_pct(float(mdd_v)) if isinstance(mdd_v, (int, float)) else "—",
+            "Calmar": f"{cal_v:.2f}×" if isinstance(cal_v, (int, float)) else "—",
+            "IR": f"{ir_v:.2f}" if isinstance(ir_v, (int, float)) else "—",
+            "Current Close ($)": f"{current_close:.2f}" if isinstance(current_close, (int, float)) else "—",
+            "Pred. Close 21d ($)": f"{pred_close:.2f}" if isinstance(pred_close, (int, float)) else "—",
+            "Pred. 21d Return": (
+                f"{pred_ret * 100:+.2f}%" if isinstance(pred_ret, (int, float)) else "—"
+            ),
+        })
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # Summary stats row
+    n_long = sum(
+        1 for r in rows
+        if r["Pred. 21d Return"] not in ("—",) and r["Pred. 21d Return"].startswith("+")
+    )
+    n_short = len(rows) - n_long
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Tickers in portfolio", str(len(rows)))
+    mc2.metric("Bullish signals (21d)", str(n_long), delta=f"{n_long}/{len(rows)}", delta_color="normal")
+    mc3.metric("Bearish signals (21d)", str(n_short), delta=f"{n_short}/{len(rows)}", delta_color="inverse")
+
+
+def _show_per_ticker_view(backtest: dict) -> None:
+    """Expandable section showing individual ticker backtests and price forecast charts."""
+    per_ticker = backtest.get("per_ticker", {})
+    if not per_ticker:
+        return
+
+    good_tickers = sorted(
+        t for t, r in per_ticker.items()
+        if isinstance(r, dict) and r.get("status") != "failed"
+    )
+    if not good_tickers:
+        return
+
+    with st.expander("📊 Per-Ticker Backtest & Price Forecasts", expanded=False):
+        selected = st.selectbox("Select ticker to inspect:", good_tickers, key="portfolio_ticker_select")
+        if not selected:
+            return
+
+        ticker_bt = _compute_missing_metrics(per_ticker[selected])
+
+        c1, c2, c3, c4 = st.columns(4)
+        def _safe(k: str) -> float | None:
+            v = ticker_bt.get(k)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        sh = _safe("sharpe_ratio")
+        md = _safe("maximum_drawdown")
+        ca = _safe("calmar_ratio")
+        ar = _safe("annualized_return")
+        if sh is not None:
+            c1.metric("Sharpe", _fmt_sharpe(sh))
+        if md is not None:
+            c2.metric("Max DD", _fmt_pct(md))
+        if ca is not None:
+            c3.metric("Calmar", _fmt_ratio(ca, "×", 20.0))
+        if ar is not None:
+            c4.metric("Ann. Return", _fmt_pct(ar))
+
+        # ── 21-day price forecasts chart ─────────────────────────────────────
+        forecasts = per_ticker[selected].get("price_forecasts_21d", [])
+        if forecasts:
+            fdf = pd.DataFrame(forecasts)
+            fdf["date"] = pd.to_datetime(fdf["date"], errors="coerce")
+
+            st.markdown(f"**{selected} — 21-Day Price Forecasts (Ridge model)**")
+            fc_fig = go.Figure()
+            fc_fig.add_trace(go.Scatter(
+                x=fdf["date"], y=fdf["current_close"],
+                name="Actual Close", mode="lines",
+                line=dict(color="#94a3b8", width=1.5, dash="dot"),
+            ))
+            fc_fig.add_trace(go.Scatter(
+                x=fdf["date"], y=fdf["predicted_close_21d"],
+                name="Predicted Close (21d)", mode="lines",
+                line=dict(color="#0f766e", width=2),
+            ))
+            fc_fig.update_layout(
+                height=320,
+                yaxis_title="Price ($)",
+                xaxis_title="Date",
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            try:
+                st.plotly_chart(fc_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not render forecast chart: {e}")
+
+            # Small table of last 5 forecasts
+            st.caption("Most recent model forecasts:")
+            st.dataframe(
+                fdf[["date", "current_close", "predicted_close_21d", "predicted_21d_log_return"]].tail(10),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.caption("No price forecasts available for this ticker (close price column may be missing).")
+
+        # ── Per-ticker equity curve ───────────────────────────────────────────
+        sret = ticker_bt.get("strategy_returns", [])
+        bret = ticker_bt.get("benchmark_returns", [])
+        dates = ticker_bt.get("test_dates") or ticker_bt.get("dates")
+        if sret and bret:
+            s = _sanitize_returns(np.asarray([float(x) for x in sret], dtype=float))
+            b = _sanitize_returns(np.asarray([float(x) for x in bret], dtype=float))
+            n = min(len(s), len(b))
+            x_axis = (
+                pd.to_datetime(dates[:n], errors="coerce")
+                if isinstance(dates, list) and len(dates) >= n
+                else np.arange(n)
+            )
+            cdf = pd.DataFrame({
+                "x": x_axis,
+                "Strategy": np.exp(np.cumsum(s[:n])),
+                "Buy & Hold": np.exp(np.cumsum(b[:n])),
+            })
+            st.markdown(f"**{selected} — Strategy vs Buy-and-Hold**")
+            eq_fig = go.Figure()
+            eq_fig.add_trace(go.Scatter(
+                x=cdf["x"], y=cdf["Strategy"], name="Strategy",
+                line=dict(color="#0f766e", width=2),
+            ))
+            eq_fig.add_trace(go.Scatter(
+                x=cdf["x"], y=cdf["Buy & Hold"], name="Buy & Hold",
+                line=dict(color="#b91c1c", width=1.5, dash="dot"),
+            ))
+            eq_fig.add_hline(y=1.0, line_dash="dot", line_color="#9ca3af")
+            eq_fig.update_layout(height=300, yaxis_title="Value ($1 start)", hovermode="x unified")
+            try:
+                st.plotly_chart(eq_fig, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not render equity curve: {e}")
+
+
 def show_edge_arsenal_tab() -> None:
     _render_hero_style()
     st.markdown(
@@ -520,6 +728,7 @@ def show_edge_arsenal_tab() -> None:
 
     backtest, source_path = _discover_backtest_payload()
     backtest = _compute_missing_metrics(backtest)
+    _is_portfolio = _is_portfolio_backtest(backtest)
 
     st.markdown("### 🔗 Data Lineage Health")
 
@@ -710,8 +919,25 @@ def show_edge_arsenal_tab() -> None:
             ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
             st.caption(f"📈 Metrics from analysis run at: **{ts}**")
         except Exception:
-            # Ignore if stat fails, the path is still useful
             pass
+
+    if _is_portfolio:
+        _n_ok = len(backtest.get("tickers_succeeded", []))
+        _n_fail = len(backtest.get("failed_tickers", []))
+        _wt_label = ", ".join(
+            f"{t} {w*100:.1f}%"
+            for t, w in sorted(
+                (backtest.get("weights") or {}).items(),
+                key=lambda x: x[1], reverse=True,
+            )[:5]
+        )
+        _suffix = " …" if _n_ok > 5 else ""
+        st.info(
+            f"**Portfolio mode** — {_n_ok} tickers backtested"
+            + (f", {_n_fail} failed" if _n_fail else "")
+            + f".  Top weights: {_wt_label}{_suffix}",
+            icon="📊",
+        )
 
     expectancy = backtest.get("expectancy_per_trade")
     pf = backtest.get("profit_factor")
@@ -810,6 +1036,10 @@ def show_edge_arsenal_tab() -> None:
         )
 
     st.markdown("")
+
+    # ── Portfolio composition + 21-day price forecasts ────────────────────────
+    if _is_portfolio:
+        _show_portfolio_composition(backtest)
 
     # ── Strategic Edge Quality Score ──────────────────────────────────────────
     # Calibrated for macro-factor regression strategies (FRED indicators, 45-day lag).
@@ -1127,6 +1357,10 @@ def show_edge_arsenal_tab() -> None:
             )
     else:
         st.caption("Strategy returns and chart data not yet available. Re-run Full Analysis to populate.")
+
+    # ── Per-ticker backtest drilldown (portfolio mode only) ───────────────────
+    if _is_portfolio:
+        _show_per_ticker_view(backtest)
 
     # ── Quantos AI Insights ───────────────────────────────────────────────────
     from UI.tabs.assistant_tab import render_inline_ai_section

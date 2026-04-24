@@ -28,7 +28,7 @@ from logger.Messages.MainMess import (
 )
 
 from .AnalysisSuite.auto_ml import auto_ml_regression
-from .AnalysisSuite.backtest import backtest_pre2020_holdout
+from .AnalysisSuite.backtest import backtest_pre2020_holdout, portfolio_backtest
 from .AnalysisSuite.correl_mtrx import correl_mtrx
 from .AnalysisSuite.elasticity import elasticity
 from .AnalysisSuite.feature_decay import feature_decay_analysis
@@ -436,6 +436,11 @@ class GoldLayer:
             return None
         tickers = self.df["ticker"].dropna().unique().tolist()
         return tickers[0] if tickers else None
+
+    def _resolve_all_tickers(self) -> List[str]:
+        if "ticker" not in self.df.columns:
+            return []
+        return sorted(self.df["ticker"].dropna().unique().tolist())
 
     def _resolve_random_seed(self) -> Optional[int]:
         enforce = bool(getattr(self.config, "enforce_reproducibility", True))
@@ -1229,11 +1234,15 @@ class GoldLayer:
             results["auto_ml"] = None
 
         try:
-            results["backtest_2020"] = backtest_pre2020_holdout(
-                analysis_df,
+            all_tickers = self._resolve_all_tickers()
+            portfolio_weights = self.compute_risk_parity_weights()
+            results["backtest_2020"] = portfolio_backtest(
+                self.df,
+                tickers=all_tickers or None,
+                weights=portfolio_weights or None,
                 target=target,
                 features=resolved_factors,
-                ticker=selected_ticker,
+                mode="both",
             )
         except AnalysisError as e:
             self.logger.error(f"Analysis error in backtest_2020: {e}")
@@ -1386,12 +1395,14 @@ class GoldLayer:
                 30,
             ),
             "backtest_2020": partial(
-                backtest_pre2020_holdout,
-                analysis_df,
+                portfolio_backtest,
+                self.df,
+                self._resolve_all_tickers() or None,
+                self.compute_risk_parity_weights() or None,
                 target,
                 safe_factors,
                 "date",
-                selected_ticker,
+                "both",
             ),
         }
 

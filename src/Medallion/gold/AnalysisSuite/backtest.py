@@ -785,6 +785,11 @@ def backtest_pre2020_holdout(
             ticker=ticker,
             macro_lag_days=45,
             align_target_to_features=True,
+            # Pin the prediction horizon to exactly 21 trading days (~1 month).
+            # Without this cap, WorldBank features (252-day horizon) silently push
+            # the target to 1-year forward returns, which is not what we want.
+            min_target_horizon_days=21,
+            max_target_horizon_days=21,
         )
         if panel.empty or date_col not in panel.columns:
             raise DataValidationError("No aligned rows available for backtest.")
@@ -899,6 +904,34 @@ def backtest_pre2020_holdout(
         benchmark_returns = actual_arr[: len(strategy_returns)]
         actual = pd.Series(benchmark_returns)
         predictions = predictions[: len(strategy_returns)]
+
+        # ── 21-day price forecasts ───────────────────────────────────────────
+        # predictions[i] = model's raw output ≈ 21-day forward cumulative log-return
+        # predicted_close_21d = close_i × exp(predicted_log_return)
+        _price_forecasts: List[Dict[str, Any]] = []
+        _n_pred = len(predictions)
+        _forecast_dates = _test_dates[:_n_pred]
+        if "close" in df.columns:
+            _close_orig = (
+                df[[date_col, "close"]]
+                .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
+                .dropna(subset=[date_col, "close"])
+                .set_index(date_col)
+            )
+            _test_close_series = _close_orig["close"].reindex(pd.DatetimeIndex(_forecast_dates))
+            for _i in range(_n_pred):
+                try:
+                    _close_val = float(_test_close_series.iloc[_i])
+                    _raw_pred = float(predictions[_i])
+                    if np.isfinite(_close_val) and _close_val > 0 and np.isfinite(_raw_pred):
+                        _price_forecasts.append({
+                            "date": str(_forecast_dates[_i])[:10],
+                            "current_close": round(_close_val, 4),
+                            "predicted_21d_log_return": round(_raw_pred, 6),
+                            "predicted_close_21d": round(_close_val * float(np.exp(_raw_pred)), 4),
+                        })
+                except Exception:
+                    continue
 
         walk_forward = _walk_forward_validation(
             panel=panel,
@@ -1038,6 +1071,8 @@ def backtest_pre2020_holdout(
             "trade_distribution_histogram": trade_hist,
             "strategy_returns": [float(v) for v in strategy_returns.tolist()],
             "benchmark_returns": [float(v) for v in benchmark_returns.tolist()],
+            "test_dates": [str(d)[:10] for d in pd.to_datetime(_test_dates).tolist()],
+            "price_forecasts_21d": _price_forecasts,
             "predictions": [float(v) for v in predictions.tolist()],
             "actual": [float(v) for v in actual.tolist()],
             "transformations": metadata,
@@ -1046,6 +1081,200 @@ def backtest_pre2020_holdout(
         raise
     except Exception as exc:
         raise AnalysisError(f"Unexpected error in backtest_pre2020_holdout: {exc}") from exc
+
+
+def portfolio_backtest(
+    df: pd.DataFrame,
+    tickers: Optional[List[str]] = None,
+    weights: Optional[Dict[str, float]] = None,
+    target: str = "log_return",
+    features: Optional[List[str]] = None,
+    date_col: str = "date",
+    mode: str = "both",
+) -> Dict[str, Any]:
+    """Run backtest across a portfolio of tickers.
+
+    Parameters
+    ----------
+    df       : Master table with all tickers (must have a 'ticker' column).
+    tickers  : Tickers to include. Defaults to all unique tickers in df.
+    weights  : {ticker: weight}. Normalised internally. Defaults to equal weights.
+    target   : Return column to predict (default 'log_return').
+    features : Feature columns. None = auto-resolved inside each per-ticker call.
+    date_col : Date column name (default 'date').
+    mode     : 'portfolio' = combined metrics only;
+               'individual' = per-ticker results only;
+               'both' = combined + per-ticker (default).
+
+    Returns
+    -------
+    Dict with:
+      'mode', 'tickers_attempted', 'tickers_succeeded', 'failed_tickers',
+      'weights', 'portfolio' (if mode != 'individual'),
+      'per_ticker' (if mode != 'portfolio').
+    """
+    if "ticker" not in df.columns:
+        raise AnalysisError("portfolio_backtest requires a 'ticker' column in df.")
+
+    all_tickers: List[str] = tickers or sorted(df["ticker"].dropna().unique().tolist())
+    if not all_tickers:
+        raise AnalysisError("No tickers found in df for portfolio_backtest.")
+
+    # ── Run per-ticker backtests ─────────────────────────────────────────────
+    per_ticker_results: Dict[str, Any] = {}
+    failed_tickers: List[str] = []
+    for t in all_tickers:
+        ticker_df = df[df["ticker"].astype(str) == str(t)].copy()
+        if ticker_df.empty:
+            failed_tickers.append(t)
+            per_ticker_results[t] = {"status": "failed", "error": "no_data", "ticker": t}
+            continue
+        try:
+            per_ticker_results[t] = backtest_pre2020_holdout(
+                ticker_df,
+                target=target,
+                features=features,
+                date_col=date_col,
+                ticker=t,
+            )
+        except (AnalysisError, DataValidationError, Exception) as exc:
+            failed_tickers.append(t)
+            per_ticker_results[t] = {"status": "failed", "error": str(exc), "ticker": t}
+
+    successful_tickers = [
+        t for t in all_tickers
+        if t in per_ticker_results and per_ticker_results[t].get("status") != "failed"
+    ]
+
+    result: Dict[str, Any] = {
+        "mode": mode,
+        "tickers_attempted": all_tickers,
+        "tickers_succeeded": successful_tickers,
+        "failed_tickers": failed_tickers,
+    }
+
+    if not successful_tickers:
+        result.update({"weights": {}, "portfolio": None, "per_ticker": per_ticker_results, "status": "all_failed"})
+        return result
+
+    # ── Normalise weights ────────────────────────────────────────────────────
+    raw_w = {t: float(weights.get(t, 0.0)) for t in successful_tickers} if weights else {t: 1.0 for t in successful_tickers}
+    total_w = sum(raw_w.values()) or float(len(successful_tickers))
+    norm_weights = {t: round(v / total_w, 8) for t, v in raw_w.items()}
+    result["weights"] = norm_weights
+
+    if mode != "portfolio":
+        result["per_ticker"] = per_ticker_results
+
+    if mode == "individual":
+        return result
+
+    # ── Align return series by date ──────────────────────────────────────────
+    strat_frames: List[pd.DataFrame] = []
+    bench_frames: List[pd.DataFrame] = []
+    for t in successful_tickers:
+        r = per_ticker_results[t]
+        strat_rets = r.get("strategy_returns", [])
+        bench_rets = r.get("benchmark_returns", [])
+        dates = r.get("test_dates", [])
+        n = len(strat_rets)
+        if n == 0:
+            continue
+        if dates and len(dates) == n:
+            idx = pd.to_datetime(dates)
+        else:
+            idx = pd.RangeIndex(n)
+        strat_frames.append(pd.DataFrame({t: strat_rets}, index=idx))
+        bench_frames.append(pd.DataFrame({t: bench_rets[:n]}, index=idx))
+
+    if not strat_frames:
+        result["portfolio"] = None
+        return result
+
+    strat_df = pd.concat(strat_frames, axis=1).sort_index().fillna(0.0)
+    bench_df = pd.concat(bench_frames, axis=1).sort_index().fillna(0.0)
+
+    port_ret = np.zeros(len(strat_df))
+    port_bench = np.zeros(len(bench_df))
+    for t in successful_tickers:
+        w = norm_weights.get(t, 0.0)
+        if t in strat_df.columns:
+            port_ret += w * strat_df[t].values
+        if t in bench_df.columns:
+            port_bench += w * bench_df[t].values
+
+    # ── Portfolio-level metrics ──────────────────────────────────────────────
+    n = len(port_ret)
+    ann_factor = np.sqrt(252.0)
+    mdd = _max_drawdown_from_returns(port_ret)
+    ann_ret = _annualized_return(port_ret)
+    vol = float(np.std(port_ret, ddof=1) * ann_factor) if n > 1 else 0.0
+    sharpe: Optional[float] = float(np.mean(port_ret) / np.std(port_ret, ddof=1) * ann_factor) if (n > 1 and np.std(port_ret, ddof=1) > 1e-12) else None
+    calmar: Optional[float] = round(ann_ret / max(abs(mdd), 0.01), 6) if mdd != 0 else None
+
+    downside = port_ret[port_ret < 0.0]
+    down_std = float(np.std(downside, ddof=1)) if len(downside) > 1 else None
+    sortino: Optional[float] = float(np.mean(port_ret) / down_std * ann_factor) if (down_std and down_std > 1e-12) else None
+
+    bench_ann_ret = _annualized_return(port_bench)
+    bench_vol = float(np.std(port_bench, ddof=1) * ann_factor) if len(port_bench) > 1 else 0.0
+
+    active = port_ret - port_bench[:n]
+    te_val = float(np.std(active, ddof=1) * ann_factor) if len(active) > 1 else None
+    ir: Optional[float] = float(np.mean(active) / np.std(active, ddof=1) * ann_factor) if (te_val and te_val > 1e-12) else None
+
+    wins = port_ret[port_ret > 0.0]
+    losses = port_ret[port_ret < 0.0]
+    gross_profit = float(np.sum(wins))
+    gross_loss = float(abs(np.sum(losses)))
+    if gross_loss > 1e-12:
+        pf: Any = round(gross_profit / gross_loss, 6)
+    elif gross_profit > 0.0:
+        pf = "inf"
+    else:
+        pf = None
+
+    # Ticker-level summary for quick inspection (without full return arrays)
+    ticker_summary = {}
+    for t in successful_tickers:
+        r = per_ticker_results[t]
+        forecasts = r.get("price_forecasts_21d", [])
+        latest_forecast = forecasts[-1] if forecasts else None
+        ticker_summary[t] = {
+            "sharpe_ratio": r.get("sharpe_ratio"),
+            "annualized_return": r.get("annualized_return"),
+            "maximum_drawdown": r.get("maximum_drawdown"),
+            "calmar_ratio": r.get("calmar_ratio"),
+            "information_ratio": r.get("information_ratio"),
+            "weight": norm_weights.get(t, 0.0),
+            "latest_price_forecast": latest_forecast,
+        }
+
+    result["portfolio"] = {
+        "n_tickers": len(successful_tickers),
+        "n_failed": len(failed_tickers),
+        "annualized_return": round(ann_ret, 6),
+        "benchmark_annualized_return": round(bench_ann_ret, 6),
+        "annualized_volatility": round(vol, 6),
+        "benchmark_volatility": round(bench_vol, 6),
+        "sharpe_ratio": round(sharpe, 6) if sharpe is not None else None,
+        "sortino_ratio": round(sortino, 6) if sortino is not None else None,
+        "maximum_drawdown": round(mdd, 6),
+        "calmar_ratio": calmar,
+        "information_ratio": round(ir, 6) if ir is not None else None,
+        "tracking_error": round(te_val, 6) if te_val is not None else None,
+        "win_probability": round(float(len(wins) / n), 6) if n else 0.0,
+        "average_win": round(float(np.mean(wins)), 6) if len(wins) else 0.0,
+        "average_loss": round(float(np.mean(losses)), 6) if len(losses) else 0.0,
+        "profit_factor": pf,
+        "rolling_sharpe_30d": _rolling_sharpe(port_ret, window=30),
+        "strategy_returns": port_ret.tolist(),
+        "benchmark_returns": port_bench.tolist(),
+        "dates": [str(d)[:10] for d in strat_df.index.tolist()],
+        "ticker_summary": ticker_summary,
+    }
+
+    return result
 
 
 def _compute_strategy_metrics(
