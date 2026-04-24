@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from src.Medallion.gold.AnalysisSuite.auto_ml import auto_ml_regression
+from src.Medallion.gold.AnalysisSuite.backtest import _simulate_risk_managed_returns
 from src.Medallion.gold.AnalysisSuite.correl_mtrx import correl_mtrx
 from src.Medallion.gold.AnalysisSuite.elasticity import elasticity
 from src.Medallion.gold.AnalysisSuite.feature_decay import feature_decay_analysis
@@ -362,3 +363,77 @@ def test_governance_report_runs_with_temporal_split():
     assert "walk_forward" in report
     assert "model_risk_score" in report
     assert 0.0 <= report["model_risk_score"] <= 1.0
+
+
+# ─── Backtest: neutral-zone signal pass-through ───────────────────────────────
+
+
+def test_neutral_zone_signals_pass_through():
+    """Signals in neutral zone (no golden/death cross) must not be zeroed out.
+
+    Bug: the dual-SMA filter killed ALL longs when ~uptrend and ALL shorts when
+    ~downtrend, which includes the neutral zone (neither golden nor death cross).
+    In a typical range-bound market this suppressed every trade, leaving
+    win_prob ≈ 50% (pure noise) and Sharpe/Calmar/IR ≈ 0.
+
+    Fix: neutral zone signals pass at 60%.  Only counter-trend signals
+    (longs in confirmed downtrend, shorts in confirmed uptrend) are killed.
+    """
+    rng = np.random.default_rng(42)
+    n = 150
+    # Perfectly aligned signals: predict the sign of actual returns
+    actual = rng.normal(0, 0.01, n).clip(-0.15, 0.15)
+    pred_z = np.where(actual > 0, 1.5, -1.5).astype(float)
+
+    # Neutral zone: neither confirmed uptrend nor confirmed downtrend
+    in_uptrend = np.zeros(n, dtype=bool)
+    in_downtrend = np.zeros(n, dtype=bool)
+
+    strat_ret, positions = _simulate_risk_managed_returns(
+        pred_z=pred_z,
+        actual_arr=actual,
+        in_uptrend=in_uptrend,
+        entry_threshold=0.5,
+        inv_vol_target=0.20,
+        atr_multiplier=2.0,
+        max_hold_days=50,
+        tx_cost=0.0005,
+        vol_scale_cap=1.50,
+        downtrend_arr=in_downtrend,
+    )
+
+    active_days = int(np.sum(np.abs(positions) > 1e-10))
+    assert active_days > 0, (
+        "Strategy must take trades in the neutral zone — dual-SMA filter "
+        "should not zero out all signals when there is no confirmed trend."
+    )
+
+    # With perfectly aligned signals the net P&L must be positive
+    assert float(np.sum(strat_ret)) > 0.0, (
+        "Aligned signals in the neutral zone must produce net-positive returns."
+    )
+
+
+def test_counter_trend_signals_are_suppressed():
+    """Confirmed counter-trend signals (longs in death cross, shorts in golden cross)
+    must still be killed — this guard should remain intact after the neutral-zone fix."""
+    rng = np.random.default_rng(7)
+    n = 150
+    actual = rng.normal(0, 0.01, n).clip(-0.15, 0.15)
+    # All long signals in a confirmed downtrend → should be suppressed
+    pred_z = np.full(n, 1.5)
+    in_uptrend = np.zeros(n, dtype=bool)
+    in_downtrend = np.ones(n, dtype=bool)  # confirmed death-cross throughout
+
+    strat_ret, positions = _simulate_risk_managed_returns(
+        pred_z=pred_z,
+        actual_arr=actual,
+        in_uptrend=in_uptrend,
+        entry_threshold=0.5,
+        downtrend_arr=in_downtrend,
+    )
+
+    active_days = int(np.sum(np.abs(positions) > 1e-10))
+    assert active_days == 0, (
+        "Long signals in a confirmed downtrend (death cross) must be fully suppressed."
+    )

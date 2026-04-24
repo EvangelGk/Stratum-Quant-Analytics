@@ -399,12 +399,18 @@ def _simulate_risk_managed_returns(
     dn = np.asarray(downtrend_arr[:n], dtype=bool) if downtrend_arr is not None else (~trend)
 
     raw_signal = np.where(pred >= entry_threshold, 1.0, np.where(pred <= -entry_threshold, -1.0, 0.0))
-    # Dual-SMA Golden/Death Cross filter:
-    #   Longs only in confirmed uptrend (price>SMA20, SMA20>SMA200).
-    #   Shorts only in confirmed downtrend (price<SMA20, SMA20<SMA200).
-    #   Neutral zone (SMAs diverged) → flat on both sides.
-    raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.0, raw_signal)
-    raw_signal = np.where((raw_signal < 0.0) & (~dn), 0.0, raw_signal)
+    # Dual-SMA filter:
+    #   Confirmed uptrend  : longs at 100%, shorts killed.
+    #   Confirmed downtrend: shorts at 100%, longs killed.
+    #   Neutral zone (SMAs not yet aligned): both directions at 60%.
+    #     A macro signal with 45-day lag carries economic information even
+    #     without a confirmed price trend — zeroing it entirely destroys the edge
+    #     and collapses win-rate to ~50% in range-bound markets.
+    neutral = ~trend & ~dn
+    raw_signal = np.where((raw_signal > 0.0) & neutral, raw_signal * 0.60, raw_signal)
+    raw_signal = np.where((raw_signal > 0.0) & dn, 0.0, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & neutral, raw_signal * 0.60, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & trend, 0.0, raw_signal)
 
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
