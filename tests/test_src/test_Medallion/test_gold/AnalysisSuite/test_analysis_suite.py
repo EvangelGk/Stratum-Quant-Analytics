@@ -488,16 +488,42 @@ def test_select_top_features_returns_all_when_below_max_k():
     assert set(selected) == {"a", "b"}
 
 
-def test_make_model_returns_elasticnet():
-    """_make_model must return an ElasticNetCV instance."""
-    from sklearn.linear_model import ElasticNetCV
+def test_make_model_returns_ridgecv():
+    """_make_model must return a RidgeCV instance (never ElasticNetCV).
+
+    ElasticNetCV was replaced because it routinely over-regularises on small
+    training sets (≤250 rows), collapsing pred_std below 1e-8 and triggering
+    the degenerate threshold=0.0 fallback that causes Sharpe≈0.15, Calmar≈0.07.
+    """
+    from sklearn.linear_model import RidgeCV
     model = _make_model(200)
-    assert isinstance(model, ElasticNetCV)
+    assert isinstance(model, RidgeCV)
 
 
-def test_elasticnet_zeros_noise_features():
-    """ElasticNetCV must assign zero weight to pure-noise features when one feature is truly predictive."""
-    from sklearn.linear_model import ElasticNetCV
+def test_ridgecv_nonzero_predictions_on_small_dataset():
+    """RidgeCV must produce non-zero std predictions even on small training sets,
+    preventing the pred_std<1e-8 edge case that breaks z-score normalisation."""
+    rng = np.random.default_rng(42)
+    n = 120  # deliberately small — mimics 207-row training after macro lag
+    X = pd.DataFrame({
+        "f1": rng.normal(0, 1, n),
+        "f2": rng.normal(0, 1, n),
+        "f3": rng.normal(0, 1, n),
+    })
+    y = 0.3 * X["f1"].values + rng.normal(0, 0.5, n)
+    model = _make_model(n)
+    model.fit(X, y)
+    preds = model.predict(X)
+    pred_std = float(np.std(preds, ddof=1))
+    assert pred_std > 1e-8, (
+        f"RidgeCV predictions must have non-negligible std (got {pred_std:.2e}). "
+        "A near-zero pred_std triggers pred_std=1.0 fallback and breaks z-scores."
+    )
+
+
+def test_ridgecv_strongest_coef_on_signal_feature():
+    """RidgeCV must assign the largest coefficient to the truly predictive feature."""
+    from sklearn.linear_model import RidgeCV
     rng = np.random.default_rng(42)
     n = 300
     X_signal = rng.normal(0, 1, n)
@@ -511,7 +537,6 @@ def test_elasticnet_zeros_noise_features():
     model = _make_model(n)
     model.fit(X, y)
     coefs = dict(zip(X.columns, model.coef_))
-    # Signal coefficient must be substantially larger than noise coefficients
     assert abs(coefs["signal"]) > max(abs(coefs["noise1"]), abs(coefs["noise2"]), abs(coefs["noise3"])), (
-        "ElasticNetCV must assign the strongest coefficient to the truly predictive feature."
+        "RidgeCV must assign the largest coefficient to the predictive feature."
     )
