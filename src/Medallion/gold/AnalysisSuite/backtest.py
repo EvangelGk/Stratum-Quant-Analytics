@@ -5,11 +5,64 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import ElasticNetCV, Ridge
+from sklearn.model_selection import TimeSeriesSplit
 
 from exceptions.MedallionExceptions import AnalysisError, DataValidationError
 
 from .mixed_frequency import prepare_supervised_frame
+
+
+def _select_top_features(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    features: List[str],
+    max_k: int = 10,
+) -> List[str]:
+    """Return up to max_k features ranked by |Pearson(feature, target)|.
+
+    Near-zero-variance columns are always dropped first — they produce spurious
+    correlations and inflate VIF, destabilising the downstream model.
+    """
+    # 1. Always remove near-constant columns regardless of max_k
+    stds = X_train[features].std()
+    floor = float(stds.max()) * 0.005
+    alive = [f for f in features if float(stds.get(f, 0.0)) > floor]
+    if not alive:
+        alive = list(features)
+
+    # 2. If budget not exceeded, return surviving features
+    if len(alive) <= max_k:
+        return alive
+
+    # 3. Rank remaining by |Pearson| with target
+    y_arr = np.asarray(y_train, dtype=float)
+    scores: List[tuple[float, str]] = []
+    for f in alive:
+        try:
+            r = float(np.corrcoef(X_train[f].to_numpy(dtype=float), y_arr)[0, 1])
+            scores.append((abs(r) if np.isfinite(r) else 0.0, f))
+        except Exception:
+            scores.append((0.0, f))
+    scores.sort(reverse=True)
+    return [f for _, f in scores[:max_k]]
+
+
+def _make_model(n_samples: int):
+    """ElasticNetCV with TimeSeriesSplit CV.
+
+    L1 zeros out noise features; L2 handles correlated macro factors.
+    TimeSeriesSplit prevents look-ahead in the inner cross-validation loop.
+    Falls back to Ridge if ElasticNetCV cannot converge.
+    """
+    n_splits = max(2, min(3, n_samples // 60))
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    return ElasticNetCV(
+        l1_ratio=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
+        cv=tscv,
+        max_iter=5000,
+        random_state=42,
+    )
 
 
 def _tracking_error(actual: pd.Series, predicted: np.ndarray) -> float:
@@ -399,18 +452,12 @@ def _simulate_risk_managed_returns(
     dn = np.asarray(downtrend_arr[:n], dtype=bool) if downtrend_arr is not None else (~trend)
 
     raw_signal = np.where(pred >= entry_threshold, 1.0, np.where(pred <= -entry_threshold, -1.0, 0.0))
-    # Dual-SMA filter:
-    #   Confirmed uptrend  : longs at 100%, shorts killed.
-    #   Confirmed downtrend: shorts at 100%, longs killed.
-    #   Neutral zone (SMAs not yet aligned): both directions at 60%.
-    #     A macro signal with 45-day lag carries economic information even
-    #     without a confirmed price trend — zeroing it entirely destroys the edge
-    #     and collapses win-rate to ~50% in range-bound markets.
-    neutral = ~trend & ~dn
-    raw_signal = np.where((raw_signal > 0.0) & neutral, raw_signal * 0.60, raw_signal)
-    raw_signal = np.where((raw_signal > 0.0) & dn, 0.0, raw_signal)
-    raw_signal = np.where((raw_signal < 0.0) & neutral, raw_signal * 0.60, raw_signal)
-    raw_signal = np.where((raw_signal < 0.0) & trend, 0.0, raw_signal)
+    # Dual-SMA Golden/Death Cross filter:
+    #   Longs only in confirmed uptrend (price>SMA20, SMA20>SMA200).
+    #   Shorts only in confirmed downtrend (price<SMA20, SMA20<SMA200).
+    #   Neutral zone (SMAs diverged) → flat on both sides.
+    raw_signal = np.where((raw_signal > 0.0) & (~trend), 0.0, raw_signal)
+    raw_signal = np.where((raw_signal < 0.0) & (~dn), 0.0, raw_signal)
 
     vol20 = pd.Series(actual).rolling(20, min_periods=20).std(ddof=1)
     ann_vol = (vol20 * np.sqrt(252.0)).shift(1).replace(0.0, np.nan).fillna(0.20)
@@ -549,7 +596,7 @@ def _optimize_entry_threshold(
         )
         train_stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
 
-        val_ret, _ = _simulate_risk_managed_returns(
+        val_ret, val_pos = _simulate_risk_managed_returns(
             pred_z=pred_z_val,
             actual_arr=actual_val,
             in_uptrend=trend_val,
@@ -562,7 +609,17 @@ def _optimize_entry_threshold(
         )
         val_stats = _compute_basic_stats(val_ret, actual_val[: len(val_ret)])
 
-        active_ratio = float(np.mean(np.abs(positions) > 1e-10)) if len(positions) else 0.0
+        # Directional accuracy: % of active days where prediction sign matches return sign.
+        # Directly measures signal quality — more reliable than active_ratio reward,
+        # which previously encouraged over-trading on noisy macro signals.
+        _val_active = np.abs(np.asarray(val_pos, dtype=float)) > 1e-10
+        if _val_active.any():
+            _p = np.sign(np.asarray(pred_z_val[: len(_val_active)], dtype=float))
+            _a = np.sign(np.asarray(actual_val[: len(_val_active)], dtype=float))
+            dir_acc = float(np.mean((_p == _a)[_val_active]))
+        else:
+            dir_acc = 0.5
+
         train_sharpe = float(train_stats.get("sharpe") or -2.0) if isinstance(train_stats.get("sharpe"), (int, float)) else -2.0
         val_sharpe = float(val_stats.get("sharpe") or -2.0) if isinstance(val_stats.get("sharpe"), (int, float)) else -2.0
         val_pf_raw = val_stats.get("profit_factor")
@@ -570,15 +627,14 @@ def _optimize_entry_threshold(
         val_mdd = abs(float(val_stats.get("mdd", 0.0)))
         val_expectancy = float(val_stats.get("expectancy", 0.0))
 
-        # 70% validation fold + 30% full training: stable against daily FRED
-        # revisions while preserving long-run signal quality.
+        # 70% validation fold + 30% full training.
         combined_sharpe = max(val_sharpe, -2.0) * 0.7 + max(train_sharpe, -2.0) * 0.3
         score = (
-            (val_expectancy * 2500.0)
-            + (max(val_pf - 1.0, 0.0) * 35.0)
-            + (max(combined_sharpe, 0.0) * 25.0)
-            - (val_mdd * 40.0)
-            + (active_ratio * 15.0)
+            (val_expectancy * 2000.0)
+            + (max(val_pf - 1.0, 0.0) * 30.0)
+            + (max(combined_sharpe, 0.0) * 30.0)
+            - (val_mdd * 50.0)
+            + (max(dir_acc - 0.5, 0.0) * 150.0)
         )
         if score > float(best["score"]):
             best = {"threshold": float(th), "score": float(score), "stats": train_stats}
@@ -614,10 +670,15 @@ def _walk_forward_validation(
             break
         train_df = panel.iloc[:start].copy()
         test_df = panel.iloc[start:end].copy()
-        model = Ridge(alpha=1.0)
-        model.fit(train_df[features], train_df[target])
-        pred_train = model.predict(train_df[features])
-        pred_test = model.predict(test_df[features])
+        _wf_sel = _select_top_features(train_df[features], train_df[target].to_numpy(), features)
+        try:
+            model = _make_model(len(train_df))
+            model.fit(train_df[_wf_sel], train_df[target])
+        except Exception:
+            model = Ridge(alpha=1.0)
+            model.fit(train_df[_wf_sel], train_df[target])
+        pred_train = model.predict(train_df[_wf_sel])
+        pred_test = model.predict(test_df[_wf_sel])
         pred_mu = float(np.mean(pred_train))
         pred_std = float(np.std(pred_train, ddof=1)) if len(pred_train) > 1 else 1.0
         pred_std = pred_std if pred_std > 1e-8 else 1.0
@@ -745,10 +806,15 @@ def backtest_pre2020_holdout(
             test_df = panel.iloc[split_idx:].copy()
             _split_mode = "70_30_fallback"
 
-        model = Ridge(alpha=1.0)
-        model.fit(train_df[features], train_df[target])
-        predictions = model.predict(test_df[features])
-        train_predictions = model.predict(train_df[features])
+        _sel = _select_top_features(train_df[features], train_df[target].to_numpy(), features)
+        try:
+            model = _make_model(len(train_df))
+            model.fit(train_df[_sel], train_df[target])
+        except Exception:
+            model = Ridge(alpha=1.0)
+            model.fit(train_df[_sel], train_df[target])
+        predictions = model.predict(test_df[_sel])
+        train_predictions = model.predict(train_df[_sel])
 
         _orig = (
             df[[date_col, "log_return"]]
@@ -909,7 +975,8 @@ def backtest_pre2020_holdout(
             },
             "ticker": ticker,
             "target": target,
-            "features": list(features),
+            "features": list(_sel),
+            "features_input": list(features),
             "strategy_parameters": {
                 "entry_threshold_zscore": round(float(selected_threshold), 4),
                 "atr_trailing_stop_multiplier": 2.0,
