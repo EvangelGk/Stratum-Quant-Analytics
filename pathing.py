@@ -19,6 +19,6 @@ def build_user_data_dir(project_root: Path, user_key: str | None) -> Path:
 def output_path_diagnostics(active_output_dir: Path) -> tuple[str, str]:
     active_dir = Path(active_output_dir)
     return (
-        f"Searching in: {active_dir.parent}",
+        f"🔍 Searching in: {active_dir.parent}",
         f"🔍 Active OUTPUT_DIR: {active_dir}",
     )

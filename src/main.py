@@ -229,11 +229,13 @@ def _write_output_artifacts(results: Any, user_id: str = "default") -> Dict[str,
         return created
 
     for key, value in results.items():
-        # Validation: log and skip empty payloads for critical artifacts instead of
-        # raising, which would abort the entire export and leave no summary file.
+        # Validation: write a status stub for an empty/None backtest so the UI
+        # can detect and explain the situation rather than showing "no payload found".
         if key == "backtest_2020" and (value is None or (isinstance(value, dict) and not value) or (isinstance(value, list) and not value)):
-            logger.warning("Skipping empty payload for critical artifact: %s", key)
-            created[key] = "empty_payload_skipped"
+            logger.warning("Writing no_results stub for critical artifact: %s", key)
+            stub_path = output_dir / "backtest_2020.json"
+            _write_json(stub_path, {"value": {"status": "no_results", "reason": "backtest returned empty payload"}})
+            created[key] = str(stub_path)
             continue
         try:
             created[key] = _write_analysis_artifact(str(key), value)

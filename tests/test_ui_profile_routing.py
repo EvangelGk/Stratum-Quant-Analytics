@@ -83,5 +83,5 @@ def test_output_path_diagnostics_match_active_output_dir(tmp_path):
 
     search_line, active_output_line = output_path_diagnostics(active_output_dir)
 
-    assert search_line == f"Searching in: {tmp_path / 'output'}"
+    assert search_line == f"🔍 Searching in: {tmp_path / 'output'}"
     assert active_output_line == f"🔍 Active OUTPUT_DIR: {active_output_dir}"

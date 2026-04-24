@@ -94,7 +94,12 @@ def run_pipeline(
 
         output_files_to_delete = [
             active_output_dir / "analysis_results.json",
-            active_output_dir / "backtest_2020.json",
+            # backtest_2020.json is intentionally NOT deleted here.
+            # If the new run fails or skips the backtest, the pipeline writes a
+            # status stub ("no_results") so the UI always has a file to read.
+            # Deleting it would leave the UI with no file at all when the run
+            # produces an empty result, causing the misleading
+            # "No backtest payload found" message.
             active_output_dir / "stress_test.json",
             active_audit_report_path,
         ]

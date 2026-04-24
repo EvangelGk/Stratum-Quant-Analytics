@@ -562,39 +562,80 @@ def show_edge_arsenal_tab() -> None:
                         _diag_dirs.append(_child)
         except OSError:
             pass
+        # ── Determine the exact reason the backtest is unavailable ─────────
+        # Priority: active profile first, then sibling profiles.
+        # Each check sets _specific_error_shown=True and breaks out of the
+        # detection loop so exactly one message is displayed.
+        _specific_error_shown = False
         for _diag_dir in _diag_dirs:
             _ar_path_diag = _diag_dir / "analysis_results.json"
-            if _ar_path_diag.exists():
-                try:
-                    _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
-                    _bt_diag = (_raw_diag.get("results") or {}).get("backtest_2020")
-                    if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "failed":
-                        st.error(
-                            f"**Backtest failed with exception** ({_bt_diag.get('error_type', '?')}):  \n"
-                            f"`{_bt_diag.get('error', 'unknown error')}`"
-                        )
-                        break
-                except Exception:
-                    pass
+            if not _ar_path_diag.exists():
+                continue
+            try:
+                _raw_diag = json.loads(_ar_path_diag.read_text(encoding="utf-8", errors="ignore"))
+                _bt_diag = (_raw_diag.get("results") or {}).get("backtest_2020")
 
-        # Check whether the governance gate specifically blocked the backtest.
-        gov_block = _check_governance_block()
-        if gov_block:
-            reasons_str = gov_block.replace("blocked_by_governance_gate:", "").strip()
-            st.error(
-                "**Governance Gate blocked the backtest.**  \n"
-                "The pipeline ran successfully but the model risk score exceeded the fail threshold (0.6). "
-                "No backtest metrics are displayed until the model passes governance checks.  \n"
-                f"**Reasons:** `{reasons_str}`"
-            )
-            st.info(
-                "To resolve: check the **Governance** tab for the full report. "
-                "The model_risk_score must drop below 0.6. "
-                "You can lower thresholds via `.env` (e.g. `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD=0.85`) "
-                "or re-run Full Analysis after adjusting tickers/macro factors."
-            )
-        else:
-            st.warning("No backtest payload found in the active output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
+                if isinstance(_bt_diag, str) and _bt_diag.startswith("blocked_by_governance_gate"):
+                    # Governance block string stored directly in results
+                    _reasons = _bt_diag.replace("blocked_by_governance_gate:", "").strip()
+                    st.error(
+                        "**Governance Gate blocked the backtest.**  \n"
+                        "The pipeline ran but the model risk score exceeded the fail threshold (0.6).  \n"
+                        f"**Reasons:** `{_reasons}`"
+                    )
+                    st.info(
+                        "Check the **Governance** tab. Lower `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD` in `.env` "
+                        "(e.g. `0.85`) or re-run after adjusting tickers/macro factors."
+                    )
+                    _specific_error_shown = True
+                    break
+
+                if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "failed":
+                    st.error(
+                        f"**Backtest failed with exception** ({_bt_diag.get('error_type', '?')}):  \n"
+                        f"`{_bt_diag.get('error', 'unknown error')}`"
+                    )
+                    _specific_error_shown = True
+                    break
+
+                if isinstance(_bt_diag, dict) and _bt_diag.get("status") == "no_results":
+                    st.warning(
+                        f"Backtest ran but produced no results ({_bt_diag.get('reason', 'empty payload')}). "
+                        "Re-run Full Analysis to regenerate."
+                    )
+                    _specific_error_shown = True
+                    break
+
+                if _bt_diag is None or (isinstance(_bt_diag, (dict, list)) and not _bt_diag):
+                    st.warning(
+                        "Backtest result was empty or missing in this run's output. "
+                        "Re-run Full Analysis to regenerate the backtest."
+                    )
+                    _specific_error_shown = True
+                    break
+
+            except Exception:
+                pass
+
+        if not _specific_error_shown:
+            # Cross-profile governance check (reads backtest string from analysis_results)
+            gov_block = _check_governance_block()
+            if gov_block:
+                reasons_str = gov_block.replace("blocked_by_governance_gate:", "").strip()
+                st.error(
+                    "**Governance Gate blocked the backtest.**  \n"
+                    "The pipeline ran successfully but the model risk score exceeded the fail threshold (0.6). "
+                    "No backtest metrics are displayed until the model passes governance checks.  \n"
+                    f"**Reasons:** `{reasons_str}`"
+                )
+                st.info(
+                    "To resolve: check the **Governance** tab for the full report. "
+                    "The model_risk_score must drop below 0.6. "
+                    "You can lower thresholds via `.env` (e.g. `GOVERNANCE_MODEL_RISK_FAIL_THRESHOLD=0.85`) "
+                    "or re-run Full Analysis after adjusting tickers/macro factors."
+                )
+            else:
+                st.warning("No backtest payload found in the active output profile. Run Full Analysis and verify the active DATA_USER_ID profile.")
 
         search_line, active_output_line = output_path_diagnostics(paths["output"])
         st.caption(search_line)
