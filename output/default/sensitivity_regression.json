@@ -1,40 +1,54 @@
 {
   "value": {
-    "model": "ElasticNet",
+    "model": "RandomForest",
     "ticker": "AAPL",
     "target": "log_return",
     "target_horizon_days": 252,
     "coefficients": {
-      "energy_index": 0.0,
-      "vix_index": 0.0,
-      "energy_index__sq": 0.0,
-      "vix_index__sq": 0.0,
-      "energy_index__x__vix_index": 0.0
+      "inflation_wb": 0.0,
+      "unemployment_wb": 0.0,
+      "fed_funds_rate": 0.0,
+      "industrial_production": 0.0,
+      "consumer_sentiment": 0.0,
+      "unemployment_wb__sq": 0.0,
+      "inflation__sq": 0.0,
+      "fed_funds_rate__sq": 0.0,
+      "industrial_production__sq": 0.0,
+      "consumer_sentiment__sq": 0.0,
+      "inflation_wb__x__inflation": 0.0,
+      "unemployment_wb__x__inflation": 0.0
     },
-    "intercept": 0.2201086818068191,
-    "r2": 0.0,
-    "cv_r2": -0.6649584342894009,
-    "n_obs": 2534,
+    "intercept": 0.0,
+    "r2": 0.8014759881771755,
+    "cv_r2": -3.4714579215230748,
+    "n_obs": 1541,
     "feature_importance": {
-      "energy_index": 0.0,
-      "vix_index": 0.0,
-      "energy_index__sq": 0.0,
-      "vix_index__sq": 0.0,
-      "energy_index__x__vix_index": 0.0
+      "inflation_wb": 0.020506446271065355,
+      "unemployment_wb": 0.7189528720192226,
+      "fed_funds_rate": 0.024887339332759245,
+      "industrial_production": 0.04810164860439907,
+      "consumer_sentiment": 0.01442414821329331,
+      "unemployment_wb__sq": 0.002853884619982595,
+      "inflation__sq": 0.01335753340802949,
+      "fed_funds_rate__sq": 0.009199019397841294,
+      "industrial_production__sq": 0.02136113382052911,
+      "consumer_sentiment__sq": 0.038330792872045466,
+      "inflation_wb__x__inflation": 0.08782630232134205,
+      "unemployment_wb__x__inflation": 0.00019887911949043624
     },
     "source_importance": [
       {
-        "source": "yfinance",
-        "importance": 0.0,
-        "share": 0.0
+        "source": "worldbank",
+        "importance": 0.739459,
+        "share": 0.739459
       },
       {
         "source": "fred",
-        "importance": 0.0,
-        "share": 0.0
+        "importance": 0.260541,
+        "share": 0.260541
       },
       {
-        "source": "worldbank",
+        "source": "yfinance",
         "importance": 0.0,
         "share": 0.0
       }
@@ -189,51 +203,106 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -162.73587023588672,
-        "15": -162.73587023588672,
-        "30": -162.73587023588672,
-        "45": -162.73587023588672
+        "0": -37.85081128997658,
+        "15": -37.85081128997658,
+        "30": -37.85081128997658,
+        "45": -37.85081128997658
       }
     },
     "feature_subset_search": {
       "status": "ok",
       "evaluated_subsets": 76,
       "selected_subset": [
-        "energy_index",
-        "vix_index"
+        "inflation_wb",
+        "gdp_growth",
+        "unemployment_wb",
+        "inflation",
+        "fed_funds_rate",
+        "industrial_production",
+        "consumer_sentiment"
       ],
-      "best_cv_r2": -0.7060422714873711,
+      "best_cv_r2": -2.8965294924452794,
       "top_subsets": [
         {
           "subset": [
-            "energy_index",
-            "vix_index"
+            "inflation_wb",
+            "gdp_growth",
+            "unemployment_wb",
+            "inflation",
+            "fed_funds_rate",
+            "industrial_production",
+            "consumer_sentiment"
           ],
-          "cv_r2": -0.7060422714873711,
+          "cv_r2": -2.8965294924452794,
+          "n_features": 7
+        },
+        {
+          "subset": [
+            "fed_funds_rate",
+            "consumer_sentiment"
+          ],
+          "cv_r2": -3.3990416630872566,
           "n_features": 2
         },
         {
           "subset": [
-            "inflation"
+            "fed_funds_rate",
+            "us10y_treasury_yield"
           ],
-          "cv_r2": -0.7196983542491482,
+          "cv_r2": -3.464225562687827,
+          "n_features": 2
+        },
+        {
+          "subset": [
+            "inflation_wb",
+            "gdp_growth",
+            "energy_usage",
+            "unemployment_wb",
+            "fed_funds_rate",
+            "energy_index",
+            "us10y_treasury_yield",
+            "industrial_production"
+          ],
+          "cv_r2": -3.497690462452166,
+          "n_features": 8
+        },
+        {
+          "subset": [
+            "trade_openness",
+            "gdp_growth",
+            "unemployment_wb",
+            "inflation",
+            "fed_funds_rate",
+            "us10y_treasury_yield"
+          ],
+          "cv_r2": -3.5799259969421136,
+          "n_features": 6
+        },
+        {
+          "subset": [
+            "us10y_treasury_yield"
+          ],
+          "cv_r2": -3.651432184965375,
           "n_features": 1
         },
         {
           "subset": [
-            "industrial_production",
-            "vix_index"
+            "energy_index",
+            "us10y_treasury_yield"
           ],
-          "cv_r2": -0.7318059392765456,
+          "cv_r2": -3.722749460560683,
           "n_features": 2
         },
         {
           "subset": [
+            "inflation_wb",
+            "gdp_growth",
+            "energy_usage",
             "inflation",
-            "energy_index"
+            "consumer_sentiment"
           ],
-          "cv_r2": -0.7719567177741442,
-          "n_features": 2
+          "cv_r2": -3.7681747842367357,
+          "n_features": 5
         },
         {
           "subset": [
@@ -241,127 +310,101 @@
             "us10y_treasury_yield",
             "industrial_production"
           ],
-          "cv_r2": -1.0227786350235413,
+          "cv_r2": -3.862144142569467,
           "n_features": 3
         },
         {
           "subset": [
+            "industrial_production"
+          ],
+          "cv_r2": -3.898460046600211,
+          "n_features": 1
+        },
+        {
+          "subset": [
+            "trade_openness",
+            "gdp_growth",
+            "unemployment_wb",
+            "industrial_production"
+          ],
+          "cv_r2": -4.137927783830918,
+          "n_features": 4
+        },
+        {
+          "subset": [
+            "energy_index",
+            "consumer_sentiment"
+          ],
+          "cv_r2": -4.1688914497965825,
+          "n_features": 2
+        },
+        {
+          "subset": [
+            "inflation_wb",
+            "inflation",
+            "us10y_treasury_yield",
+            "consumer_sentiment"
+          ],
+          "cv_r2": -4.29260079389607,
+          "n_features": 4
+        },
+        {
+          "subset": [
+            "inflation_wb",
             "fed_funds_rate",
             "us10y_treasury_yield",
             "industrial_production",
-            "vix_index"
+            "consumer_sentiment"
           ],
-          "cv_r2": -1.0604091640628002,
-          "n_features": 4
+          "cv_r2": -4.328744920613088,
+          "n_features": 5
         },
         {
           "subset": [
             "trade_openness"
           ],
-          "cv_r2": -1.182620681848516,
+          "cv_r2": -4.719867002420729,
           "n_features": 1
-        },
-        {
-          "subset": [
-            "trade_openness",
-            "energy_index"
-          ],
-          "cv_r2": -1.1933340469836284,
-          "n_features": 2
-        },
-        {
-          "subset": [
-            "inflation_wb"
-          ],
-          "cv_r2": -1.4233106161643394,
-          "n_features": 1
-        },
-        {
-          "subset": [
-            "us10y_treasury_yield",
-            "energy_index",
-            "inflation_wb"
-          ],
-          "cv_r2": -1.4424303944536556,
-          "n_features": 3
-        },
-        {
-          "subset": [
-            "trade_openness",
-            "inflation",
-            "us10y_treasury_yield",
-            "energy_index"
-          ],
-          "cv_r2": -1.540765607423109,
-          "n_features": 4
-        },
-        {
-          "subset": [
-            "inflation",
-            "us10y_treasury_yield",
-            "inflation_wb"
-          ],
-          "cv_r2": -1.5753266947313098,
-          "n_features": 3
-        },
-        {
-          "subset": [
-            "unemployment_wb",
-            "inflation",
-            "us10y_treasury_yield",
-            "energy_index",
-            "inflation_wb",
-            "energy_usage",
-            "vix_index"
-          ],
-          "cv_r2": -1.7147616064903393,
-          "n_features": 7
-        },
-        {
-          "subset": [
-            "unemployment_wb",
-            "fed_funds_rate",
-            "energy_usage"
-          ],
-          "cv_r2": -2.0700668223992382,
-          "n_features": 3
-        },
-        {
-          "subset": [
-            "fed_funds_rate",
-            "energy_usage",
-            "vix_index"
-          ],
-          "cv_r2": -2.7114488759558126,
-          "n_features": 3
         }
       ]
     },
     "candidate_scores": [
       {
-        "model": "ElasticNet",
-        "cv_r2": -0.6649584342894009,
+        "model": "RandomForest",
+        "cv_r2": -3.4714579215230748,
         "tuning": {
           "method": "grid_search",
           "best_params": {
-            "model__alpha": 0.1,
-            "model__l1_ratio": 0.5
+            "model__max_depth": 3,
+            "model__min_samples_leaf": 8,
+            "model__n_estimators": 200
           }
         }
       },
       {
         "model": "Lasso",
-        "cv_r2": -0.6649890823815984,
+        "cv_r2": -3.924429699996405,
         "tuning": {
           "method": "grid_search",
           "best_params": {
-            "model__alpha": 0.05
+            "model__alpha": 0.1
+          }
+        }
+      },
+      {
+        "model": "ElasticNet",
+        "cv_r2": -4.163536676901259,
+        "tuning": {
+          "method": "grid_search",
+          "best_params": {
+            "model__alpha": 0.1,
+            "model__l1_ratio": 0.8
           }
         }
       },
       {
         "model": "Ridge",
-        "cv_r2": -0.9362213970114615,
+        "cv_r2": -213.59152038189654,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -371,75 +414,92 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -0.9457516893731157,
+        "cv_r2": -5.35061187617835e+22,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
-        }
-      },
-      {
-        "model": "RandomForest",
-        "cv_r2": -1.4538214762529822,
-        "tuning": {
-          "method": "grid_search",
-          "best_params": {
-            "model__max_depth": 3,
-            "model__min_samples_leaf": 2,
-            "model__n_estimators": 100
-          }
         }
       }
     ],
     "tuning": {
       "method": "grid_search",
       "best_params": {
-        "model__alpha": 0.1,
-        "model__l1_ratio": 0.5
+        "model__max_depth": 3,
+        "model__min_samples_leaf": 8,
+        "model__n_estimators": 200
       }
     },
     "data_inspection": {
       "missing_values_before": {
-        "rows_before_dropna": 2534,
+        "rows_before_dropna": 1541,
         "target_missing": 0,
         "feature_missing": {
-          "energy_index": 0,
-          "vix_index": 0
+          "inflation_wb": 0,
+          "gdp_growth": 0,
+          "unemployment_wb": 0,
+          "inflation": 0,
+          "fed_funds_rate": 0,
+          "industrial_production": 0,
+          "consumer_sentiment": 0
         }
       },
       "missing_values_after": {
         "target_missing": 0,
         "feature_missing_after_impute": 0
       },
-      "outliers_winsorized": 82
+      "outliers_winsorized": 56
     },
     "feature_engineering": {
-      "base_factor_count": 2,
-      "engineered_feature_count": 3,
-      "retained_feature_count": 5,
+      "base_factor_count": 7,
+      "engineered_feature_count": 13,
+      "retained_feature_count": 12,
       "retained_features": [
-        "energy_index",
-        "vix_index",
-        "energy_index__sq",
-        "vix_index__sq",
-        "energy_index__x__vix_index"
+        "inflation_wb",
+        "unemployment_wb",
+        "fed_funds_rate",
+        "industrial_production",
+        "consumer_sentiment",
+        "unemployment_wb__sq",
+        "inflation__sq",
+        "fed_funds_rate__sq",
+        "industrial_production__sq",
+        "consumer_sentiment__sq",
+        "inflation_wb__x__inflation",
+        "unemployment_wb__x__inflation"
       ]
     },
     "multicollinearity": {
-      "dropped_features": [],
-      "max_vif": 1.2872543581759,
+      "dropped_features": [
+        "inflation_wb__x__gdp_growth",
+        "gdp_growth__sq",
+        "gdp_growth__x__unemployment_wb",
+        "gdp_growth__x__inflation",
+        "gdp_growth",
+        "inflation_wb__sq",
+        "inflation_wb__x__unemployment_wb",
+        "inflation"
+      ],
+      "max_vif": 10.574845684200486,
       "vif": {
-        "energy_index": 1.160678646479906,
-        "vix_index": 1.2227091744699197,
-        "energy_index__sq": 1.2872543581759,
-        "vix_index__sq": 1.2726958914419428,
-        "energy_index__x__vix_index": 1.222455267198581
+        "inflation_wb": 6.572208098852006,
+        "unemployment_wb": 5.126190021864917,
+        "fed_funds_rate": 2.1838709285987266,
+        "industrial_production": 4.921622169383594,
+        "consumer_sentiment": 1.404553980442212,
+        "unemployment_wb__sq": 2.5452638130108394,
+        "inflation__sq": 4.606917467593597,
+        "fed_funds_rate__sq": 2.1686065162921624,
+        "industrial_production__sq": 4.448073609144745,
+        "consumer_sentiment__sq": 2.4411137298445427,
+        "inflation_wb__x__inflation": 7.114135505049517,
+        "unemployment_wb__x__inflation": 10.574845684200486
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.18089109486657445
+      "mae_in_sample": 0.07925297996355794
     }
   }
 }
