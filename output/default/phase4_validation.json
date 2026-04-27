@@ -1,0 +1,70 @@
+{
+  "phase": 4,
+  "selected_tickers": [
+    "AAPL",
+    "ABBV",
+    "NVDA",
+    "TSLA",
+    "JNJ",
+    "ORCL",
+    "APD",
+    "MS",
+    "CVX"
+  ],
+  "oos_window": {
+    "start": "2020-01-01",
+    "end": "2024-01-01"
+  },
+  "holdout_window": {
+    "start": "2024-01-01",
+    "end": "2026"
+  },
+  "oos_metrics": {
+    "sharpe": 1.318627,
+    "calmar": 1.551116,
+    "profit_factor": 1.282225,
+    "annualized_return": 0.064903,
+    "max_drawdown": -0.041843,
+    "win_probability": 0.5,
+    "n_days": 1006
+  },
+  "bootstrap_cis": {
+    "sharpe": {
+      "mean": 1.3072257461124877,
+      "ci_lower": 0.4836544289254299,
+      "ci_upper": 2.174816402715537
+    },
+    "calmar": {
+      "mean": 1.591006704810552,
+      "ci_lower": 0.3774753906676759,
+      "ci_upper": 3.3786906878226324
+    },
+    "profit_factor": {
+      "mean": 1.2824528238622233,
+      "ci_lower": 1.0962205758787869,
+      "ci_upper": 1.504631321313022
+    }
+  },
+  "dsr": {
+    "p_value": 0.647803,
+    "n_trials": 45,
+    "skew": -0.108187,
+    "kurtosis_excess": 3.218466
+  },
+  "holdout_metrics": {
+    "sharpe": 0.780515,
+    "calmar": 0.770324,
+    "profit_factor": 1.177844,
+    "degradation_pct": 40.81,
+    "n_days": 502
+  },
+  "acceptance": {
+    "Sharpe \u2265 0.6": true,
+    "Sharpe CI lower > 0": true,
+    "Profit Factor \u2265 1.25": true,
+    "Calmar \u2265 0.5": true,
+    "DSR p-value > 0.5": true,
+    "Holdout degradation < 50%": true
+  },
+  "all_pass": true
+}

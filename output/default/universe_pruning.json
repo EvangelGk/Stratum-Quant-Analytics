@@ -1,0 +1,433 @@
+{
+  "generated_at": "2026-04-28T00:31:24.271663",
+  "thresholds": {
+    "sharpe_floor": 0.0,
+    "ic_floor": 0.0,
+    "corr_threshold": 0.8
+  },
+  "full_portfolio_sharpe": 0.5799,
+  "pruned_portfolio_sharpe": 0.7652,
+  "n_keep": 17,
+  "n_drop": 14,
+  "tickers_keep": [
+    "AAPL",
+    "ABBV",
+    "AMGN",
+    "APD",
+    "CAT",
+    "CVX",
+    "HON",
+    "JNJ",
+    "KO",
+    "LLY",
+    "MS",
+    "MSFT",
+    "NVDA",
+    "ORCL",
+    "PG",
+    "TSLA",
+    "XOM"
+  ],
+  "tickers_drop": [
+    "ADBE",
+    "AVGO",
+    "BAC",
+    "GE",
+    "GS",
+    "JPM",
+    "LIN",
+    "MA",
+    "NEM",
+    "PFE",
+    "SLB",
+    "UNH",
+    "V",
+    "WMT"
+  ],
+  "per_ticker": [
+    {
+      "ticker": "AAPL",
+      "sharpe_oos": 0.9906,
+      "calmar_oos": 1.3303,
+      "mean_ic_train": -0.023453,
+      "avg_pair_corr": 0.395,
+      "loo_sharpe_delta": 0.0049,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "ABBV",
+      "sharpe_oos": 0.9386,
+      "calmar_oos": 0.8599,
+      "mean_ic_train": -0.034399,
+      "avg_pair_corr": 0.2933,
+      "loo_sharpe_delta": 0.0203,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "NVDA",
+      "sharpe_oos": 0.8746,
+      "calmar_oos": 0.6951,
+      "mean_ic_train": -0.113183,
+      "avg_pair_corr": 0.3197,
+      "loo_sharpe_delta": 0.0116,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "TSLA",
+      "sharpe_oos": 0.7926,
+      "calmar_oos": 1.0157,
+      "mean_ic_train": -0.016205,
+      "avg_pair_corr": 0.2393,
+      "loo_sharpe_delta": 0.0412,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "JNJ",
+      "sharpe_oos": 0.6665,
+      "calmar_oos": 0.9056,
+      "mean_ic_train": -0.057427,
+      "avg_pair_corr": 0.3163,
+      "loo_sharpe_delta": 0.0011,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "ORCL",
+      "sharpe_oos": 0.3588,
+      "calmar_oos": 0.3079,
+      "mean_ic_train": -0.059016,
+      "avg_pair_corr": 0.3217,
+      "loo_sharpe_delta": 0.0041,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "APD",
+      "sharpe_oos": 0.352,
+      "calmar_oos": 0.2721,
+      "mean_ic_train": -0.021053,
+      "avg_pair_corr": 0.3912,
+      "loo_sharpe_delta": -0.0038,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "MS",
+      "sharpe_oos": 0.3422,
+      "calmar_oos": 0.2162,
+      "mean_ic_train": -0.071041,
+      "avg_pair_corr": 0.4569,
+      "loo_sharpe_delta": 0.0,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "CVX",
+      "sharpe_oos": 0.2924,
+      "calmar_oos": 0.2606,
+      "mean_ic_train": -0.091723,
+      "avg_pair_corr": 0.3717,
+      "loo_sharpe_delta": 0.0043,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "CAT",
+      "sharpe_oos": 0.1098,
+      "calmar_oos": 0.1011,
+      "mean_ic_train": -0.064893,
+      "avg_pair_corr": 0.3979,
+      "loo_sharpe_delta": 0.0049,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "MSFT",
+      "sharpe_oos": 0.1069,
+      "calmar_oos": 0.0701,
+      "mean_ic_train": -0.001425,
+      "avg_pair_corr": 0.4086,
+      "loo_sharpe_delta": -0.0012,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "XOM",
+      "sharpe_oos": 0.0739,
+      "calmar_oos": 0.0636,
+      "mean_ic_train": -0.104985,
+      "avg_pair_corr": 0.336,
+      "loo_sharpe_delta": 0.0103,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "KO",
+      "sharpe_oos": 0.0373,
+      "calmar_oos": 0.019,
+      "mean_ic_train": 0.014255,
+      "avg_pair_corr": 0.3456,
+      "loo_sharpe_delta": -0.0035,
+      "flags": [],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "HON",
+      "sharpe_oos": 0.0308,
+      "calmar_oos": 0.0196,
+      "mean_ic_train": -0.05319,
+      "avg_pair_corr": 0.4461,
+      "loo_sharpe_delta": -0.0085,
+      "flags": [
+        "negative_ic"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "GS",
+      "sharpe_oos": -0.0375,
+      "calmar_oos": -0.0242,
+      "mean_ic_train": -0.077145,
+      "avg_pair_corr": 0.4418,
+      "loo_sharpe_delta": -0.0026,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "V",
+      "sharpe_oos": -0.0565,
+      "calmar_oos": -0.0411,
+      "mean_ic_train": -0.019746,
+      "avg_pair_corr": 0.4523,
+      "loo_sharpe_delta": -0.0158,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "NEM",
+      "sharpe_oos": -0.0974,
+      "calmar_oos": -0.0641,
+      "mean_ic_train": -0.06637,
+      "avg_pair_corr": 0.1189,
+      "loo_sharpe_delta": -0.0003,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "PG",
+      "sharpe_oos": -0.1596,
+      "calmar_oos": -0.0604,
+      "mean_ic_train": 0.013538,
+      "avg_pair_corr": 0.3008,
+      "loo_sharpe_delta": 0.0002,
+      "flags": [
+        "negative_sharpe"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "LIN",
+      "sharpe_oos": -0.3218,
+      "calmar_oos": -0.2138,
+      "mean_ic_train": -0.029194,
+      "avg_pair_corr": 0.4339,
+      "loo_sharpe_delta": 0.0019,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "ADBE",
+      "sharpe_oos": -0.3569,
+      "calmar_oos": -0.2083,
+      "mean_ic_train": -0.032672,
+      "avg_pair_corr": 0.3445,
+      "loo_sharpe_delta": -0.0205,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "LLY",
+      "sharpe_oos": -0.367,
+      "calmar_oos": -0.1594,
+      "mean_ic_train": 0.039448,
+      "avg_pair_corr": 0.255,
+      "loo_sharpe_delta": 0.0343,
+      "flags": [
+        "negative_sharpe"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "SLB",
+      "sharpe_oos": -0.4298,
+      "calmar_oos": -0.2295,
+      "mean_ic_train": -0.026585,
+      "avg_pair_corr": 0.3093,
+      "loo_sharpe_delta": -0.0015,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "BAC",
+      "sharpe_oos": -0.4771,
+      "calmar_oos": -0.2011,
+      "mean_ic_train": -0.045481,
+      "avg_pair_corr": 0.4368,
+      "loo_sharpe_delta": -0.0257,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "JPM",
+      "sharpe_oos": -0.4892,
+      "calmar_oos": -0.192,
+      "mean_ic_train": -0.037264,
+      "avg_pair_corr": 0.4494,
+      "loo_sharpe_delta": -0.0214,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "MA",
+      "sharpe_oos": -0.5175,
+      "calmar_oos": -0.1864,
+      "mean_ic_train": -0.026407,
+      "avg_pair_corr": 0.4515,
+      "loo_sharpe_delta": -0.0161,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "AVGO",
+      "sharpe_oos": -0.5291,
+      "calmar_oos": -0.2991,
+      "mean_ic_train": -0.044941,
+      "avg_pair_corr": 0.3419,
+      "loo_sharpe_delta": 0.006,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "PFE",
+      "sharpe_oos": -0.5706,
+      "calmar_oos": -0.2801,
+      "mean_ic_train": -0.029969,
+      "avg_pair_corr": 0.301,
+      "loo_sharpe_delta": 0.0072,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "GE",
+      "sharpe_oos": -0.6387,
+      "calmar_oos": -0.3104,
+      "mean_ic_train": -0.020796,
+      "avg_pair_corr": 0.3407,
+      "loo_sharpe_delta": -0.0258,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "AMGN",
+      "sharpe_oos": -0.6402,
+      "calmar_oos": -0.2209,
+      "mean_ic_train": 0.014829,
+      "avg_pair_corr": 0.3233,
+      "loo_sharpe_delta": -0.005,
+      "flags": [
+        "negative_sharpe"
+      ],
+      "decision": "KEEP"
+    },
+    {
+      "ticker": "UNH",
+      "sharpe_oos": -0.8218,
+      "calmar_oos": -0.2673,
+      "mean_ic_train": -0.041198,
+      "avg_pair_corr": 0.2922,
+      "loo_sharpe_delta": 0.0098,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    },
+    {
+      "ticker": "WMT",
+      "sharpe_oos": -1.2199,
+      "calmar_oos": -0.3723,
+      "mean_ic_train": -0.019149,
+      "avg_pair_corr": 0.2522,
+      "loo_sharpe_delta": 0.0008,
+      "flags": [
+        "negative_sharpe",
+        "negative_ic"
+      ],
+      "decision": "DROP"
+    }
+  ]
+}

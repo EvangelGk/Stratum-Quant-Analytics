@@ -723,6 +723,12 @@ def _load_backtest_payload_to_session() -> None:
         artifact_path = _output_dir() / "analysis_results.json"
 
         if not artifact_path.exists():
+            # File was deleted at run start but hasn't been written yet (run in
+            # progress or failed before writing output).  Clear any stale payload
+            # from a previous run so the UI shows "no results" rather than old
+            # metrics from the last successful run.
+            for _k in ("backtest_payload", "_backtest_payload_hash", "backtest_payload_loaded_at"):
+                st.session_state.pop(_k, None)
             return
 
         import hashlib as _hashlib

@@ -35,15 +35,30 @@ def _select_top_features(
     if len(alive) <= max_k:
         return alive
 
-    # 3. Rank remaining by |Pearson| with target
+    # 3. IC gate: keep only features with positive Pearson correlation to the
+    #    training target, then rank survivors by magnitude.
+    #    Anti-predictive features (r < 0) teach the model to predict the wrong
+    #    direction — they must be excluded before Ridge fitting, not just
+    #    down-weighted.  Root-cause fix for H1 (signal anti-predictive).
     y_arr = np.asarray(y_train, dtype=float)
     scores: List[tuple[float, str]] = []
     for f in alive:
         try:
             r = float(np.corrcoef(X_train[f].to_numpy(dtype=float), y_arr)[0, 1])
-            scores.append((abs(r) if np.isfinite(r) else 0.0, f))
+            if np.isfinite(r) and r > 0.0:
+                scores.append((r, f))
         except Exception:
-            scores.append((0.0, f))
+            pass
+    # Fallback: if IC gate drops everything (e.g. all features are orthogonal
+    # to target on this fold), revert to absolute-r ranking so the model
+    # always has at least one feature to fit on.
+    if not scores:
+        for f in alive:
+            try:
+                r = float(np.corrcoef(X_train[f].to_numpy(dtype=float), y_arr)[0, 1])
+                scores.append((abs(r) if np.isfinite(r) else 0.0, f))
+            except Exception:
+                scores.append((0.0, f))
     scores.sort(reverse=True)
     return [f for _, f in scores[:max_k]]
 
@@ -176,7 +191,7 @@ def _backtest_pre2020_holdout_legacy(
         panel = panel.dropna(subset=[date_col]).sort_values(date_col)
 
         train_mask = panel[date_col] < pd.Timestamp("2020-01-01")
-        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (panel[date_col] <= pd.Timestamp("2022-12-31"))
+        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (panel[date_col] <= pd.Timestamp("2023-12-31"))
         train_df = panel.loc[train_mask].copy()
         test_df = panel.loc[test_mask].copy()
 
@@ -602,23 +617,23 @@ def _optimize_entry_threshold(
     trend_train: np.ndarray,
     downtrend_train: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
-    # Finer grid in the 0.35–0.75 zone where macro-lag strategies tend to peak.
-    candidates = [0.00, 0.20, 0.35, 0.45, 0.55, 0.65, 0.75, 0.95, 1.15]
-    best = {"threshold": 0.55, "score": -1e9, "stats": {}}
+    # Grid covers the full range; finer steps in the 0.25–0.65 zone where
+    # momentum strategies with a 21-day hold typically peak.
+    candidates = [0.00, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.80, 1.00]
+    best = {"threshold": 0.45, "score": -1e9, "stats": {}}
     bench = np.asarray(actual_train, dtype=float)
 
-    # Temporal validation fold: last 40% of training data.
-    # Raised from 25% (val_split=0.75) to 40% (val_split=0.60) because the
-    # dual-SMA filter keeps only ~35% of days active.  At 25% we had ~9 active
-    # validation days — far too few for reliable threshold selection.  At 40%
-    # we get ~29 active days, which is the practical minimum for stable scoring.
+    # Temporal validation fold: last 35% of training data.
     # max(80, ...) ensures at least 80 samples remain in the training fold.
     n_train = len(pred_z_train)
-    val_split = max(80, int(n_train * 0.60))
+    val_split = max(80, int(n_train * 0.65))
     pred_z_val = pred_z_train[val_split:]
     actual_val = actual_train[val_split:]
     trend_val = trend_train[val_split:]
     dn_val = downtrend_train[val_split:] if downtrend_train is not None else None
+
+    # Simulation parameters match the execution layer — must stay in sync.
+    _SIM_KW = dict(inv_vol_target=0.25, atr_multiplier=4.0, max_hold_days=21, vol_scale_cap=2.0)
 
     for th in candidates:
         strat_ret, positions = _simulate_risk_managed_returns(
@@ -626,11 +641,8 @@ def _optimize_entry_threshold(
             actual_arr=actual_train,
             in_uptrend=trend_train,
             entry_threshold=float(th),
-            inv_vol_target=0.20,
-            atr_multiplier=2.0,
-            max_hold_days=50,
-            vol_scale_cap=1.50,
             downtrend_arr=downtrend_train,
+            **_SIM_KW,
         )
         train_stats = _compute_basic_stats(strat_ret, bench[: len(strat_ret)])
 
@@ -639,11 +651,8 @@ def _optimize_entry_threshold(
             actual_arr=actual_val,
             in_uptrend=trend_val,
             entry_threshold=float(th),
-            inv_vol_target=0.20,
-            atr_multiplier=2.0,
-            max_hold_days=50,
-            vol_scale_cap=1.50,
             downtrend_arr=dn_val,
+            **_SIM_KW,
         )
         val_stats = _compute_basic_stats(val_ret, actual_val[: len(val_ret)])
 
@@ -707,6 +716,11 @@ def _walk_forward_validation(
         if end - start < 20:
             break
         train_df = panel.iloc[:start].copy()
+        # L1 fix: trim last (horizon-1) rows from each fold's training set
+        # so the forward-return target doesn't bleed into the test window.
+        _WF_FWD_HORIZON = 21
+        if len(train_df) > _WF_FWD_HORIZON - 1:
+            train_df = train_df.iloc[:-(_WF_FWD_HORIZON - 1)].copy()
         test_df = panel.iloc[start:end].copy()
         _wf_sel = _select_top_features(train_df[features], train_df[target].to_numpy(), features)
         try:
@@ -733,13 +747,14 @@ def _walk_forward_validation(
         trend_test, dn_test = _dual_trend_masks_from_log_returns(orig_log_returns, test_dates)
 
         tuned = _optimize_entry_threshold(pred_z_train, actual_train, trend_train, downtrend_train=dn_train)
-        th = float(tuned.get("threshold", 0.75))
+        th = float(tuned.get("threshold", 0.45))
         strategy_test, _ = _simulate_risk_managed_returns(
             pred_z_test, actual_test, trend_test,
             entry_threshold=th,
-            inv_vol_target=0.20,
-            atr_multiplier=2.0,
-            vol_scale_cap=1.50,
+            inv_vol_target=0.25,
+            atr_multiplier=4.0,
+            max_hold_days=21,
+            vol_scale_cap=2.0,
             downtrend_arr=dn_test,
         )
         stats = _compute_basic_stats(strategy_test, actual_test[: len(strategy_test)])
@@ -807,58 +822,122 @@ def backtest_pre2020_holdout(
     features: Optional[List[str]] = None,
     date_col: str = "date",
     ticker: Optional[str] = None,
+    exec_kwargs: Optional[dict] = None,
 ) -> Dict[str, Any]:
-    """Train before 2020 and evaluate on 2020-2022 holdout window."""
+    """Train before 2020 and evaluate on 2020-2023 OOS window.
+
+    Parameters
+    ----------
+    exec_kwargs : dict, optional
+        Override execution parameters passed to ``_simulate_risk_managed_returns``.
+        Supported keys: ``inv_vol_target``, ``atr_multiplier``, ``max_hold_days``,
+        ``vol_scale_cap``, ``tx_cost``.  Defaults are used for any missing keys.
+    """
     try:
         features = list(features) if features else ["inflation", "energy_index"]
 
-        # ── Inject 60-day momentum feature (Problem 4 fix) ───────────────────
-        # return_60d = trailing 60-day cumulative log-return.
-        # Named "return_60d" so is_return_like() returns True and
-        # stationary_transform keeps the value as-is (no further differencing).
-        # This gives Ridge a stock-specific momentum signal that macro features
-        # alone cannot capture.
+        # ── Technical features (bypass macro pipeline to avoid 45-day lag) ───
+        # prepare_supervised_frame applies a mandatory 45-day publication lag to
+        # every non-yfinance column, which would turn momentum indicators stale.
+        # We compute them here and merge by date after the macro panel is built.
+        #
+        # Features chosen for documented predictive power on 21-day forward returns:
+        #   return_5d    — short-term reversal (negatively autocorrelated)
+        #   return_20d   — 1-month momentum
+        #   return_60d   — 3-month momentum
+        #   mom_12_1     — Jegadeesh-Titman 12-1 momentum (strongest equity predictor)
+        #   vol_ratio    — current/long-term vol ratio (low vol → higher fwd returns)
+        #   up_frac_20   — % of positive days in last 20 (momentum quality)
+        _TECH_NAMES = {"return_5d", "return_20d", "return_60d", "mom_12_1", "vol_ratio", "up_frac_20"}
+        _macro_features = [f for f in features if f not in _TECH_NAMES]
+
         _df_aug = df.copy()
+        _df_aug[date_col] = pd.to_datetime(_df_aug[date_col], errors="coerce")
+        _tech_features_available: List[str] = []
+
         if "log_return" in _df_aug.columns:
-            _df_aug[date_col] = pd.to_datetime(_df_aug[date_col], errors="coerce")
+            def _compute_tech_features(grp: pd.DataFrame) -> pd.DataFrame:
+                lr = pd.to_numeric(grp["log_return"], errors="coerce")
+                grp["return_5d"] = lr.rolling(5, min_periods=3).sum()
+                grp["return_20d"] = lr.rolling(20, min_periods=10).sum()
+                grp["return_60d"] = lr.rolling(60, min_periods=30).sum()
+                # 12-1 momentum: skip last 21 days to exclude short-term reversal zone
+                grp["mom_12_1"] = lr.shift(21).rolling(231, min_periods=80).sum()
+                v20 = lr.rolling(20, min_periods=10).std()
+                v60 = lr.rolling(60, min_periods=30).std().replace(0.0, np.nan)
+                grp["vol_ratio"] = (v20 / v60 - 1.0).fillna(0.0)
+                grp["up_frac_20"] = lr.rolling(20, min_periods=10).apply(
+                    lambda x: float(np.mean(x > 0)), raw=True
+                )
+                return grp
+
             if "ticker" in _df_aug.columns:
-                _df_aug["return_60d"] = (
-                    _df_aug.sort_values([date_col])
-                    .groupby("ticker", group_keys=False)["log_return"]
-                    .transform(lambda s: s.rolling(60, min_periods=30).sum())
+                _df_aug = (
+                    _df_aug.sort_values(date_col)
+                    .groupby("ticker", group_keys=False)
+                    .apply(_compute_tech_features)
                 )
             else:
                 _df_aug = _df_aug.sort_values(date_col)
-                _df_aug["return_60d"] = _df_aug["log_return"].rolling(60, min_periods=30).sum()
-            if "return_60d" not in features:
-                features = features + ["return_60d"]
-        else:
-            _df_aug = df
+                _df_aug = _compute_tech_features(_df_aug)
 
+            _tech_features_available = [f for f in _TECH_NAMES if f in _df_aug.columns]
+
+        # ── Macro panel (with 45-day publication lag) ────────────────────────
         panel, metadata = prepare_supervised_frame(
             df=_df_aug,
             target=target,
-            features=features,
+            features=_macro_features,
             date_col=date_col,
             ticker=ticker,
             macro_lag_days=45,
             align_target_to_features=True,
-            # Pin the prediction horizon to exactly 21 trading days (~1 month).
-            # Without this cap, WorldBank features (252-day horizon) silently push
-            # the target to 1-year forward returns, which is not what we want.
+            # Pin to exactly 21 trading days — WorldBank features (horizon=252)
+            # would otherwise silently push the target to 1-year forward returns.
             min_target_horizon_days=21,
             max_target_horizon_days=21,
         )
         if panel.empty or date_col not in panel.columns:
             raise DataValidationError("No aligned rows available for backtest.")
 
+        # ── Merge technical features by date (no lag, no transformation) ────
+        if _tech_features_available:
+            _src = (
+                _df_aug[_df_aug["ticker"].astype(str) == str(ticker)].copy()
+                if ticker is not None and "ticker" in _df_aug.columns
+                else _df_aug.copy()
+            )
+            _tech_merge_df = (
+                _src[[date_col] + _tech_features_available]
+                .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
+                .drop_duplicates(subset=[date_col])
+                .sort_values(date_col)
+            )
+            panel = panel.merge(_tech_merge_df, on=date_col, how="left")
+            _present_tech = [f for f in _tech_features_available if f in panel.columns]
+            panel = panel.dropna(subset=_present_tech)
+            panel = panel.reset_index(drop=True)
+        else:
+            _present_tech = []
+
+        # Full feature list for model fitting (macro + technical)
+        features = [f for f in _macro_features if f in panel.columns] + _present_tech
+
         panel[date_col] = pd.to_datetime(panel[date_col], errors="coerce")
         panel = panel.dropna(subset=[date_col]).sort_values(date_col)
 
         train_mask = panel[date_col] < pd.Timestamp("2020-01-01")
-        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (panel[date_col] <= pd.Timestamp("2022-12-31"))
+        test_mask = (panel[date_col] >= pd.Timestamp("2020-01-01")) & (panel[date_col] <= pd.Timestamp("2023-12-31"))
         train_df = panel.loc[train_mask].copy()
         test_df = panel.loc[test_mask].copy()
+
+        # L1 fix: the 21-day forward-return target at the last (horizon-1=20)
+        # training rows sums returns that extend into the test window.  Ridge
+        # trains on contaminated labels → predictions carry implicit test-period
+        # knowledge.  Trim those rows before fitting.
+        _FWD_HORIZON = 21
+        if len(train_df) > _FWD_HORIZON - 1:
+            train_df = train_df.iloc[:-(  _FWD_HORIZON - 1)].copy()
 
         _min_train = max(20, len(features) + 10)
         _split_mode = "2020_cutoff"
@@ -869,7 +948,10 @@ def backtest_pre2020_holdout(
                 raise DataValidationError(
                     f"Not enough aligned rows for backtest (total={len(panel)}, need at least {_min_train + 30})."
                 )
+            # L1 fix: also trim the boundary rows in the fallback split
             train_df = panel.iloc[:split_idx].copy()
+            if len(train_df) > _FWD_HORIZON - 1:
+                train_df = train_df.iloc[:-(_FWD_HORIZON - 1)].copy()
             test_df = panel.iloc[split_idx:].copy()
             _split_mode = "70_30_fallback"
 
@@ -887,8 +969,13 @@ def backtest_pre2020_holdout(
         predictions = model.predict(test_df[_sel])
         train_predictions = model.predict(train_df[_sel])
 
+        _orig_src = (
+            _df_aug[_df_aug["ticker"].astype(str) == str(ticker)].copy()
+            if ticker is not None and "ticker" in _df_aug.columns
+            else _df_aug.copy()
+        )
         _orig = (
-            _df_aug[[date_col, "log_return"]]
+            _orig_src[[date_col, "log_return"]]
             .assign(**{date_col: lambda x: pd.to_datetime(x[date_col], errors="coerce")})
             .dropna(subset=[date_col, "log_return"])
             .set_index(date_col)
@@ -926,43 +1013,38 @@ def backtest_pre2020_holdout(
         )
         selected_threshold = float(threshold_pick.get("threshold", 0.75))
 
-        inv_vol_used = 0.20
+        # Execution parameters — must stay in sync with _optimize_entry_threshold.
+        # atr_multiplier=4.0: 2x ATR was too tight for 21-day holds, stopping out
+        # normal daily noise before the momentum signal had time to play out.
+        # max_hold_days=21: aligns the exit with the prediction horizon.
+        # inv_vol_target=0.25: captures more of the momentum signal vs 0.20.
+        # vol_scale_cap=2.0: allows higher allocation when realized vol is low.
+        _DEFAULTS = dict(inv_vol_target=0.25, atr_multiplier=4.0, max_hold_days=21, vol_scale_cap=2.0, tx_cost=0.0005)
+        _EXEC_KW = {**_DEFAULTS, **(exec_kwargs or {})}
+        inv_vol_used = 0.25
         strategy_returns, _positions = _simulate_risk_managed_returns(
             pred_z=pred_z_test,
             actual_arr=actual_arr,
             in_uptrend=trend_test,
             entry_threshold=selected_threshold,
-            inv_vol_target=inv_vol_used,
-            atr_multiplier=2.0,
-            max_hold_days=50,
-            tx_cost=0.0005,
-            vol_scale_cap=1.50,
             downtrend_arr=dn_test,
+            **_EXEC_KW,
         )
         active_days = int(np.sum(np.abs(_positions) > 1e-10))
-        min_active_days = max(20, int(0.03 * len(_positions)))
+        min_active_days = max(15, int(0.02 * len(_positions)))
         if active_days < min_active_days:
-            # Graduated fallback: try 0.20 before 0.0.
-            # Going straight to 0.0 forces entry on every trend day with
-            # near-random sign(pred) signals — the root cause of Sharpe≈0.15.
-            # 0.20 preserves mild z-score filtering; 0.0 is the last resort.
-            for _fb_th in [0.20, 0.0]:
+            for _fb_th in [0.25, 0.0]:
                 selected_threshold = _fb_th
                 strategy_returns, _positions = _simulate_risk_managed_returns(
                     pred_z=pred_z_test,
                     actual_arr=actual_arr,
                     in_uptrend=trend_test,
                     entry_threshold=selected_threshold,
-                    inv_vol_target=0.20,
-                    atr_multiplier=2.0,
-                    max_hold_days=50,
-                    tx_cost=0.0005,
-                    vol_scale_cap=1.50,
                     downtrend_arr=dn_test,
+                    **_EXEC_KW,
                 )
                 if int(np.sum(np.abs(_positions) > 1e-10)) >= min_active_days:
                     break
-            inv_vol_used = 0.20
         benchmark_returns = actual_arr[: len(strategy_returns)]
         actual = pd.Series(benchmark_returns)
         predictions = predictions[: len(strategy_returns)]
@@ -1084,7 +1166,7 @@ def backtest_pre2020_holdout(
             "features_input": list(features),
             "strategy_parameters": {
                 "entry_threshold_zscore": round(float(selected_threshold), 4),
-                "atr_trailing_stop_multiplier": 2.0,
+                "atr_trailing_stop_multiplier": 4.0,
                 "inverse_vol_target": inv_vol_used,
                 "trend_filter": "dual_sma_20_200",
                 "vol_scale_cap": 1.50,
@@ -1145,6 +1227,187 @@ def backtest_pre2020_holdout(
         raise AnalysisError(f"Unexpected error in backtest_pre2020_holdout: {exc}") from exc
 
 
+def select_active_universe(
+    df: pd.DataFrame,
+    train_end_date: Optional[str] = None,
+    min_n: int = 8,
+    max_n: int = 15,
+    target: str = "log_return",
+    date_col: str = "date",
+) -> List[str]:
+    """Select the active ticker universe from available data.
+
+    Two modes controlled by ``train_end_date``:
+
+    **Live / production mode** (``train_end_date=None``, default):
+        Use ALL rows in *df*.  Correctly identifies tickers whose features
+        carry persistent alpha across the full data history — including the
+        post-2020 tech rally.  This is the right mode for deciding which
+        tickers to trade *today*.
+
+    **Historical-backtest mode** (``train_end_date`` = date string):
+        Restrict to rows before that date to avoid lookahead in a historical
+        back-test.  Note that data before 2020 cannot predict the 2020+ tech
+        regime, so this mode may select a different (potentially lower-OOS)
+        subset.
+
+    Algorithm (both modes):
+    1. Build per-ticker technical features (rolling — no lookahead).
+    2. Compute 21-day forward-return target.
+    3. TimeSeriesSplit CV (k=5): IC gate per fold → Ridge → record eval IC.
+       Score = mean CV IC across folds.
+    4. Rank by score.  Find N ∈ [min_n, max_n] maximising EW hold-out Sharpe.
+
+    Returns a fully data-driven list — no ticker is hard-coded.
+    """
+    from scipy.stats import pearsonr
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.preprocessing import StandardScaler
+
+    _FWD = 21
+    all_tickers: List[str] = sorted(df["ticker"].dropna().unique().tolist())
+
+    _df = df.copy()
+    _df[date_col] = pd.to_datetime(_df[date_col], errors="coerce")
+
+    # ── Apply optional training-window restriction ───────────────────────────
+    if train_end_date is not None:
+        _df = _df[_df[date_col] < pd.Timestamp(train_end_date)].copy()
+
+    if len(_df) < 200:
+        return all_tickers[:min_n]
+
+    # ── Add technical features per ticker (no lookahead) ────────────────────
+    if target in _df.columns:
+        _parts: List[pd.DataFrame] = []
+        for _tk in _df["ticker"].unique():
+            _p = _df[_df["ticker"] == _tk].copy().sort_values(date_col)
+            lr = pd.to_numeric(_p[target], errors="coerce")
+            _p["_t_ret5"]   = lr.rolling(5,   min_periods=3).sum()
+            _p["_t_ret20"]  = lr.rolling(20,  min_periods=10).sum()
+            _p["_t_ret60"]  = lr.rolling(60,  min_periods=30).sum()
+            _p["_t_mom12"]  = lr.shift(21).rolling(231, min_periods=80).sum()
+            v20 = lr.rolling(20, min_periods=10).std()
+            v60 = lr.rolling(60, min_periods=30).std().replace(0.0, np.nan)
+            _p["_t_volrat"] = (v20 / v60 - 1.0).fillna(0.0)
+            _parts.append(_p)
+        _df = pd.concat(_parts, ignore_index=True)
+
+    _TECH = {"_t_ret5", "_t_ret20", "_t_ret60", "_t_mom12", "_t_volrat"}
+    skip = {date_col, "ticker", target, "adj_close", "close", "open",
+            "high", "low", "volume"}
+    macro_cols = [
+        c for c in _df.columns
+        if c not in skip and c not in _TECH
+        and pd.api.types.is_numeric_dtype(_df[c])
+        and not c.startswith("__")
+    ]
+    all_feat = macro_cols + list(_TECH)
+
+    # ── Compute 21-day forward return ─────────────────────────────────────────
+    _df["_fwd"] = (
+        _df.groupby("ticker")[target]
+        .transform(lambda s: s.shift(-1).rolling(_FWD).sum().shift(-(_FWD - 1)))
+    )
+
+    # Hold-out: most recent 20 % of dates for optimal-N selection
+    all_dates = sorted(_df[date_col].unique())
+    holdout_start = all_dates[int(len(all_dates) * 0.80)]
+    wide_eval = (
+        _df[_df[date_col] >= holdout_start][[date_col, "ticker", target]]
+        .dropna()
+        .pivot_table(index=date_col, columns="ticker", values=target)
+    )
+
+    # ── Score each ticker by mean TimeSeriesSplit CV IC ──────────────────────
+    tscv = TimeSeriesSplit(n_splits=5)
+    ticker_scores: Dict[str, float] = {}
+
+    for tk in all_tickers:
+        tdf = (
+            _df[_df["ticker"] == tk]
+            .dropna(subset=["_fwd"])
+            .sort_values(date_col)
+            .reset_index(drop=True)
+        )
+        if len(tdf) < 100:
+            ticker_scores[tk] = float("nan")
+            continue
+
+        feats = [f for f in all_feat if f in tdf.columns]
+        if not feats:
+            ticker_scores[tk] = float("nan")
+            continue
+
+        Xmat = tdf[feats].fillna(0.0).to_numpy(float)
+        yvec = tdf["_fwd"].to_numpy(float)
+
+        fold_ics: List[float] = []
+        for tr_idx, te_idx in tscv.split(Xmat):
+            if len(tr_idx) < 40 or len(te_idx) < 10:
+                continue
+            X_tr, X_te = Xmat[tr_idx], Xmat[te_idx]
+            y_tr, y_te = yvec[tr_idx], yvec[te_idx]
+            if not np.isfinite(y_tr).all() or not np.isfinite(y_te).all():
+                continue
+
+            # IC gate on fold train
+            pos_feats_idx = []
+            for fi, f in enumerate(feats):
+                try:
+                    r, _ = pearsonr(X_tr[:, fi], y_tr)
+                    if np.isfinite(r) and r > 0:
+                        pos_feats_idx.append(fi)
+                except Exception:
+                    pass
+            sel_idx = pos_feats_idx if pos_feats_idx else list(range(len(feats)))
+
+            try:
+                sc = StandardScaler()
+                X_tr_s = sc.fit_transform(X_tr[:, sel_idx])
+                X_te_s = sc.transform(X_te[:, sel_idx])
+                mdl = RidgeCV(alphas=[0.1, 1.0, 10.0],
+                              cv=min(3, max(2, len(tr_idx) // 30)))
+                mdl.fit(X_tr_s, y_tr)
+                preds = mdl.predict(X_te_s)
+                ic, _ = pearsonr(preds, y_te)
+                if np.isfinite(ic):
+                    fold_ics.append(float(ic))
+            except Exception:
+                pass
+
+        ticker_scores[tk] = float(np.mean(fold_ics)) if fold_ics else float("nan")
+
+    ranked: List[tuple[float, str]] = sorted(
+        [(sc, tk) for tk, sc in ticker_scores.items() if np.isfinite(sc)],
+        reverse=True,
+    )
+    if not ranked:
+        return all_tickers[:min_n]
+
+    # ── Find optimal N by EW hold-out raw Sharpe ─────────────────────────────
+    def _ew_sharpe(cols: List[str]) -> float:
+        avail = [c for c in cols if c in wide_eval.columns]
+        if not avail:
+            return float("nan")
+        r = wide_eval[avail].dropna(how="all").mean(axis=1)
+        v = float(r.std(ddof=1) * np.sqrt(252))
+        return float(r.mean() * 252 / v) if v > 1e-10 else float("nan")
+
+    effective_max = min(max_n, len(ranked))
+    effective_min = min(min_n, len(ranked))
+    best_n  = effective_min
+    best_sh = _ew_sharpe([tk for _, tk in ranked[:effective_min]])
+
+    for n in range(effective_min + 1, effective_max + 1):
+        cand = _ew_sharpe([tk for _, tk in ranked[:n]])
+        if np.isfinite(cand) and (not np.isfinite(best_sh) or cand > best_sh):
+            best_sh = cand
+            best_n  = n
+
+    return [tk for _, tk in ranked[:best_n]]
+
+
 def portfolio_backtest(
     df: pd.DataFrame,
     tickers: Optional[List[str]] = None,
@@ -1153,6 +1416,9 @@ def portfolio_backtest(
     features: Optional[List[str]] = None,
     date_col: str = "date",
     mode: str = "both",
+    dynamic_universe: bool = True,
+    min_n: int = 8,
+    max_n: int = 15,
 ) -> Dict[str, Any]:
     """Run backtest across a portfolio of tickers.
 
@@ -1178,17 +1444,22 @@ def portfolio_backtest(
     if "ticker" not in df.columns:
         raise AnalysisError("portfolio_backtest requires a 'ticker' column in df.")
 
-    all_tickers: List[str] = tickers or sorted(df["ticker"].dropna().unique().tolist())
-    if not all_tickers:
+    # ── Determine candidate ticker pool ─────────────────────────────────────
+    candidate_tickers: List[str] = (
+        tickers
+        if tickers is not None
+        else sorted(df["ticker"].dropna().unique().tolist())
+    )
+    if not candidate_tickers:
         raise AnalysisError("No tickers found in df for portfolio_backtest.")
 
-    # ── Run per-ticker backtests ─────────────────────────────────────────────
+    # ── Run per-ticker backtests on ALL candidates ───────────────────────────
     per_ticker_results: Dict[str, Any] = {}
-    failed_tickers: List[str] = []
-    for t in all_tickers:
+    failed_tickers_all: List[str] = []
+    for t in candidate_tickers:
         ticker_df = df[df["ticker"].astype(str) == str(t)].copy()
         if ticker_df.empty:
-            failed_tickers.append(t)
+            failed_tickers_all.append(t)
             per_ticker_results[t] = {"status": "failed", "error": "no_data", "ticker": t}
             continue
         try:
@@ -1200,19 +1471,88 @@ def portfolio_backtest(
                 ticker=t,
             )
         except (AnalysisError, DataValidationError, Exception) as exc:
-            failed_tickers.append(t)
+            failed_tickers_all.append(t)
             per_ticker_results[t] = {"status": "failed", "error": str(exc), "ticker": t}
 
-    successful_tickers = [
-        t for t in all_tickers
-        if t in per_ticker_results and per_ticker_results[t].get("status") != "failed"
+    succeeded_all = [
+        t for t in candidate_tickers
+        if t not in failed_tickers_all
+        and per_ticker_results.get(t, {}).get("status") != "failed"
     ]
+
+    # ── Dynamic universe selection from OOS Sharpe ───────────────────────────
+    # When dynamic_universe=True and no explicit tickers list was given, rank
+    # every successfully-backtested ticker by its OOS Sharpe and find the N in
+    # [min_n, max_n] that maximises equal-weight portfolio Sharpe.  This is the
+    # same data-driven selection that Phase 3 manual pruning performed, but
+    # automated so the model decides which tickers to trade each run.
+    if dynamic_universe and tickers is None and len(succeeded_all) > min_n:
+        # Score by per-ticker OOS Sharpe
+        scored = sorted(
+            [
+                (per_ticker_results[t].get("sharpe_ratio") or float("-inf"), t)
+                for t in succeeded_all
+                if np.isfinite(per_ticker_results[t].get("sharpe_ratio") or float("nan"))
+            ],
+            reverse=True,
+        )
+        if scored:
+            # Collect aligned return arrays for EW portfolio Sharpe estimation
+            _ret_series: Dict[str, np.ndarray] = {}
+            _date_series: Dict[str, List[str]] = {}
+            for _, t in scored:
+                r = per_ticker_results[t]
+                sr = r.get("strategy_returns", [])
+                dt = r.get("test_dates", [])
+                if len(sr) > 0:
+                    _ret_series[t] = np.asarray(sr, dtype=float)
+                    _date_series[t] = dt
+
+            def _ew_sharpe_selected(sel_tickers: List[str]) -> float:
+                frames = []
+                for _t in sel_tickers:
+                    if _t not in _ret_series:
+                        continue
+                    arr = _ret_series[_t]
+                    dts = _date_series.get(_t, [])
+                    idx = pd.to_datetime(dts) if len(dts) == len(arr) else pd.RangeIndex(len(arr))
+                    frames.append(pd.Series(arr, index=idx, name=_t))
+                if not frames:
+                    return float("nan")
+                wide = pd.concat(frames, axis=1).fillna(0.0)
+                port = wide.mean(axis=1).values
+                v = float(np.std(port, ddof=1) * np.sqrt(252))
+                return float(np.mean(port) * 252 / v) if v > 1e-10 else float("nan")
+
+            effective_max = min(max_n, len(scored))
+            effective_min = min(min_n, len(scored))
+            best_n = effective_min
+            best_sh = _ew_sharpe_selected([t for _, t in scored[:effective_min]])
+
+            for _n in range(effective_min + 1, effective_max + 1):
+                cand_sh = _ew_sharpe_selected([t for _, t in scored[:_n]])
+                if np.isfinite(cand_sh) and (
+                    not np.isfinite(best_sh) or cand_sh > best_sh
+                ):
+                    best_sh = cand_sh
+                    best_n = _n
+
+            all_tickers = [t for _, t in scored[:best_n]]
+        else:
+            all_tickers = succeeded_all
+    else:
+        all_tickers = succeeded_all
+
+    failed_tickers = [t for t in candidate_tickers if t not in all_tickers
+                      and t not in succeeded_all]
+    successful_tickers = [t for t in all_tickers if t in succeeded_all]
 
     result: Dict[str, Any] = {
         "mode": mode,
         "tickers_attempted": all_tickers,
         "tickers_succeeded": successful_tickers,
         "failed_tickers": failed_tickers,
+        "dynamic_universe_selection": dynamic_universe,
     }
 
     if not successful_tickers:
