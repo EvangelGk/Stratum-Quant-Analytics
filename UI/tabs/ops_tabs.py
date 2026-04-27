@@ -135,6 +135,9 @@ def _render_pipeline_lineage() -> None:
     out_analysis = paths["output"] / "analysis_results.json"
     out_backtest = paths["output"] / "backtest_2020.json"
     out_audit = paths["output"] / "audit_report.json"
+    out_phase4 = paths["output"] / "phase4_validation.json"
+    out_phase5 = paths["output"] / "phase5_calibration.json"
+    out_universe = paths["output"] / "universe_pruning.json"
 
     rows = [
         _artifact_facts(raw_catalog),
@@ -143,6 +146,9 @@ def _render_pipeline_lineage() -> None:
         _artifact_facts(out_analysis),
         _artifact_facts(out_backtest),
         _artifact_facts(out_audit),
+        _artifact_facts(out_universe),
+        _artifact_facts(out_phase4),
+        _artifact_facts(out_phase5),
     ]
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 

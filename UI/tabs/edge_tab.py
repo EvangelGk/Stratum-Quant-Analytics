@@ -689,6 +689,241 @@ def _show_per_ticker_view(backtest: dict) -> None:
                 st.warning(f"Could not render equity curve: {e}")
 
 
+# ── Universe Pruning Panel ────────────────────────────────────────────────────
+
+def _show_universe_pruning_panel() -> None:
+    """Render dynamic universe selection results from universe_pruning.json."""
+    up_path = _paths()["output"] / "universe_pruning.json"
+    if not up_path.exists():
+        return
+
+    up = _read_json(up_path)
+    if not isinstance(up, dict):
+        return
+
+    with st.expander("🔬 Dynamic Universe Selection (OOS-Sharpe Pruning)", expanded=False):
+        keep = up.get("tickers_keep", [])
+        drop = up.get("tickers_drop", [])
+        full_sh = up.get("full_portfolio_sharpe")
+        pruned_sh = up.get("pruned_portfolio_sharpe")
+        thresholds = up.get("thresholds", {})
+        gen_at = up.get("generated_at", "")
+
+        st.markdown("#### Two-Stage Universe Selection")
+        st.caption(
+            "Tickers are selected by ranking OOS Sharpe on 2020–2024 data and removing "
+            "those below a minimum Sharpe floor or above the pairwise correlation threshold. "
+            "This step uses out-of-sample data only; selection bias is disclosed."
+        )
+        if gen_at:
+            st.caption(f"Last computed: {gen_at}")
+
+        # Summary metrics
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric(
+            "Full Portfolio Sharpe",
+            _fmt(full_sh),
+            help="EW Sharpe before pruning (all candidate tickers).",
+        )
+        sc2.metric(
+            "Pruned Portfolio Sharpe",
+            _fmt(pruned_sh),
+            delta=(
+                f"+{pruned_sh - full_sh:.4f}" if isinstance(pruned_sh, float) and isinstance(full_sh, float)
+                else None
+            ),
+            delta_color="normal",
+            help="EW Sharpe after removing low-quality / high-correlation tickers.",
+        )
+        sc3.metric("Tickers Kept", str(len(keep)))
+        sc4.metric("Tickers Dropped", str(len(drop)), delta_color="off")
+
+        if thresholds:
+            st.caption(
+                f"Selection thresholds — Sharpe floor: {thresholds.get('sharpe_floor', 'N/A')} | "
+                f"IC floor: {thresholds.get('ic_floor', 'N/A')} | "
+                f"Max pair corr: {thresholds.get('corr_threshold', 'N/A')}"
+            )
+
+        # Per-ticker table
+        per_ticker = up.get("per_ticker", [])
+        if per_ticker:
+            rows_pt = []
+            for item in per_ticker:
+                flags = item.get("flags", [])
+                rows_pt.append({
+                    "Ticker": item.get("ticker", "?"),
+                    "Decision": "✅ KEEP" if item.get("decision") == "KEEP" else "❌ DROP",
+                    "OOS Sharpe": _fmt(item.get("sharpe_oos")),
+                    "OOS Calmar": _fmt(item.get("calmar_oos")),
+                    "Mean IC (train)": _fmt(item.get("mean_ic_train")),
+                    "Avg Pair Corr": _fmt(item.get("avg_pair_corr")),
+                    "LOO Δ Sharpe": _fmt(item.get("loo_sharpe_delta")),
+                    "Flags": ", ".join(flags) if flags else "—",
+                })
+            rows_pt.sort(key=lambda r: (r["Decision"], r["OOS Sharpe"]), reverse=True)
+            st.dataframe(pd.DataFrame(rows_pt), use_container_width=True, hide_index=True)
+
+        if drop:
+            st.caption(f"Dropped tickers: `{'`, `'.join(drop)}`")
+
+
+# ── Phase 4 Re-Validation Panel ───────────────────────────────────────────────
+
+def _show_phase4_panel() -> None:
+    """Render Phase 4 honest re-validation results from phase4_validation.json."""
+    p4_path = _paths()["output"] / "phase4_validation.json"
+    p5_path = _paths()["output"] / "phase5_calibration.json"
+
+    if not p4_path.exists():
+        return  # silent: panel only appears after validation has been run
+
+    p4 = _read_json(p4_path)
+    if not isinstance(p4, dict) or p4.get("phase") != 4:
+        return
+
+    with st.expander("📐 Phase 4 Re-Validation & Calibration Results", expanded=False):
+        oos  = p4.get("oos_metrics", {})
+        bci  = p4.get("bootstrap_cis", {})
+        dsr  = p4.get("dsr", {})
+        hold = p4.get("holdout_metrics", {})
+        acc  = p4.get("acceptance", {})
+        tks  = p4.get("selected_tickers", [])
+        oos_win = p4.get("oos_window", {})
+
+        # ── header ────────────────────────────────────────────────────────────
+        st.markdown("#### Honest Re-Validation (Walk-Forward + True Holdout)")
+        st.caption(
+            f"Universe: **{', '.join(tks)}** — "
+            f"OOS: {oos_win.get('start', '?')} → {oos_win.get('end', '?')} — "
+            f"Holdout: {p4.get('holdout_window', {}).get('start', '2024')} → 2026"
+        )
+
+        all_pass = p4.get("all_pass", False)
+        if all_pass:
+            st.success("✅ All 6 acceptance criteria PASSED")
+        else:
+            n_pass = sum(1 for v in acc.values() if v)
+            st.warning(f"⚠️ {n_pass}/{len(acc)} criteria passed")
+
+        # ── OOS metrics row ───────────────────────────────────────────────────
+        st.markdown("**OOS 2020 – 2024 (N = {:,} days)**".format(oos.get("n_days", 0)))
+        c1, c2, c3, c4, c5 = st.columns(5)
+
+        sh = oos.get("sharpe")
+        sh_ci = bci.get("sharpe", {})
+        c1.metric(
+            "Sharpe",
+            _fmt(sh),
+            delta=f"CI [{_fmt(sh_ci.get('ci_lower'))}, {_fmt(sh_ci.get('ci_upper'))}]",
+            delta_color="normal" if (sh or 0) >= 0.6 else "inverse",
+            help="Annualised Sharpe ratio on out-of-sample window. Bootstrap 95% CI shown.",
+        )
+
+        cal = oos.get("calmar")
+        cal_ci = bci.get("calmar", {})
+        c2.metric(
+            "Calmar",
+            _fmt(cal),
+            delta=f"CI [{_fmt(cal_ci.get('ci_lower'))}, {_fmt(cal_ci.get('ci_upper'))}]",
+            delta_color="normal" if (cal or 0) >= 0.5 else "inverse",
+        )
+
+        pf_v = oos.get("profit_factor")
+        pf_ci = bci.get("profit_factor", {})
+        c3.metric(
+            "Profit Factor",
+            _fmt(pf_v),
+            delta=f"CI [{_fmt(pf_ci.get('ci_lower'))}, {_fmt(pf_ci.get('ci_upper'))}]",
+            delta_color="normal" if (pf_v or 0) >= 1.25 else "inverse",
+        )
+
+        c4.metric(
+            "Ann. Return",
+            _fmt_pct(oos.get("annualized_return", 0)),
+            delta=f"Max DD {_fmt_pct(oos.get('max_drawdown', 0))}",
+            delta_color="off",
+        )
+
+        dsr_p = dsr.get("p_value")
+        c5.metric(
+            "DSR p-value",
+            f"{dsr_p:.4f}" if isinstance(dsr_p, float) else "—",
+            delta=f"Trials: {dsr.get('n_trials', '?')}",
+            delta_color="normal" if (dsr_p or 0) >= 0.5 else "inverse",
+            help="Deflated Sharpe Ratio p-value (Bailey & López de Prado 2014). >0.5 = robust to multiple-testing bias.",
+        )
+
+        # ── Holdout row ───────────────────────────────────────────────────────
+        st.markdown("**True Holdout 2024 – 2026 (touched ONCE, N = {:,} days)**".format(hold.get("n_days", 0)))
+        h1, h2, h3, h4 = st.columns(4)
+
+        sh_ho = hold.get("sharpe")
+        h1.metric(
+            "Holdout Sharpe",
+            _fmt(sh_ho),
+            delta_color="normal" if (sh_ho or 0) >= 0.5 else "inverse",
+        )
+        cal_ho = hold.get("calmar")
+        h2.metric(
+            "Holdout Calmar",
+            _fmt(cal_ho),
+            delta_color="normal" if (cal_ho or 0) >= 0.5 else "inverse",
+        )
+        pf_ho = hold.get("profit_factor")
+        h3.metric(
+            "Holdout PF",
+            _fmt(pf_ho),
+            delta_color="normal" if (pf_ho or 0) >= 1.0 else "inverse",
+        )
+        deg = hold.get("degradation_pct")
+        h4.metric(
+            "OOS→Holdout Degradation",
+            f"{deg:.1f}%" if isinstance(deg, float) else "N/A",
+            delta="< 50% target" if isinstance(deg, float) and abs(deg) < 50 else "⚠️ > 50% target",
+            delta_color="normal" if isinstance(deg, float) and abs(deg) < 50 else "inverse",
+            help="How much the Sharpe declined from OOS to the true unseen holdout.",
+        )
+
+        # ── Criteria table ────────────────────────────────────────────────────
+        if acc:
+            rows_acc = [
+                {"Criterion": k, "Result": "✅ PASS" if v else "❌ FAIL"}
+                for k, v in acc.items()
+            ]
+            st.dataframe(pd.DataFrame(rows_acc), hide_index=True, use_container_width=True)
+
+        # ── Phase 5 calibration results (if available) ────────────────────────
+        if p5_path.exists():
+            p5 = _read_json(p5_path)
+            if isinstance(p5, dict) and p5.get("phase") == 5:
+                st.markdown("---")
+                st.markdown("#### Phase 5 Calibration Agent Results")
+                chosen = p5.get("chosen_config", {})
+                ho5 = p5.get("holdout_metrics", {})
+                st.caption(
+                    f"Optuna TPE — {p5.get('budget', '?')} trials — "
+                    f"Best OOS Sharpe: **{chosen.get('oos_sharpe', '?')}** "
+                    f"(trial #{chosen.get('trial', '?')})"
+                )
+                params = chosen.get("params", {})
+                if params:
+                    p5c1, p5c2, p5c3, p5c4, p5c5 = st.columns(5)
+                    p5c1.metric("Vol Target", f"{params.get('inv_vol_target', 0):.3f}")
+                    p5c2.metric("ATR Mult", f"{params.get('atr_multiplier', 0):.2f}")
+                    p5c3.metric("Max Hold", f"{params.get('max_hold_days', 0)}d")
+                    p5c4.metric("Vol Scale Cap", f"{params.get('vol_scale_cap', 0):.2f}")
+                    p5c5.metric("Tx Cost", f"{params.get('tx_cost', 0)*10000:.1f} bps")
+                if ho5.get("n_days", 0) > 0:
+                    st.markdown(
+                        f"**Calibrated Holdout (2024–2026, N={ho5['n_days']}d):** "
+                        f"Sharpe **{ho5.get('sharpe', 'N/A')}** | "
+                        f"Calmar **{ho5.get('calmar', 'N/A')}** | "
+                        f"PF **{ho5.get('profit_factor', 'N/A')}** | "
+                        f"Return **{_fmt_pct(ho5.get('ann_return', 0))}**"
+                    )
+
+
 def show_edge_arsenal_tab() -> None:
     _render_hero_style()
     st.markdown(
@@ -749,6 +984,9 @@ def show_edge_arsenal_tab() -> None:
         _artifact_row(lineage_user_data_dir / "gold" / "master_table.parquet", "Gold master"),
         _artifact_row(lineage_output_dir / "analysis_results.json", "Output summary"),
         _artifact_row(lineage_output_dir / "backtest_2020.json", "Backtest artifact"),
+        _artifact_row(lineage_output_dir / "universe_pruning.json", "Universe selection"),
+        _artifact_row(lineage_output_dir / "phase4_validation.json", "Phase 4 re-validation"),
+        _artifact_row(lineage_output_dir / "phase5_calibration.json", "Phase 5 calibration"),
     ]
     st.dataframe(pd.DataFrame(lineage_rows), width="stretch", hide_index=True)
 
@@ -1040,6 +1278,9 @@ def show_edge_arsenal_tab() -> None:
     # ── Portfolio composition + 21-day price forecasts ────────────────────────
     if _is_portfolio:
         _show_portfolio_composition(backtest)
+
+    # ── Dynamic Universe Selection (OOS-Sharpe pruning) ───────────────────────
+    _show_universe_pruning_panel()
 
     # ── Strategic Edge Quality Score ──────────────────────────────────────────
     # Calibrated for macro-factor regression strategies (FRED indicators, 45-day lag).
@@ -1361,6 +1602,9 @@ def show_edge_arsenal_tab() -> None:
     # ── Per-ticker backtest drilldown (portfolio mode only) ───────────────────
     if _is_portfolio:
         _show_per_ticker_view(backtest)
+
+    # ── Phase 4 Re-Validation Panel ───────────────────────────────────────────
+    _show_phase4_panel()
 
     # ── Quantos AI Insights ───────────────────────────────────────────────────
     from UI.tabs.assistant_tab import render_inline_ai_section
