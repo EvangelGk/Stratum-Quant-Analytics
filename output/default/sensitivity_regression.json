@@ -11,10 +11,10 @@
       "vix_index__sq": 0.0,
       "us10y_treasury_yield__x__vix_index": 0.0
     },
-    "intercept": 0.22465077710815676,
+    "intercept": 0.22478197235385,
     "r2": 0.0,
-    "cv_r2": -0.7780842675527645,
-    "n_obs": 2615,
+    "cv_r2": -0.7417895503073586,
+    "n_obs": 2616,
     "feature_importance": {
       "us10y_treasury_yield": 0.0,
       "vix_index": 0.0,
@@ -189,10 +189,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -114.85777097050227,
-        "15": -114.85777097050227,
-        "30": -114.85777097050227,
-        "45": -114.85777097050227
+        "0": -105.72648779763654,
+        "15": -105.72648779763654,
+        "30": -105.72648779763654,
+        "45": -105.72648779763654
       }
     },
     "feature_subset_search": {
@@ -202,14 +202,14 @@
         "us10y_treasury_yield",
         "vix_index"
       ],
-      "best_cv_r2": -0.8195190827399254,
+      "best_cv_r2": -0.7840445910767604,
       "top_subsets": [
         {
           "subset": [
             "us10y_treasury_yield",
             "vix_index"
           ],
-          "cv_r2": -0.8195190827399254,
+          "cv_r2": -0.7840445910767604,
           "n_features": 2
         },
         {
@@ -217,7 +217,7 @@
             "energy_index",
             "vix_index"
           ],
-          "cv_r2": -0.92585088625137,
+          "cv_r2": -0.8819365170289164,
           "n_features": 2
         },
         {
@@ -225,7 +225,7 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.057383976877958,
+          "cv_r2": -1.0050529919150828,
           "n_features": 2
         },
         {
@@ -234,7 +234,7 @@
             "industrial_production",
             "vix_index"
           ],
-          "cv_r2": -1.5182365608333765,
+          "cv_r2": -1.462706357754455,
           "n_features": 3
         },
         {
@@ -243,21 +243,21 @@
             "fed_funds_rate",
             "industrial_production"
           ],
-          "cv_r2": -1.7287279094090926,
+          "cv_r2": -1.654129773841548,
           "n_features": 3
         },
         {
           "subset": [
             "inflation_wb"
           ],
-          "cv_r2": -1.77710078638206,
+          "cv_r2": -1.7028101905257291,
           "n_features": 1
         },
         {
           "subset": [
             "energy_usage"
           ],
-          "cv_r2": -1.9563565223631894,
+          "cv_r2": -1.881631932447366,
           "n_features": 1
         },
         {
@@ -265,7 +265,7 @@
             "energy_usage",
             "us10y_treasury_yield"
           ],
-          "cv_r2": -1.9934418951878228,
+          "cv_r2": -1.91428477250482,
           "n_features": 2
         },
         {
@@ -275,7 +275,7 @@
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.3878074891343752,
+          "cv_r2": -2.303350099429607,
           "n_features": 4
         },
         {
@@ -284,7 +284,7 @@
             "trade_openness",
             "energy_index"
           ],
-          "cv_r2": -2.400627325082909,
+          "cv_r2": -2.332447493206272,
           "n_features": 3
         },
         {
@@ -294,7 +294,7 @@
             "energy_index",
             "vix_index"
           ],
-          "cv_r2": -2.4608550526645088,
+          "cv_r2": -2.3908031868790385,
           "n_features": 4
         },
         {
@@ -304,17 +304,8 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.6200409463857657,
+          "cv_r2": -2.520540915802928,
           "n_features": 4
-        },
-        {
-          "subset": [
-            "trade_openness",
-            "us10y_treasury_yield",
-            "inflation_wb"
-          ],
-          "cv_r2": -2.8547605721604215,
-          "n_features": 3
         },
         {
           "subset": [
@@ -323,14 +314,23 @@
             "fed_funds_rate",
             "inflation_wb"
           ],
-          "cv_r2": -2.9270520372764457,
+          "cv_r2": -2.5990283645279906,
           "n_features": 4
+        },
+        {
+          "subset": [
+            "trade_openness",
+            "us10y_treasury_yield",
+            "inflation_wb"
+          ],
+          "cv_r2": -2.8090619685826868,
+          "n_features": 3
         },
         {
           "subset": [
             "unemployment_wb"
           ],
-          "cv_r2": -4.42918484075835,
+          "cv_r2": -4.134199766209246,
           "n_features": 1
         }
       ]
@@ -338,7 +338,7 @@
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -0.7780842675527645,
+        "cv_r2": -0.7417895503073586,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -348,7 +348,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -0.7907602856672633,
+        "cv_r2": -0.7524417393841073,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -359,19 +359,19 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -1.3002238086573317,
+        "cv_r2": -1.2685136170599414,
         "tuning": {
           "method": "grid_search",
           "best_params": {
             "model__max_depth": 3,
-            "model__min_samples_leaf": 2,
+            "model__min_samples_leaf": 8,
             "model__n_estimators": 100
           }
         }
       },
       {
         "model": "Ridge",
-        "cv_r2": -1.3877964677721295,
+        "cv_r2": -1.3187266083727187,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -381,7 +381,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -1.4629955139802502,
+        "cv_r2": -1.3909172179915932,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -396,7 +396,7 @@
     },
     "data_inspection": {
       "missing_values_before": {
-        "rows_before_dropna": 2615,
+        "rows_before_dropna": 2616,
         "target_missing": 0,
         "feature_missing": {
           "us10y_treasury_yield": 0,
@@ -423,20 +423,20 @@
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 1.3370804823034925,
+      "max_vif": 1.3358109578949122,
       "vif": {
-        "us10y_treasury_yield": 1.1860608578181395,
-        "vix_index": 1.0898852560811587,
-        "us10y_treasury_yield__sq": 1.3370804823034925,
-        "vix_index__sq": 1.3070921852614144,
-        "us10y_treasury_yield__x__vix_index": 1.135063073470365
+        "us10y_treasury_yield": 1.186018760991253,
+        "vix_index": 1.0906044574197213,
+        "us10y_treasury_yield__sq": 1.3358109578949122,
+        "vix_index__sq": 1.307158115496761,
+        "us10y_treasury_yield__x__vix_index": 1.1350762097234275
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.1794689410946978
+      "mae_in_sample": 0.17953218146716188
     }
   }
 }
