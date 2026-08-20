@@ -6,318 +6,318 @@
     "publication_lag_days": 45,
     "best_incremental_lag_days": 54,
     "best_lag_days": 99,
-    "best_lag_correlation": -0.1059078191741815,
+    "best_lag_correlation": -0.10587896746480784,
     "reference_incremental_lag_days": 30,
     "reference_lag_days": 75,
-    "reference_lag_correlation": -0.0387566290203034,
+    "reference_lag_correlation": -0.03892461811443331,
     "lag_scan": [
       {
         "lag_days": 0,
         "effective_lag_days": 45,
-        "correlation": -0.07506792960329385
+        "correlation": -0.07508702810074004
       },
       {
         "lag_days": 1,
         "effective_lag_days": 46,
-        "correlation": -0.06961290697107789
+        "correlation": -0.06963636256149285
       },
       {
         "lag_days": 2,
         "effective_lag_days": 47,
-        "correlation": -0.06705777069358765
+        "correlation": -0.06708845374758095
       },
       {
         "lag_days": 3,
         "effective_lag_days": 48,
-        "correlation": -0.06441265767285702
+        "correlation": -0.06445064766192346
       },
       {
         "lag_days": 4,
         "effective_lag_days": 49,
-        "correlation": -0.061801238516032884
+        "correlation": -0.06184862464855519
       },
       {
         "lag_days": 5,
         "effective_lag_days": 50,
-        "correlation": -0.05896209278503468
+        "correlation": -0.05901902607734178
       },
       {
         "lag_days": 6,
         "effective_lag_days": 51,
-        "correlation": -0.05797985130778792
+        "correlation": -0.05804514733111027
       },
       {
         "lag_days": 7,
         "effective_lag_days": 52,
-        "correlation": -0.05570527642890114
+        "correlation": -0.05577982615602896
       },
       {
         "lag_days": 8,
         "effective_lag_days": 53,
-        "correlation": -0.05318353860383594
+        "correlation": -0.053267572352723384
       },
       {
         "lag_days": 9,
         "effective_lag_days": 54,
-        "correlation": -0.050605927362079396
+        "correlation": -0.05069943284143604
       },
       {
         "lag_days": 10,
         "effective_lag_days": 55,
-        "correlation": -0.04890726339431478
+        "correlation": -0.049007600614283046
       },
       {
         "lag_days": 11,
         "effective_lag_days": 56,
-        "correlation": -0.04738551802327713
+        "correlation": -0.04753269473263324
       },
       {
         "lag_days": 12,
         "effective_lag_days": 57,
-        "correlation": -0.04655400382922789
+        "correlation": -0.04670705853963019
       },
       {
         "lag_days": 13,
         "effective_lag_days": 58,
-        "correlation": -0.04399833832131479
+        "correlation": -0.044160835490170525
       },
       {
         "lag_days": 14,
         "effective_lag_days": 59,
-        "correlation": -0.04176334204699368
+        "correlation": -0.04193287444515624
       },
       {
         "lag_days": 15,
         "effective_lag_days": 60,
-        "correlation": -0.04002824244199317
+        "correlation": -0.04020498731971453
       },
       {
         "lag_days": 16,
         "effective_lag_days": 61,
-        "correlation": -0.039468770718448926
+        "correlation": -0.03965022076135431
       },
       {
         "lag_days": 17,
         "effective_lag_days": 62,
-        "correlation": -0.03993794310388533
+        "correlation": -0.04012379972210373
       },
       {
         "lag_days": 18,
         "effective_lag_days": 63,
-        "correlation": -0.041600852662543125
+        "correlation": -0.041788201748253054
       },
       {
         "lag_days": 19,
         "effective_lag_days": 64,
-        "correlation": -0.04490470028243659
+        "correlation": -0.04509203839681943
       },
       {
         "lag_days": 20,
         "effective_lag_days": 65,
-        "correlation": -0.04608824106903851
+        "correlation": -0.046271794977220275
       },
       {
         "lag_days": 21,
         "effective_lag_days": 66,
-        "correlation": -0.04590388301895182
+        "correlation": -0.04608786171864149
       },
       {
         "lag_days": 22,
         "effective_lag_days": 67,
-        "correlation": -0.044780453855979965
+        "correlation": -0.044966251471141395
       },
       {
         "lag_days": 23,
         "effective_lag_days": 68,
-        "correlation": -0.043205113530233194
+        "correlation": -0.04339428992902201
       },
       {
         "lag_days": 24,
         "effective_lag_days": 69,
-        "correlation": -0.04077656641036968
+        "correlation": -0.040970403754845806
       },
       {
         "lag_days": 25,
         "effective_lag_days": 70,
-        "correlation": -0.039463250425954194
+        "correlation": -0.039654282725062766
       },
       {
         "lag_days": 26,
         "effective_lag_days": 71,
-        "correlation": -0.03761937931925017
+        "correlation": -0.03780842902152513
       },
       {
         "lag_days": 27,
         "effective_lag_days": 72,
-        "correlation": -0.0349070351654472
+        "correlation": -0.03509539636891641
       },
       {
         "lag_days": 28,
         "effective_lag_days": 73,
-        "correlation": -0.03546629320461852
+        "correlation": -0.035648978284571704
       },
       {
         "lag_days": 29,
         "effective_lag_days": 74,
-        "correlation": -0.03663869429321705
+        "correlation": -0.03681472332379171
       },
       {
         "lag_days": 30,
         "effective_lag_days": 75,
-        "correlation": -0.0387566290203034
+        "correlation": -0.03892461811443331
       },
       {
         "lag_days": 31,
         "effective_lag_days": 76,
-        "correlation": -0.042862448450086854
+        "correlation": -0.04302538551443746
       },
       {
         "lag_days": 32,
         "effective_lag_days": 77,
-        "correlation": -0.047268211064898834
+        "correlation": -0.0472822066166388
       },
       {
         "lag_days": 33,
         "effective_lag_days": 78,
-        "correlation": -0.052616286715816446
+        "correlation": -0.052632295301281176
       },
       {
         "lag_days": 34,
         "effective_lag_days": 79,
-        "correlation": -0.05871138413811149
+        "correlation": -0.058727884679955975
       },
       {
         "lag_days": 35,
         "effective_lag_days": 80,
-        "correlation": -0.06355993110012097
+        "correlation": -0.0635787025357488
       },
       {
         "lag_days": 36,
         "effective_lag_days": 81,
-        "correlation": -0.07004484714071653
+        "correlation": -0.07006575937259327
       },
       {
         "lag_days": 37,
         "effective_lag_days": 82,
-        "correlation": -0.07470705850940831
+        "correlation": -0.07473023780483845
       },
       {
         "lag_days": 38,
         "effective_lag_days": 83,
-        "correlation": -0.07689645160031726
+        "correlation": -0.07692039329527567
       },
       {
         "lag_days": 39,
         "effective_lag_days": 84,
-        "correlation": -0.07824265583391107
+        "correlation": -0.07826914246280721
       },
       {
         "lag_days": 40,
         "effective_lag_days": 85,
-        "correlation": -0.08049865689832926
+        "correlation": -0.08052635853134642
       },
       {
         "lag_days": 41,
         "effective_lag_days": 86,
-        "correlation": -0.08469794204115601
+        "correlation": -0.08472577824366904
       },
       {
         "lag_days": 42,
         "effective_lag_days": 87,
-        "correlation": -0.08695762541371821
+        "correlation": -0.08698404476744627
       },
       {
         "lag_days": 43,
         "effective_lag_days": 88,
-        "correlation": -0.08918869912370173
+        "correlation": -0.08921369377431472
       },
       {
         "lag_days": 44,
         "effective_lag_days": 89,
-        "correlation": -0.09085685449737992
+        "correlation": -0.09088050204025537
       },
       {
         "lag_days": 45,
         "effective_lag_days": 90,
-        "correlation": -0.09346958854208745
+        "correlation": -0.09349182231456056
       },
       {
         "lag_days": 46,
         "effective_lag_days": 91,
-        "correlation": -0.09672491216096259
+        "correlation": -0.09674469137406995
       },
       {
         "lag_days": 47,
         "effective_lag_days": 92,
-        "correlation": -0.1005499113106717
+        "correlation": -0.10056718201917818
       },
       {
         "lag_days": 48,
         "effective_lag_days": 93,
-        "correlation": -0.1013460984162868
+        "correlation": -0.10136108381049402
       },
       {
         "lag_days": 49,
         "effective_lag_days": 94,
-        "correlation": -0.10211775960572668
+        "correlation": -0.10213047871727952
       },
       {
         "lag_days": 50,
         "effective_lag_days": 95,
-        "correlation": -0.10366250447158006
+        "correlation": -0.10367290345121599
       },
       {
         "lag_days": 51,
         "effective_lag_days": 96,
-        "correlation": -0.10402508110406605
+        "correlation": -0.10403325059268617
       },
       {
         "lag_days": 52,
         "effective_lag_days": 97,
-        "correlation": -0.10436988551384532
+        "correlation": -0.10437676850247869
       },
       {
         "lag_days": 53,
         "effective_lag_days": 98,
-        "correlation": -0.1053574951686367
+        "correlation": -0.1053306804836129
       },
       {
         "lag_days": 54,
         "effective_lag_days": 99,
-        "correlation": -0.1059078191741815
+        "correlation": -0.10587896746480784
       },
       {
         "lag_days": 55,
         "effective_lag_days": 100,
-        "correlation": -0.10499730235821338
+        "correlation": -0.1049672656986161
       },
       {
         "lag_days": 56,
         "effective_lag_days": 101,
-        "correlation": -0.103810466904606
+        "correlation": -0.10377839812805138
       },
       {
         "lag_days": 57,
         "effective_lag_days": 102,
-        "correlation": -0.10247602608725662
+        "correlation": -0.10244193261997314
       },
       {
         "lag_days": 58,
         "effective_lag_days": 103,
-        "correlation": -0.10144056997076215
+        "correlation": -0.10140443362401816
       },
       {
         "lag_days": 59,
         "effective_lag_days": 104,
-        "correlation": -0.09986712981506153
+        "correlation": -0.0998298491969693
       },
       {
         "lag_days": 60,
         "effective_lag_days": 105,
-        "correlation": -0.09620860493930618
+        "correlation": -0.09617068303253336
       }
     ],
-    "data_points": 3070,
+    "data_points": 3071,
     "transformations": {
       "inflation": {
         "source": "fred",
