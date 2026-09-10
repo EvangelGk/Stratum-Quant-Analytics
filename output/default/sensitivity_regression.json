@@ -6,21 +6,21 @@
     "target_horizon_days": 252,
     "coefficients": {
       "energy_index": 0.0,
-      "vix_index": 0.0,
+      "close": 0.0,
       "energy_index__sq": 0.0,
-      "vix_index__sq": 0.0,
-      "energy_index__x__vix_index": 0.0
+      "close__sq": 0.0,
+      "energy_index__x__close": 0.0
     },
-    "intercept": 0.22580560019710802,
+    "intercept": 0.22583674670131657,
     "r2": 0.0,
-    "cv_r2": -0.8466264787143484,
-    "n_obs": 2640,
+    "cv_r2": -0.8615974439710368,
+    "n_obs": 2641,
     "feature_importance": {
       "energy_index": 0.0,
-      "vix_index": 0.0,
+      "close": 0.0,
       "energy_index__sq": 0.0,
-      "vix_index__sq": 0.0,
-      "energy_index__x__vix_index": 0.0
+      "close__sq": 0.0,
+      "energy_index__x__close": 0.0
     },
     "source_importance": [
       {
@@ -189,10 +189,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -142.5750683227164,
-        "15": -142.5750683227164,
-        "30": -142.5750683227164,
-        "45": -142.5750683227164
+        "0": -147.17400080382555,
+        "15": -147.17400080382555,
+        "30": -147.17400080382555,
+        "45": -147.17400080382555
       }
     },
     "feature_subset_search": {
@@ -200,24 +200,16 @@
       "evaluated_subsets": 76,
       "selected_subset": [
         "energy_index",
-        "vix_index"
+        "close"
       ],
-      "best_cv_r2": -0.9574539411968603,
+      "best_cv_r2": -0.971604206145108,
       "top_subsets": [
         {
           "subset": [
             "energy_index",
-            "vix_index"
+            "close"
           ],
-          "cv_r2": -0.9574539411968603,
-          "n_features": 2
-        },
-        {
-          "subset": [
-            "us10y_treasury_yield",
-            "vix_index"
-          ],
-          "cv_r2": -1.0243164626909502,
+          "cv_r2": -0.971604206145108,
           "n_features": 2
         },
         {
@@ -225,23 +217,23 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.2267651479567436,
+          "cv_r2": -1.251807860543919,
           "n_features": 2
         },
         {
           "subset": [
             "fed_funds_rate",
             "industrial_production",
-            "vix_index"
+            "close"
           ],
-          "cv_r2": -1.5798813322107679,
+          "cv_r2": -1.4490489431591826,
           "n_features": 3
         },
         {
           "subset": [
             "inflation_wb"
           ],
-          "cv_r2": -1.9228620027417374,
+          "cv_r2": -1.9522492971615466,
           "n_features": 1
         },
         {
@@ -250,52 +242,78 @@
             "fed_funds_rate",
             "industrial_production"
           ],
-          "cv_r2": -1.9283438542045324,
+          "cv_r2": -1.9707895671874263,
           "n_features": 3
         },
         {
           "subset": [
-            "energy_usage"
+            "trade_openness",
+            "close"
           ],
-          "cv_r2": -2.171965289014361,
-          "n_features": 1
-        },
-        {
-          "subset": [
-            "energy_usage",
-            "us10y_treasury_yield"
-          ],
-          "cv_r2": -2.3697603978819504,
+          "cv_r2": -2.039732241100231,
           "n_features": 2
         },
         {
           "subset": [
             "fed_funds_rate",
-            "trade_openness",
+            "us10y_treasury_yield",
             "energy_index"
           ],
-          "cv_r2": -2.4884697387030896,
+          "cv_r2": -2.1077348796850313,
           "n_features": 3
         },
         {
           "subset": [
             "fed_funds_rate",
-            "trade_openness",
+            "us10y_treasury_yield",
             "energy_index",
-            "vix_index"
+            "close"
           ],
-          "cv_r2": -2.490313057104734,
+          "cv_r2": -2.109609330414273,
           "n_features": 4
         },
         {
           "subset": [
+            "energy_usage"
+          ],
+          "cv_r2": -2.210084013226816,
+          "n_features": 1
+        },
+        {
+          "subset": [
+            "unemployment_wb",
             "inflation",
-            "fed_funds_rate",
+            "energy_usage",
+            "us10y_treasury_yield",
+            "close"
+          ],
+          "cv_r2": -2.594092730619667,
+          "n_features": 5
+        },
+        {
+          "subset": [
+            "unemployment_wb",
+            "trade_openness"
+          ],
+          "cv_r2": -2.8937101754139394,
+          "n_features": 2
+        },
+        {
+          "subset": [
+            "energy_usage",
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.718985377471909,
-          "n_features": 4
+          "cv_r2": -2.9183957919133285,
+          "n_features": 3
+        },
+        {
+          "subset": [
+            "energy_usage",
+            "trade_openness"
+          ],
+          "cv_r2": -2.982263011975894,
+          "n_features": 2
         },
         {
           "subset": [
@@ -304,44 +322,24 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -3.121733927778311,
+          "cv_r2": -3.181725881169541,
           "n_features": 4
         },
         {
           "subset": [
+            "us10y_treasury_yield",
             "trade_openness",
-            "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -3.198521279588717,
+          "cv_r2": -3.2269449691700935,
           "n_features": 3
-        },
-        {
-          "subset": [
-            "gdp_growth",
-            "inflation",
-            "fed_funds_rate",
-            "inflation_wb"
-          ],
-          "cv_r2": -3.661535245002981,
-          "n_features": 4
-        },
-        {
-          "subset": [
-            "fed_funds_rate",
-            "us10y_treasury_yield",
-            "unemployment_rate",
-            "industrial_production"
-          ],
-          "cv_r2": -5.311615051773029,
-          "n_features": 4
         }
       ]
     },
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -0.8466264787143484,
+        "cv_r2": -0.8615974439710368,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -351,7 +349,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -0.8466264787143484,
+        "cv_r2": -0.8615974439710368,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -362,7 +360,7 @@
       },
       {
         "model": "Ridge",
-        "cv_r2": -1.2195373245966432,
+        "cv_r2": -1.0702109841560907,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -372,7 +370,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -1.277618401373466,
+        "cv_r2": -1.0750907573064539,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -380,7 +378,7 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -1.8745966436313282,
+        "cv_r2": -1.298365115386554,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -399,18 +397,18 @@
     },
     "data_inspection": {
       "missing_values_before": {
-        "rows_before_dropna": 2640,
+        "rows_before_dropna": 2641,
         "target_missing": 0,
         "feature_missing": {
           "energy_index": 0,
-          "vix_index": 0
+          "close": 0
         }
       },
       "missing_values_after": {
         "target_missing": 0,
         "feature_missing_after_impute": 0
       },
-      "outliers_winsorized": 82
+      "outliers_winsorized": 96
     },
     "feature_engineering": {
       "base_factor_count": 2,
@@ -418,28 +416,28 @@
       "retained_feature_count": 5,
       "retained_features": [
         "energy_index",
-        "vix_index",
+        "close",
         "energy_index__sq",
-        "vix_index__sq",
-        "energy_index__x__vix_index"
+        "close__sq",
+        "energy_index__x__close"
       ]
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 1.5669957879163252,
+      "max_vif": 1.1116786932581817,
       "vif": {
-        "energy_index": 1.1619631124964447,
-        "vix_index": 1.2682140714784282,
-        "energy_index__sq": 1.1724987260160962,
-        "vix_index__sq": 1.5669957879163252,
-        "energy_index__x__vix_index": 1.413211387078506
+        "energy_index": 1.1116786932581817,
+        "close": 1.0257799169928106,
+        "energy_index__sq": 1.1064960577623917,
+        "close__sq": 1.0148737984641047,
+        "energy_index__x__close": 1.0420453832580014
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.17892143531459695
+      "mae_in_sample": 0.17888486726178343
     }
   }
 }
