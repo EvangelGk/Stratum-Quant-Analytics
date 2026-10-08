@@ -6,7 +6,7 @@
     "regime": "normal",
     "severity": "warn",
     "reasons": [
-      "r2_metric_alert_walk_forward_below_threshold:-1.5204<-0.2500",
+      "r2_metric_alert_walk_forward_below_threshold:-1.5866<-0.2500",
       "stationarity_ratio_below_threshold:0.0500<0.4000"
     ],
     "stationarity_context": {
@@ -22,9 +22,9 @@
       "applied_min_walk_forward_r2": -0.25,
       "base_min_walk_forward_r2": -0.25,
       "metric_unstable": false,
-      "trend_directional_accuracy": 0.2184557438794727,
-      "volatility_r2": -3.435019237256454,
-      "volatility_ratio": 0.49923220534587354,
+      "trend_directional_accuracy": 0.15413533834586465,
+      "volatility_r2": -3.320444530657565,
+      "volatility_ratio": 0.4957316932601153,
       "trend_volatility_acceptable": false
     },
     "factor_concentration_context": {
@@ -41,7 +41,7 @@
     "metric_only_signals": {
       "r2_used_as_validation_gate": false,
       "advisory_reasons": [
-        "r2_metric_alert_walk_forward_below_threshold:-1.5204<-0.2500"
+        "r2_metric_alert_walk_forward_below_threshold:-1.5866<-0.2500"
       ]
     }
   }
