@@ -11,9 +11,9 @@
       "close__sq": 0.0,
       "energy_index__x__close": 0.0
     },
-    "intercept": 0.22698678139228917,
+    "intercept": 0.22698677962987096,
     "r2": 0.0,
-    "cv_r2": -1.0425686771721838,
+    "cv_r2": -1.042568798404234,
     "n_obs": 2673,
     "feature_importance": {
       "energy_index": 0.0,
@@ -189,10 +189,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -173.4181362910595,
-        "15": -173.4181362910595,
-        "30": -173.4181362910595,
-        "45": -173.4181362910595
+        "0": -173.41832056256195,
+        "15": -173.41832056256195,
+        "30": -173.41832056256195,
+        "45": -173.41832056256195
       }
     },
     "feature_subset_search": {
@@ -202,21 +202,21 @@
         "energy_index",
         "close"
       ],
-      "best_cv_r2": -1.192040306729464,
+      "best_cv_r2": -1.192040464507385,
       "top_subsets": [
         {
           "subset": [
             "energy_index",
             "close"
           ],
-          "cv_r2": -1.192040306729464,
+          "cv_r2": -1.192040464507385,
           "n_features": 2
         },
         {
           "subset": [
             "inflation"
           ],
-          "cv_r2": -1.331002879684133,
+          "cv_r2": -1.3310030720429846,
           "n_features": 1
         },
         {
@@ -224,7 +224,7 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.6034399315163366,
+          "cv_r2": -1.603440166716004,
           "n_features": 2
         },
         {
@@ -233,14 +233,14 @@
             "industrial_production",
             "close"
           ],
-          "cv_r2": -1.845074717073811,
+          "cv_r2": -1.8450753083599392,
           "n_features": 3
         },
         {
           "subset": [
             "inflation_wb"
           ],
-          "cv_r2": -2.2099639859470868,
+          "cv_r2": -2.2099641773429157,
           "n_features": 1
         },
         {
@@ -249,7 +249,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.3551362081154026,
+          "cv_r2": -2.355136317172133,
           "n_features": 3
         },
         {
@@ -257,7 +257,7 @@
             "trade_openness",
             "close"
           ],
-          "cv_r2": -2.4706100370070536,
+          "cv_r2": -2.470610419200617,
           "n_features": 2
         },
         {
@@ -267,7 +267,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.5819431495216696,
+          "cv_r2": -2.581942973457372,
           "n_features": 4
         },
         {
@@ -277,7 +277,7 @@
             "unemployment_rate",
             "close"
           ],
-          "cv_r2": -2.6666413586290894,
+          "cv_r2": -2.666641927051174,
           "n_features": 4
         },
         {
@@ -286,7 +286,7 @@
             "us10y_treasury_yield",
             "trade_openness"
           ],
-          "cv_r2": -2.7782555695895064,
+          "cv_r2": -2.7782559856929074,
           "n_features": 3
         },
         {
@@ -296,7 +296,7 @@
             "trade_openness",
             "close"
           ],
-          "cv_r2": -2.778920860051399,
+          "cv_r2": -2.7789212807527455,
           "n_features": 4
         },
         {
@@ -305,7 +305,7 @@
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.912407983142314,
+          "cv_r2": -2.9124081149256003,
           "n_features": 3
         },
         {
@@ -318,7 +318,7 @@
             "inflation_wb",
             "close"
           ],
-          "cv_r2": -2.916146588244119,
+          "cv_r2": -2.9161471705865614,
           "n_features": 7
         },
         {
@@ -329,7 +329,7 @@
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.9504928194815845,
+          "cv_r2": -2.950492761961163,
           "n_features": 5
         },
         {
@@ -338,7 +338,7 @@
             "fed_funds_rate",
             "industrial_production"
           ],
-          "cv_r2": -3.000589089625309,
+          "cv_r2": -3.000589435188175,
           "n_features": 3
         }
       ]
@@ -346,7 +346,7 @@
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -1.0425686771721838,
+        "cv_r2": -1.042568798404234,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -356,7 +356,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -1.0425686771721838,
+        "cv_r2": -1.042568798404234,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -367,7 +367,7 @@
       },
       {
         "model": "Ridge",
-        "cv_r2": -1.2737297465107378,
+        "cv_r2": -1.2737299777151148,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -377,7 +377,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -1.2776341985295432,
+        "cv_r2": -1.2776344316701584,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -385,7 +385,7 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -1.5941226857100468,
+        "cv_r2": -1.5951573638332674,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -431,20 +431,20 @@
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 1.1109798048925912,
+      "max_vif": 1.110979888547164,
       "vif": {
-        "energy_index": 1.1109798048925912,
-        "close": 1.0267448010590412,
-        "energy_index__sq": 1.105744855182883,
-        "close__sq": 1.0144400626455592,
-        "energy_index__x__close": 1.0432990343617987
+        "energy_index": 1.110979888547164,
+        "close": 1.0267450010211494,
+        "energy_index__sq": 1.1057448922252495,
+        "close__sq": 1.0144403214110471,
+        "energy_index__x__close": 1.0432991330728132
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.17788157529161666
+      "mae_in_sample": 0.17788157635144458
     }
   }
 }
