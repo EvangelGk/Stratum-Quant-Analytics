@@ -11,9 +11,9 @@
       "vix_index__sq": 0.0,
       "energy_index__x__vix_index": 0.0
     },
-    "intercept": 0.2270063688497078,
+    "intercept": 0.2270063685282537,
     "r2": 0.0,
-    "cv_r2": -1.0647168397870197,
+    "cv_r2": -1.0647169577626088,
     "n_obs": 2678,
     "feature_importance": {
       "energy_index": 0.0,
@@ -189,10 +189,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -181.8328943861055,
-        "15": -181.8328943861055,
-        "30": -181.8328943861055,
-        "45": -181.8328943861055
+        "0": -181.83286779025033,
+        "15": -181.83286779025033,
+        "30": -181.83286779025033,
+        "45": -181.83286779025033
       }
     },
     "feature_subset_search": {
@@ -202,21 +202,21 @@
         "energy_index",
         "vix_index"
       ],
-      "best_cv_r2": -1.2698005623738076,
+      "best_cv_r2": -1.2698006716386938,
       "top_subsets": [
         {
           "subset": [
             "energy_index",
             "vix_index"
           ],
-          "cv_r2": -1.2698005623738076,
+          "cv_r2": -1.2698006716386938,
           "n_features": 2
         },
         {
           "subset": [
             "inflation"
           ],
-          "cv_r2": -1.361624019599025,
+          "cv_r2": -1.3616240893627711,
           "n_features": 1
         },
         {
@@ -224,14 +224,14 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.6508948398493222,
+          "cv_r2": -1.650894874016604,
           "n_features": 2
         },
         {
           "subset": [
             "inflation_wb"
           ],
-          "cv_r2": -2.2376303061763996,
+          "cv_r2": -2.2376306019285392,
           "n_features": 1
         },
         {
@@ -240,7 +240,7 @@
             "industrial_production",
             "vix_index"
           ],
-          "cv_r2": -2.2411933156579846,
+          "cv_r2": -2.2411933892593314,
           "n_features": 3
         },
         {
@@ -249,7 +249,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.3257850736339947,
+          "cv_r2": -2.3257853803011512,
           "n_features": 3
         },
         {
@@ -262,7 +262,7 @@
             "industrial_production",
             "vix_index"
           ],
-          "cv_r2": -2.5648344738353037,
+          "cv_r2": -2.564828860056621,
           "n_features": 7
         },
         {
@@ -270,7 +270,7 @@
             "trade_openness",
             "vix_index"
           ],
-          "cv_r2": -2.578196835283945,
+          "cv_r2": -2.578196883069761,
           "n_features": 2
         },
         {
@@ -280,7 +280,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.604279607863989,
+          "cv_r2": -2.604279874123974,
           "n_features": 4
         },
         {
@@ -294,7 +294,7 @@
             "industrial_production",
             "vix_index"
           ],
-          "cv_r2": -2.7415057233576436,
+          "cv_r2": -2.7414996343695686,
           "n_features": 8
         },
         {
@@ -303,7 +303,7 @@
             "us10y_treasury_yield",
             "trade_openness"
           ],
-          "cv_r2": -2.7542775671548134,
+          "cv_r2": -2.7542775943900084,
           "n_features": 3
         },
         {
@@ -312,7 +312,7 @@
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.7788347063940457,
+          "cv_r2": -2.778835010863424,
           "n_features": 3
         },
         {
@@ -323,7 +323,7 @@
             "us10y_treasury_yield",
             "inflation_wb"
           ],
-          "cv_r2": -2.8762139635662978,
+          "cv_r2": -2.8762141167848254,
           "n_features": 5
         },
         {
@@ -333,7 +333,7 @@
             "trade_openness",
             "vix_index"
           ],
-          "cv_r2": -2.9096087257320398,
+          "cv_r2": -2.909608856818785,
           "n_features": 4
         },
         {
@@ -346,7 +346,7 @@
             "inflation_wb",
             "vix_index"
           ],
-          "cv_r2": -2.967078099288458,
+          "cv_r2": -2.967078855620755,
           "n_features": 7
         }
       ]
@@ -354,7 +354,7 @@
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -1.0647168397870197,
+        "cv_r2": -1.0647169577626088,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -364,7 +364,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -1.0647168397870197,
+        "cv_r2": -1.0647169577626088,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -375,7 +375,7 @@
       },
       {
         "model": "Ridge",
-        "cv_r2": -1.5051514044186978,
+        "cv_r2": -1.5051516551919288,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -385,7 +385,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -1.568225457501051,
+        "cv_r2": -1.5682257568379643,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -393,7 +393,7 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -2.095179932448418,
+        "cv_r2": -2.0999314673436302,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -439,20 +439,20 @@
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 1.5621509019223845,
+      "max_vif": 1.5621509019223854,
       "vif": {
-        "energy_index": 1.1702531574436845,
-        "vix_index": 1.2745142675242795,
-        "energy_index__sq": 1.1774415874550932,
-        "vix_index__sq": 1.5621509019223845,
-        "energy_index__x__vix_index": 1.4573329186793313
+        "energy_index": 1.1702531574436854,
+        "vix_index": 1.2745142675242807,
+        "energy_index__sq": 1.1774415874550928,
+        "vix_index__sq": 1.5621509019223854,
+        "energy_index__x__vix_index": 1.4573329186793307
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.17759157710257711
+      "mae_in_sample": 0.17759157622626723
     }
   }
 }
