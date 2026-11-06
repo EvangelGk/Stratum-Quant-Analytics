@@ -6,7 +6,8 @@
     "regime": "normal",
     "severity": "warn",
     "reasons": [
-      "r2_metric_alert_walk_forward_below_threshold:-1.5382<-0.2500",
+      "r2_metric_alert_walk_forward_below_threshold_but_ci_upper_clears:-1.9255<-0.2500;ci_upper=0.1834",
+      "factor_concentration_alert_top_share_above_threshold:0.7930>0.6500",
       "stationarity_ratio_below_threshold:0.0500<0.4000"
     ],
     "stationarity_context": {
@@ -22,14 +23,14 @@
       "applied_min_walk_forward_r2": -0.25,
       "base_min_walk_forward_r2": -0.25,
       "metric_unstable": false,
-      "trend_directional_accuracy": 0.5746268656716418,
-      "volatility_r2": -2.2162313826302,
-      "volatility_ratio": 0.6639325631279457,
-      "trend_volatility_acceptable": true
+      "trend_directional_accuracy": 0.5111940298507462,
+      "volatility_r2": -1.7457777844854463,
+      "volatility_ratio": 0.2414726278829377,
+      "trend_volatility_acceptable": false
     },
     "factor_concentration_context": {
-      "top_factor": null,
-      "top_share": 0.0,
+      "top_factor": "trade_openness",
+      "top_share": 0.7930468704842126,
       "warn_threshold": 0.65
     },
     "freshness_context": {
@@ -41,7 +42,8 @@
     "metric_only_signals": {
       "r2_used_as_validation_gate": false,
       "advisory_reasons": [
-        "r2_metric_alert_walk_forward_below_threshold:-1.5382<-0.2500"
+        "r2_metric_alert_walk_forward_below_threshold_but_ci_upper_clears:-1.9255<-0.2500;ci_upper=0.1834",
+        "factor_concentration_alert_top_share_above_threshold:0.7930>0.6500"
       ]
     }
   }
