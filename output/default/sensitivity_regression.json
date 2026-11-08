@@ -11,9 +11,9 @@
       "vix_index__sq": 0.0,
       "energy_index__x__vix_index": 0.0
     },
-    "intercept": 0.22705793924926806,
+    "intercept": 0.22705794012749728,
     "r2": 0.0,
-    "cv_r2": -1.0890852973522551,
+    "cv_r2": -1.0890851711678255,
     "n_obs": 2683,
     "feature_importance": {
       "energy_index": 0.0,
@@ -189,10 +189,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -188.77232622581522,
-        "15": -188.77232622581522,
-        "30": -188.77232622581522,
-        "45": -188.77232622581522
+        "0": -188.77212916991033,
+        "15": -188.77212916991033,
+        "30": -188.77212916991033,
+        "45": -188.77212916991033
       }
     },
     "feature_subset_search": {
@@ -202,28 +202,28 @@
         "energy_index",
         "vix_index"
       ],
-      "best_cv_r2": -1.2962785563263228,
+      "best_cv_r2": -1.2962783904463522,
       "top_subsets": [
         {
           "subset": [
             "energy_index",
             "vix_index"
           ],
-          "cv_r2": -1.2962785563263228,
+          "cv_r2": -1.2962783904463522,
           "n_features": 2
         },
         {
           "subset": [
             "inflation"
           ],
-          "cv_r2": -1.3849817159891926,
+          "cv_r2": -1.3849815741293756,
           "n_features": 1
         },
         {
           "subset": [
             "unemployment_rate"
           ],
-          "cv_r2": -1.3978577143357525,
+          "cv_r2": -1.39785737569125,
           "n_features": 1
         },
         {
@@ -231,7 +231,7 @@
             "energy_index",
             "unemployment_rate"
           ],
-          "cv_r2": -1.4849496852472945,
+          "cv_r2": -1.4849493033817456,
           "n_features": 2
         },
         {
@@ -239,7 +239,7 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.6731435719114889,
+          "cv_r2": -1.6731434537590075,
           "n_features": 2
         },
         {
@@ -247,7 +247,7 @@
             "inflation",
             "unemployment_rate"
           ],
-          "cv_r2": -1.7964368823445191,
+          "cv_r2": -1.7964364810626265,
           "n_features": 2
         },
         {
@@ -258,14 +258,14 @@
             "inflation_wb",
             "vix_index"
           ],
-          "cv_r2": -2.1105253167213207,
+          "cv_r2": -2.1105255246429273,
           "n_features": 5
         },
         {
           "subset": [
             "inflation_wb"
           ],
-          "cv_r2": -2.2696278642817846,
+          "cv_r2": -2.2696277275353176,
           "n_features": 1
         },
         {
@@ -274,7 +274,7 @@
             "industrial_production",
             "vix_index"
           ],
-          "cv_r2": -2.28753254948037,
+          "cv_r2": -2.28753196690036,
           "n_features": 3
         },
         {
@@ -283,7 +283,7 @@
             "unemployment_rate",
             "inflation_wb"
           ],
-          "cv_r2": -2.352686251837149,
+          "cv_r2": -2.3526859238180307,
           "n_features": 3
         },
         {
@@ -292,7 +292,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.3670250932976105,
+          "cv_r2": -2.3670249090487148,
           "n_features": 3
         },
         {
@@ -302,7 +302,7 @@
             "unemployment_rate",
             "vix_index"
           ],
-          "cv_r2": -2.4061454573921273,
+          "cv_r2": -2.4061447428211276,
           "n_features": 4
         },
         {
@@ -311,7 +311,7 @@
             "unemployment_rate",
             "inflation_wb"
           ],
-          "cv_r2": -2.4062997557141235,
+          "cv_r2": -2.406300006077097,
           "n_features": 3
         },
         {
@@ -319,7 +319,7 @@
             "trade_openness",
             "vix_index"
           ],
-          "cv_r2": -2.625322041605955,
+          "cv_r2": -2.625321731454048,
           "n_features": 2
         },
         {
@@ -329,7 +329,7 @@
             "energy_index",
             "inflation_wb"
           ],
-          "cv_r2": -2.647603573413201,
+          "cv_r2": -2.647603950102191,
           "n_features": 4
         }
       ]
@@ -337,7 +337,7 @@
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -1.0890852973522551,
+        "cv_r2": -1.0890851711678255,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -347,7 +347,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -1.0890852973522551,
+        "cv_r2": -1.0890851711678255,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -358,7 +358,7 @@
       },
       {
         "model": "Ridge",
-        "cv_r2": -1.5271486161591001,
+        "cv_r2": -1.5271484019986399,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -368,7 +368,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -1.5902418395935622,
+        "cv_r2": -1.5902416275011308,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -376,7 +376,7 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -2.094777237058069,
+        "cv_r2": -2.1084221563510295,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -422,12 +422,12 @@
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 1.566762187503895,
+      "max_vif": 1.5667621875038946,
       "vif": {
-        "energy_index": 1.173057291095735,
-        "vix_index": 1.2800389804756915,
-        "energy_index__sq": 1.1796090144107805,
-        "vix_index__sq": 1.566762187503895,
+        "energy_index": 1.1730572910957344,
+        "vix_index": 1.2800389804756924,
+        "energy_index__sq": 1.179609014410781,
+        "vix_index__sq": 1.5667621875038946,
         "energy_index__x__vix_index": 1.4683233349866045
       }
     },
@@ -435,7 +435,7 @@
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.1773338680355117
+      "mae_in_sample": 0.17733385907428834
     }
   }
 }
