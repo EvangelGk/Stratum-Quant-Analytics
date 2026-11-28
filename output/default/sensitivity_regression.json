@@ -8,10 +8,10 @@
       "industrial_production": 0.0,
       "industrial_production__sq": 0.0
     },
-    "intercept": 0.22720719642037052,
+    "intercept": 0.22721286721818443,
     "r2": 0.0,
-    "cv_r2": -1.2176248668087217,
-    "n_obs": 2696,
+    "cv_r2": -1.2450988546539405,
+    "n_obs": 2697,
     "feature_importance": {
       "industrial_production": 0.0,
       "industrial_production__sq": 0.0
@@ -183,10 +183,10 @@
     "lag_selection": {
       "selected_macro_lag_days": 0,
       "candidate_cv_r2": {
-        "0": -226.70659568746072,
-        "15": -226.70659568746072,
-        "30": -226.70659568746072,
-        "45": -226.70659568746072
+        "0": -234.44191599421652,
+        "15": -234.44191599421652,
+        "30": -234.44191599421652,
+        "45": -234.44191599421652
       }
     },
     "feature_subset_search": {
@@ -195,35 +195,35 @@
       "selected_subset": [
         "industrial_production"
       ],
-      "best_cv_r2": -1.361992569042277,
+      "best_cv_r2": -1.3924786710581596,
       "top_subsets": [
         {
           "subset": [
             "industrial_production"
           ],
-          "cv_r2": -1.361992569042277,
+          "cv_r2": -1.3924786710581596,
           "n_features": 1
         },
         {
           "subset": [
             "energy_index",
-            "close"
+            "vix_index"
           ],
-          "cv_r2": -1.3957768142906575,
+          "cv_r2": -1.469318568997402,
           "n_features": 2
         },
         {
           "subset": [
             "inflation"
           ],
-          "cv_r2": -1.5158894612109068,
+          "cv_r2": -1.5445975697910552,
           "n_features": 1
         },
         {
           "subset": [
             "unemployment_rate"
           ],
-          "cv_r2": -1.5838301677896716,
+          "cv_r2": -1.6556519041421436,
           "n_features": 1
         },
         {
@@ -231,7 +231,7 @@
             "energy_index",
             "unemployment_rate"
           ],
-          "cv_r2": -1.607483647927656,
+          "cv_r2": -1.6695105566928645,
           "n_features": 2
         },
         {
@@ -240,7 +240,7 @@
             "energy_index",
             "industrial_production"
           ],
-          "cv_r2": -1.7505100034386385,
+          "cv_r2": -1.7869398221302337,
           "n_features": 3
         },
         {
@@ -248,7 +248,7 @@
             "inflation",
             "energy_index"
           ],
-          "cv_r2": -1.8073181048528055,
+          "cv_r2": -1.8375126234152663,
           "n_features": 2
         },
         {
@@ -257,7 +257,7 @@
             "unemployment_rate",
             "industrial_production"
           ],
-          "cv_r2": -1.8398497688344473,
+          "cv_r2": -1.8987692825324558,
           "n_features": 3
         },
         {
@@ -265,7 +265,7 @@
             "inflation",
             "unemployment_rate"
           ],
-          "cv_r2": -1.9360489162533916,
+          "cv_r2": -2.004926321511536,
           "n_features": 2
         },
         {
@@ -274,27 +274,17 @@
             "us10y_treasury_yield",
             "industrial_production"
           ],
-          "cv_r2": -2.072680733986474,
+          "cv_r2": -2.117418274939962,
           "n_features": 3
         },
         {
           "subset": [
             "fed_funds_rate",
             "inflation_wb",
-            "close"
+            "vix_index"
           ],
-          "cv_r2": -2.4292312617685736,
+          "cv_r2": -2.548399073536886,
           "n_features": 3
-        },
-        {
-          "subset": [
-            "fed_funds_rate",
-            "us10y_treasury_yield",
-            "unemployment_rate",
-            "close"
-          ],
-          "cv_r2": -2.444740693580541,
-          "n_features": 4
         },
         {
           "subset": [
@@ -303,7 +293,7 @@
             "unemployment_rate",
             "inflation_wb"
           ],
-          "cv_r2": -2.6705784156229204,
+          "cv_r2": -2.750730895547748,
           "n_features": 4
         },
         {
@@ -311,7 +301,7 @@
             "trade_openness",
             "unemployment_rate"
           ],
-          "cv_r2": -2.780652060614181,
+          "cv_r2": -2.8467312329276244,
           "n_features": 2
         },
         {
@@ -323,15 +313,23 @@
             "unemployment_rate",
             "inflation_wb"
           ],
-          "cv_r2": -2.7964693634992277,
+          "cv_r2": -2.874541232748777,
           "n_features": 6
+        },
+        {
+          "subset": [
+            "trade_openness",
+            "vix_index"
+          ],
+          "cv_r2": -2.909859324635719,
+          "n_features": 2
         }
       ]
     },
     "candidate_scores": [
       {
         "model": "Lasso",
-        "cv_r2": -1.2176248668087217,
+        "cv_r2": -1.2450988546539405,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -341,7 +339,7 @@
       },
       {
         "model": "ElasticNet",
-        "cv_r2": -1.2176248668087217,
+        "cv_r2": -1.2450988546539405,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -352,7 +350,7 @@
       },
       {
         "model": "RandomForest",
-        "cv_r2": -1.7846540992400997,
+        "cv_r2": -1.853060421120763,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -364,7 +362,7 @@
       },
       {
         "model": "Ridge",
-        "cv_r2": -24.982813213794334,
+        "cv_r2": -27.689831419941783,
         "tuning": {
           "method": "grid_search",
           "best_params": {
@@ -374,7 +372,7 @@
       },
       {
         "model": "Linear",
-        "cv_r2": -25.706408847114563,
+        "cv_r2": -28.493268948697033,
         "tuning": {
           "method": "fixed_params",
           "best_params": {}
@@ -389,7 +387,7 @@
     },
     "data_inspection": {
       "missing_values_before": {
-        "rows_before_dropna": 2696,
+        "rows_before_dropna": 2697,
         "target_missing": 0,
         "feature_missing": {
           "industrial_production": 0
@@ -412,17 +410,17 @@
     },
     "multicollinearity": {
       "dropped_features": [],
-      "max_vif": 2.7951610460455667,
+      "max_vif": 2.794876652114114,
       "vif": {
-        "industrial_production": 2.7951610460455667,
-        "industrial_production__sq": 2.795161046045565
+        "industrial_production": 2.794876652114114,
+        "industrial_production__sq": 2.794876652114104
       }
     },
     "validation": {
       "scheme": "time_series_split",
       "splits": 5,
       "cv_metric": "r2",
-      "mae_in_sample": 0.17663174333123713
+      "mae_in_sample": 0.17658192473016115
     }
   }
 }
